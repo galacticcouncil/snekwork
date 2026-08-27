@@ -4,7 +4,7 @@ import type { ActivitySlug } from '../router'
 import { F, AddrPill, AssetChip, rowNav, Ago, AccountEmoji, ShortAddr, TagIcon, tagMemberSuffix, VoteSideBadge, TableSkeleton, Dash, EmptyRow, ErrorRow, pendingRows, LiveAnchor } from './ui'
 import { useNewRows } from '../hooks/useNewRows'
 import { activityBadge } from './activityColors'
-import { resolveTag } from '../userTags'
+import { resolveTag } from '../systemTags'
 import { convictionLabel, voteSubjectLabel } from '../utils/voteRows'
 import type { ActivityRow } from '../types'
 
@@ -13,10 +13,8 @@ import type { ActivityRow } from '../types'
 //
 // Polkadot and its AssetHub take the near-black of Polkadot's own brand, cast
 // faintly violet and blue to tell the relay from its system chain. Black also keeps
-// them off the accent the local badge owns: Polkadot's brand pink sat about two
-// degrees of hue from it, close enough that a relay badge and a Hydration badge read
-// as one chip at 9px. A warm counterparty is fine — Mythos red clears the accent by
-// forty degrees — but nothing here should sit that close to it again.
+// them clear of the accent the local badge owns, which every counterparty here has
+// to stay off: two chips a few degrees of hue apart read as one at 9px.
 const CHAIN_COLORS: Record<string, [string, string]> = {
   Polkadot: ['#3d3540', '#141014'],
   AssetHub: ['#333f4e', '#121820'],
@@ -37,13 +35,13 @@ export function ChainBadge({ chain }: { chain: string }) {
   const c = CHAIN_COLORS[chain] ?? ['#666', '#444']
   return <span className="chain-badge" style={{ background: `linear-gradient(135deg,${c[0]},${c[1]})` }} title={chain}>{chain || '?'}</span>
 }
-// The local end of a cross-chain hop. Every hop has Hydration at one end, and
+// The local end of a cross-chain hop. Every hop has Basilisk at one end, and
 // naming it is what makes the arrow's direction readable — a row saying only
 // "AssetHub → USDC 55" leaves the reader to work out which side the asset landed
 // on. It takes the brand accent from the theme rather than a per-chain brand pair,
 // so the one chain that is always us never reads as just another counterparty.
-export function HydrationBadge() {
-  return <span className="chain-badge chain-badge-local" title="Hydration">Hydration</span>
+export function BasiliskBadge() {
+  return <span className="chain-badge chain-badge-local" title="Basilisk">Basilisk</span>
 }
 // The external-explorer label follows the link target — cross-chain accounts
 // live on Subscan for substrate chains, Solscan/Etherscan for Solana/Ethereum.
@@ -191,7 +189,7 @@ export function ActivityDesc({ r, headed }: { r: ActivityRow; headed?: boolean }
   if (r.type === 'xcm' && r.xcmDir === 'in' && r.asset) {
     // Inbound: origin chain, then the arrow, then the chain it landed on with
     // the asset it credited.
-    return <span className="asset-flow"><ChainBadge chain={r.fromChain ?? ''} /> → <HydrationBadge /><span className="trade-leg"><AssetChip asset={r.asset} /> <span className="mono">{F.amount(r.amount, r.asset.decimals)}</span></span></span>
+    return <span className="asset-flow"><ChainBadge chain={r.fromChain ?? ''} /> → <BasiliskBadge /><span className="trade-leg"><AssetChip asset={r.asset} /> <span className="mono">{F.amount(r.amount, r.asset.decimals)}</span></span></span>
   }
   if ((r.type === 'transfer' || r.type === 'xcm') && r.asset) {
     // Asset first, then the arrow, then the destination chain and account.
@@ -201,10 +199,10 @@ export function ActivityDesc({ r, headed }: { r: ActivityRow; headed?: boolean }
       : (r.to ? <AddrPill account={r.to} noCopy /> : null)
     const dest = destChain || destAccount ? <>{destChain}{destAccount}</> : null
     // Outbound needs the chain it left as much as inbound needs the one it reached,
-    // and the asset sits beside it either way — it is the Hydration balance that
+    // and the asset sits beside it either way — it is the Basilisk balance that
     // moved. A local badge only earns its place opposite a counterparty, so a plain
     // local transfer and an outbound hop with nothing left to point at both skip it.
-    const local = r.type === 'xcm' && dest ? <HydrationBadge /> : null
+    const local = r.type === 'xcm' && dest ? <BasiliskBadge /> : null
     return <span className="asset-flow">{local}<span className="trade-leg"><AssetChip asset={r.asset} /> <span className="mono">{F.amount(r.amount, r.asset.decimals)}</span></span>{dest ? <> → {dest}</> : null}</span>
   }
   if (r.type === 'trade' && r.assetIn && r.assetOut) {

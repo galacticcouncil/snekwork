@@ -45,7 +45,7 @@ function hx(seed: number, n: number): string { const r = rng(seed); let s = '0x'
 /* ---------- assets ---------- */
 type MAsset = AssetRef & { price: number; ch: number; ch7d: number; ch1h: number; type: ExplorerAssetType }
 const ASSETS: MAsset[] = [
-  { assetId: 0, symbol: 'HDX', name: 'Hydration', decimals: 12, parachainId: null, price: 0.02184, ch: 4.28, ch7d: 11.2, ch1h: 0.4, type: 'Native' },
+  { assetId: 0, symbol: 'BSX', name: 'Basilisk', decimals: 12, parachainId: null, price: 0.02184, ch: 4.28, ch7d: 11.2, ch1h: 0.4, type: 'Native' },
   { assetId: 5, symbol: 'DOT', name: 'Polkadot', decimals: 10, parachainId: null, price: 4.4422, ch: -1.16, ch7d: -3.1, ch1h: -0.2, type: 'Token' },
   { assetId: 10, symbol: 'USDT', name: 'Tether USD', decimals: 6, parachainId: 1000, price: 1.0001, ch: 0.01, ch7d: 0.02, ch1h: 0.0, type: 'Token' },
   { assetId: 1002, symbol: 'aUSDT', name: 'Aave USDT', decimals: 6, parachainId: null, price: 1.0001, ch: 0.01, ch7d: 0.02, ch1h: 0.0, type: 'Token' },
@@ -70,16 +70,27 @@ function acc(accountId: string, address: string, emoji: string, tag: AccountRef[
 }
 const KRAKEN_TAG = { id: 'kraken', name: 'Kraken', color: '#7b6cf6', icon: '/tag-icons/kraken.jpg' }
 const A = {
-  krakenEvm: acc('0xf73a2b8c1d4e9a06b5c8f2e1a3d70c9b4e6f18ad', '0xF73a2B8c1D4e9A06b5C8f2E1a3D70c9B4e6F18aD', '🦑', KRAKEN_TAG),
-  krakenSub: acc('0x9d8bafc9cbe3ae4f1a7c4d2e0b9f86dc31aa5e72aa11bb22cc33dd44ee55ff66', '1MqRsT3uV4wX5yZ6aB7cD8eF9gH0iJ1kL2mN3pQ4rS5tU6v', '🦑', KRAKEN_TAG),
-  treasury: acc('0x6d6f646c70792f74727372790000000000000000000000000000000000000000', '7L53bUTBopXqDXSXjBdQXFV7jZ8FtdRZS5JoMjGq5z3Cv2zr', '🏦', { id: 'treasury', name: 'Treasury', color: '#74C742', icon: '🏦' }),
-  binance: acc('0x2c1f9eb7a4d0c83e5f6a1b9d2c7e04af8b3d16c9bb22cc33dd44ee55ff6600aa', '0x2c1F9eB7a4D0c83E5f6A1b9D2c7E04aF8b3D16C9', '🐳'),
-  fox: acc('0xaa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899', '1L53bUTBopXqDXSXjBdQXFV7jZ8FtdRZS5JoMjGq5z3Cv2zr', '🦊', null, { display: 'StakerNode', verified: true, email: 'info@stakernode.com', web: 'https://stakernode.com/', twitter: '@NodeStaker' }),
-  owl: acc('0xbb22cc33dd44ee55ff6677889900aabbccddeeff0011223344556677889900aa', '1NPoMQbiA6trJKkjB35uk96MeJD4PGWkLQLH7k7hXEkZpiba', '🦉'),
-  swan: acc('0xcc33dd44ee55ff6677889900aabbccddeeff0011223344556677889900aabbcc', '1Rs5Uv6Wx7Yz8Ab9Cd0Ef1Gh2Ij3Kl4Mn5Op6Qr7St8Uv9w', '🦢'),
+  krakenHot: acc('0xf73a2b8c1d4e9a06b5c8f2e1a3d70c9b4e6f18ad', 'bXnBa9ZGcRPENS2kDhVn3Um2pE2RNSMURHicG82FnsMhJZHsE', '🦑', KRAKEN_TAG),
+  krakenCold: acc('0x9d8bafc9cbe3ae4f1a7c4d2e0b9f86dc31aa5e72aa11bb22cc33dd44ee55ff66', 'bXk9z46ZkrZr2CQQxM5VMsUoHFDbfkTfYK2nwk3FLKYwvFHFH', '🦑', KRAKEN_TAG),
+  treasury: acc('0x6d6f646c70792f74727372790000000000000000000000000000000000000000', 'bXj4uMHTyQyvNCLHKBv6ztwkPSx8tgsrxuFtAFfWDYntXtohw', '🏦', { id: 'treasury', name: 'Treasury', color: '#74C742', icon: '🏦' }),
+  binance: acc('0x2c1f9eb7a4d0c83e5f6a1b9d2c7e04af8b3d16c9bb22cc33dd44ee55ff6600aa', 'bXhbGYKDFSHr6RacP9SxgE3dkAewj65Dz1iea8XegzgNnuo2x', '🐳'),
+  fox: acc('0xaa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899', 'bXkSQSxKBexhk3Y6Ah3MN481hsjta9Uars3MoXufiNViLy3Xo', '🦊', null, { display: 'StakerNode', verified: true, email: 'info@stakernode.com', web: 'https://stakernode.com/', twitter: '@NodeStaker' }),
+  owl: acc('0xbb22cc33dd44ee55ff6677889900aabbccddeeff0011223344556677889900aa', 'bXkpnLDkUgStrionA9EsFKxAs1vtB2f28MmpiHqZRpaLpTnAa', '🦉'),
+  swan: acc('0xcc33dd44ee55ff6677889900aabbccddeeff0011223344556677889900aabbcc', 'bXmDADVBmhw5yKPrsYaFMiyiExTkC2WAoZhTJGSkEH2j3rDhm', '🦢'),
 }
-const ACCS = [A.krakenEvm, A.binance, A.fox, A.owl, A.treasury, A.swan]
-const COLLATORS = [acc('0xf617ddeb11327140143ea2c663520f91c6f56d351fa2fb5cb5f2b0e80b755b37', '16ZfsSG7swhuyw79EMUcjmV3LEpYpAroUuMv13FZYuYSpb7B', '🌳')]
+const ACCS = [A.krakenHot, A.binance, A.fox, A.owl, A.treasury, A.swan]
+const COLLATORS = [acc('0xf617ddeb11327140143ea2c663520f91c6f56d351fa2fb5cb5f2b0e80b755b37', 'bXnA5ukPJhRp8m5pvALLLfVJwAAzRPaqdVQTBLcMfoD3HTRtN', '🌳')]
+// The Kusama SS58 (prefix 2) of the same public keys — the account page's
+// secondary identity row. Real encodings of the ids above.
+const KUSAMA_SS58: Record<string, string> = {
+  [A.krakenHot.accountId]: 'JAUdEEENUsbxzqNaagNJqjmh4Y5yJkdf6dG1pSHYmPSVLoU',
+  [A.krakenCold.accountId]: 'G8tXmXNofVFjNW7EAPghZWEiFiPHQwkgQowdqRpzxe4B2Cm',
+  [A.treasury.accountId]: 'F3opxRbN5ZbjJNU511Kj2TLuzFcDq9BGduA9TgiECafpg29',
+  [A.binance.accountId]: 'DaB1zAsPPVKxYhY2Xs148Lhdh4Sd2WCP6fa2KqBg64vqYnQ',
+  [A.fox.accountId]: 'GRJvdGoc4LyaWBKa8FgtCifLn1HgRs5ERNoRhrD3uQUtqoV',
+  [A.owl.accountId]: 'Gogoti6dYY6FmsK2KmaA2spUxztZcJLj9qiBdjvVz2xPaZN',
+  [A.swan.accountId]: 'HC4hA9Pf2jCrMx2Rf9gZ4RCRVruZTT1w5UJAEvixSRBmwCh',
+}
 
 /* ---------- call/event catalogue ---------- */
 const CALLS = ['XYK.sell', 'XYK.buy', 'Router.sell', 'Tokens.transfer', 'Balances.transfer_keep_alive', 'XTokens.transfer', 'XYK.add_liquidity', 'XYK.remove_liquidity']
@@ -144,20 +155,20 @@ function genExtrinsic(height: number, idx: number): ExtrinsicDetail {
   }
 }
 
-/** The mock's non-HDX fee payers, by extrinsic index within a block. */
+/** The mock's non-BSX fee payers, by extrinsic index within a block. */
 const MOCK_FEE_CURRENCY: Record<number, number> = { 3: 5, 4: 10 }
 // The one extrinsic index that tips, so a surface which shows the tip only when
-// there is one has both shapes reachable from a fixed URL. Its HDX figure and
+// there is one has both shapes reachable from a fixed URL. Its BSX figure and
 // its share of the fee asset's fee+tip charge have to agree, the way the api's
 // proportional split makes them agree on chain.
 const MOCK_TIP_INDEX = 4
-const MOCK_TIP_HDX = raw(0.5, 12)
+const MOCK_TIP_NATIVE = raw(0.5, 12)
 function mockTip(idx: number, isInherent: boolean): string | null {
   if (isInherent) return null
-  return idx === MOCK_TIP_INDEX ? MOCK_TIP_HDX : '0'
+  return idx === MOCK_TIP_INDEX ? MOCK_TIP_NATIVE : '0'
 }
 
-// The fee currency an extrinsic settled in, when that is not HDX. The api derives
+// The fee currency an extrinsic settled in, when that is not BSX. The api derives
 // this from the extrinsic's own balance events (extrinsicFeePayment.ts), so the
 // mock has to state it the same way: a nominated-currency payer pays fee and tip
 // in that asset.
@@ -269,12 +280,12 @@ function activityRowAtHeight(h: number): ActivityRow {
 export const MOCK_VOTE_CONVICTIONS = ['Locked6x', 'None', 'Locked2x', 'Locked1x', 'Locked5x'] as const
 export function voteRowAtHeight(h: number): ActivityRow {
   const conviction = MOCK_VOTE_CONVICTIONS[h % MOCK_VOTE_CONVICTIONS.length]
-  const hdx = ASSETS[0]
+  const native = ASSETS[0]
   const amt = 1000 + (h % 9000)
   return {
     type: 'vote', blockHeight: h, timestamp: tsAt(h), eventIndex: 95, extrinsicIndex: 3,
-    who: ACCS[h % ACCS.length], to: null, asset: aref(hdx), assetIn: null, assetOut: null,
-    amount: raw(amt, hdx.decimals), amountIn: null, amountOut: null, valueUsd: amt * hdx.price,
+    who: ACCS[h % ACCS.length], to: null, asset: aref(native), assetIn: null, assetOut: null,
+    amount: raw(amt, native.decimals), amountIn: null, amountOut: null, valueUsd: amt * native.price,
     votePallet: 'ConvictionVoting', voteAction: 'Voted', voteRef: '380',
     voteSide: h % 7 === 0 ? 'Nay' : 'Aye', voteConviction: conviction,
     voteRefPallet: 'opengov', voteRefTitle: 'Security patch runtime upgrade v50.0.2',
@@ -290,10 +301,10 @@ export function voteRowAtHeight(h: number): ActivityRow {
 // from any of them lands on the same detail page.
 export const MOCK_TC_MOTION_HASH = '0x0529aa…664b5b'
 export function collectiveVoteRowAtHeight(h: number, who: AccountRef = A.owl): ActivityRow {
-  const hdx = ASSETS[0]
+  const native = ASSETS[0]
   return {
     type: 'vote', blockHeight: h, timestamp: tsAt(h), eventIndex: 96, extrinsicIndex: 4,
-    who, to: null, asset: aref(hdx), assetIn: null, assetOut: null,
+    who, to: null, asset: aref(native), assetIn: null, assetOut: null,
     amount: null, amountIn: null, amountOut: null, valueUsd: 0,
     votePallet: 'Technical Committee', voteAction: 'Voted', voteRef: MOCK_TC_MOTION_HASH,
     voteSide: h % 2 === 0 ? 'Aye' : 'Nay', voteConviction: null,
@@ -307,7 +318,7 @@ export function collectiveVoteRowAtHeight(h: number, who: AccountRef = A.owl): A
 // external account pill's full tag > identity > address precedence (same pubkey,
 // same tag/identity, even shown as a destination-chain recipient).
 function xcmDestAccount(h: number): NonNullable<ActivityRow['destAccount']> {
-  const src = [A.krakenSub, A.fox, A.owl][(h / 2) % 3]
+  const src = [A.krakenCold, A.fox, A.owl][(h / 2) % 3]
   return {
     kind: 'AccountId32', accountId: src.accountId, address: src.address, raw: src.accountId,
     subscanUrl: `https://moonbeam.subscan.io/account/${encodeURIComponent(src.address)}`,
@@ -403,14 +414,14 @@ function buildAccounts(offset: number, limit: number, sort: string): AccountsPag
   return { rows: sorted.slice(offset, offset + limit), total: sorted.length }
 }
 
-// Deterministic HDX lock/reserve breakdown for a balance of `bal` tokens (free =
+// Deterministic native-asset lock/reserve breakdown for a balance of `bal` tokens (free =
 // 92%, reserved = 8%, matching the mock balance split): overlapping vesting and
 // governance locks, a binding unlock timeline whose slices sum exactly to
 // `frozen`, and reserve components that deliberately cover only part of
 // `reserved` so the "other" remainder row is exercised. Sources are the ones
 // lockBreakdownService actually emits — an unknown source would render as its
 // own raw name.
-function hdxBreakdown(bal: number, dec: number): Pick<AddressBalance, 'frozen' | 'breakdown' | 'timeline'> {
+function nativeBreakdown(bal: number, dec: number): Pick<AddressBalance, 'frozen' | 'breakdown' | 'timeline'> {
   const f = (x: number) => raw(bal * x, dec)
   // Unlock `until` dates anchor to WALL-CLOCK now, not MOCK_NOW_MS: the panel
   // renders them relative to the real Date.now(), so a fixed anchor would make
@@ -446,9 +457,9 @@ function buildAddress(accountId: string): AddressDetail {
     const bal = +(r() * (as.price > 1000 ? 3 : as.price > 1 ? 6000 : 2_000_000)).toFixed(4)
     return {
       asset: aref(as), total: raw(bal, as.decimals), free: raw(bal * 0.92, as.decimals), reserved: raw(bal * 0.08, as.decimals), lastBlock: TIP - Math.floor(r() * 40000), valueUsd: bal * as.price,
-      // HDX carries the full lock breakdown; DOT shows the single-component
+      // BSX carries the full lock breakdown; DOT shows the single-component
       // shape (one clearable deposit) for a non-native asset.
-      ...(as.assetId === 0 ? hdxBreakdown(bal, as.decimals) : {}),
+      ...(as.assetId === 0 ? nativeBreakdown(bal, as.decimals) : {}),
       ...(as.assetId === 5 ? { breakdown: [{ kind: 'deposit' as const, source: 'other', amount: raw(bal * 0.08, as.decimals) }] } : {}),
     }
   }).sort((x, y) => (y.valueUsd ?? 0) - (x.valueUsd ?? 0))
@@ -472,12 +483,10 @@ function buildAddress(accountId: string): AddressDetail {
     : []
   const balances = [...priced, ...unpricedHoldings, ...dustHoldings]
   const portfolioUsd = balances.reduce((s, b) => s + (b.valueUsd ?? 0), 0)
-  const isEvm = a.address.startsWith('0x')
   return {
-    input: a.address, kind: isEvm ? 'evm' : 'ss58', accountId: a.accountId, emoji: a.emoji,
-    evmAddress: isEvm ? a.address : null,
-    ss58: a.address.startsWith('1') || a.address.startsWith('7') ? a.address : '7' + a.accountId.slice(2, 47),
-    ss58Polkadot: isEvm ? '1MqRsT3uV4wX5yZ6aB7cD8eF9gH0iJ1kL2mN3pQ4rS5tU6v' : a.address,
+    input: a.address, kind: 'ss58', accountId: a.accountId, emoji: a.emoji,
+    ss58: a.address,
+    ss58Kusama: KUSAMA_SS58[a.accountId] ?? '',
     tag: a.tag, identity: a.identity ?? null, relatedAccountIds: [a.accountId],
     balances,
     topAssets: balances.filter(b => (b.valueUsd ?? 0) > 10).slice(0, 4).map(b => ({ asset: b.asset, valueUsd: b.valueUsd ?? 0 })),
@@ -559,7 +568,7 @@ function accountActivityRows(rawAddress: string): ActivityRow[] {
   return mockAccountActivity(account, rng(account.accountId.length * 17))
 }
 function tagActivityRows(): ActivityRow[] {
-  return mockAccountActivity(A.krakenEvm, rng(A.krakenEvm.accountId.length * 17))
+  return mockAccountActivity(A.krakenHot, rng(A.krakenHot.accountId.length * 17))
 }
 function filteredMockActivity(rows: ActivityRow[], qs: URLSearchParams): ActivityRow[] {
   const type = qs.get('type') ?? 'all'
@@ -593,7 +602,7 @@ function mockValueEvents(rows: ActivityRow[]): ValueEvent[] {
 }
 
 function mockVoteRows(account: AccountRef | null, limit: number): VoteRow[] {
-  const hdx = ASSETS[0]
+  const native = ASSETS[0]
   return Array.from({ length: limit }, (_, i) => {
     const h = TIP - i * 700 - 40
     const amt = 1000 + (h % 9000)
@@ -602,9 +611,9 @@ function mockVoteRows(account: AccountRef | null, limit: number): VoteRow[] {
       account: account ?? ACCS[i % ACCS.length], pallet: 'ConvictionVoting', action: 'Voted',
       referendum: String(380 - i), side: h % 7 === 0 ? 'Nay' : 'Aye',
       conviction: MOCK_VOTE_CONVICTIONS[h % MOCK_VOTE_CONVICTIONS.length],
-      amount: raw(amt, hdx.decimals), asset: aref(hdx), valueUsd: amt * hdx.price,
+      amount: raw(amt, native.decimals), asset: aref(native), valueUsd: amt * native.price,
       voteRefPallet: 'opengov', voteRefTitle: 'Security patch runtime upgrade v50.0.2',
-      weighted: raw(amt * 6, hdx.decimals),
+      weighted: raw(amt * 6, native.decimals),
     }
   })
 }
@@ -612,13 +621,13 @@ function mockVoteRows(account: AccountRef | null, limit: number): VoteRow[] {
 /* ---------- liquidity pools ---------- */
 // One deterministic pool world shared by the asset Liquidity tab, /liquidity and
 // /pool/:id, so a card and the page it links to always carry the same numbers.
-// Two real XYK pairs — vDOT/DOT (share token 690) and HDX/DOT (share token
+// Two real XYK pairs — vDOT/DOT (share token 690) and BSX/DOT (share token
 // 1000194) — plus a folded long tail of dust pairs.
 const XYK_LP_ID = 1_000_194
 const POOL_DAYS = 120
 const POOL_BUCKETS = Array.from({ length: POOL_DAYS }, (_, i) => new Date(MOCK_NOW_MS - (POOL_DAYS - i) * 86_400_000).toISOString().slice(0, 10))
 const POOL_690_ACCOUNT = acc(hx(690, 64), '167UdiHenqFRhRoXHwh6MBu9YV6NPkbCJx3MC71bfz9YTdzs', '💧', { id: 'xyk-pools', name: 'XYK Pool', color: '#57a5ec', icon: '💧' })
-const XYK_PAIR_ACCOUNT = acc(hx(694, 64), '1XyKHdxDotPairAccountX1111111111111111111111111', '💧', { id: 'xyk-pools', name: 'XYK Pool', color: '#57a5ec', icon: '💧' })
+const XYK_PAIR_ACCOUNT = acc(hx(694, 64), 'bXj4uMHU11xybnWTh8nFsU6MaPxnsksG18g3wRpqESPjrsjEb', '💧', { id: 'xyk-pools', name: 'XYK Pool', color: '#57a5ec', icon: '💧' })
 
 interface MPool {
   lpAssetId: number; name: string; account: AccountRef
@@ -627,7 +636,7 @@ interface MPool {
 }
 const POOLS: MPool[] = [
   { lpAssetId: 690, name: 'vDOT / DOT', account: POOL_690_ACCOUNT, assetA: 15, reserveA: 139_000, assetB: 5, reserveB: 219_000, feePermill: 690, totalShares: 4_150_000, createdBlock: TIP - 1_000_000 },
-  { lpAssetId: XYK_LP_ID, name: 'HDX / DOT', account: XYK_PAIR_ACCOUNT, assetA: 0, reserveA: 5_200_000, assetB: 5, reserveB: 25_500, feePermill: 3000, totalShares: 3_100_000, createdBlock: TIP - 2_000_000 },
+  { lpAssetId: XYK_LP_ID, name: 'BSX / DOT', account: XYK_PAIR_ACCOUNT, assetA: 0, reserveA: 5_200_000, assetB: 5, reserveB: 25_500, feePermill: 3000, totalShares: 3_100_000, createdBlock: TIP - 2_000_000 },
 ]
 const poolById = new Map(POOLS.map(p => [p.lpAssetId, p]))
 
@@ -735,7 +744,7 @@ function buildPoolsIndex(): PoolsIndexResponse {
   const pools = [
     ...POOLS.map(p => entry(p.lpAssetId, p.name, poolLegs(p).map(([id, reserve]) => [id, reserve * priceof(id)] as [number, number]))),
     // The tail: folded behind one line until a reader asks for it.
-    ...Array.from({ length: 6 }, (_, i) => entry(1_000_100 + i, `LONGTAIL${i} / HDX`, [[0, i], [5, 0]])),
+    ...Array.from({ length: 6 }, (_, i) => entry(1_000_100 + i, `LONGTAIL${i} / BSX`, [[0, i], [5, 0]])),
   ]
   const totalTvlUsd = pools.reduce((s, p) => s + (p.tvlUsd ?? 0), 0)
   for (const p of pools) p.sharePct = totalTvlUsd > 0 ? ((p.tvlUsd ?? 0) / totalTvlUsd) * 100 : 0
@@ -822,30 +831,30 @@ function buildGovernance(): GovernanceOverview {
 }
 function buildReferendum(pallet: 'opengov' | 'democracy', index: number): ReferendumDetail {
   const row = govReferendumRow(index)
-  const hdx = ASSETS[0]
+  const native = ASSETS[0]
   const voters = ACCS.map((account, i) => ({
     account, kind: 'Standard' as const, side: (i % 5 === 0 ? 'Nay' : 'Aye') as 'Aye' | 'Nay',
     conviction: MOCK_VOTE_CONVICTIONS[i % MOCK_VOTE_CONVICTIONS.length], convictionIndex: i % 6,
-    balance: raw(100_000 * (i + 1), hdx.decimals),
-    ayeBalance: i % 5 === 0 ? '0' : raw(100_000 * (i + 1), hdx.decimals),
-    nayBalance: i % 5 === 0 ? raw(100_000 * (i + 1), hdx.decimals) : '0',
+    balance: raw(100_000 * (i + 1), native.decimals),
+    ayeBalance: i % 5 === 0 ? '0' : raw(100_000 * (i + 1), native.decimals),
+    nayBalance: i % 5 === 0 ? raw(100_000 * (i + 1), native.decimals) : '0',
     abstainBalance: '0',
-    weightedAye: i % 5 === 0 ? '0' : raw(600_000 * (i + 1), hdx.decimals),
-    weightedNay: i % 5 === 0 ? raw(600_000 * (i + 1), hdx.decimals) : '0',
-    weighted: raw(600_000 * (i + 1), hdx.decimals),
-    valueUsd: 100_000 * (i + 1) * hdx.price,
+    weightedAye: i % 5 === 0 ? '0' : raw(600_000 * (i + 1), native.decimals),
+    weightedNay: i % 5 === 0 ? raw(600_000 * (i + 1), native.decimals) : '0',
+    weighted: raw(600_000 * (i + 1), native.decimals),
+    valueUsd: 100_000 * (i + 1) * native.price,
     blockHeight: row.blockHeight + i, eventIndex: 95, extrinsicIndex: 3,
     timestamp: tsAt(row.blockHeight + i), removed: false,
   }))
   return {
     pallet, index, title: row.title, proposer: row.proposer,
-    subsquareUrl: `https://hydration.subsquare.io/referenda/${index}`,
+    subsquareUrl: `https://basilisk.subsquare.io/referenda/${index}`,
     track: GOV_TRACK.id, proposalHash: hx(index * 13 + 1, 64),
     proposalCall: { pallet: 'System', callName: 'set_code', args: { code: '0x…runtime' }, encoded: null, byteLength: 1_482_112, decodeError: null },
     status: row.status, enactment: row.enactment,
     submittedAt: { blockHeight: row.blockHeight, extrinsicIndex: 2, timestamp: row.timestamp },
     concludedAt: null,
-    asset: aref(hdx),
+    asset: aref(native),
     onChainTally: null,
     directTally: {
       ayes: raw(12_600_000, 12), nays: raw(600_000, 12), rawAyes: raw(2_100_000, 12), rawNays: raw(100_000, 12),
@@ -862,7 +871,7 @@ function buildReferendum(pallet: 'opengov' | 'democracy', index: number): Refere
 
 /* ---------- routes ---------- */
 const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => unknown }[] = [
-  { re: /^\/explorer\/stats$/, fn: () => ({ headBlock: TIP, finalizedBlock: TIP - 2, headTime: tsAt(TIP), avgBlockSec: 5.7, nominalBlockSec: 6, transfers24h: 18204, extrinsics24h: 42318, activeAccounts24h: 7120, hdxPrice: 0.02184 } satisfies ExplorerStats) },
+  { re: /^\/explorer\/stats$/, fn: () => ({ headBlock: TIP, finalizedBlock: TIP - 2, headTime: tsAt(TIP), avgBlockSec: 5.7, nominalBlockSec: 6, transfers24h: 18204, extrinsics24h: 42318, activeAccounts24h: 7120 } satisfies ExplorerStats) },
   { re: /^\/indexer$/, fn: () => ({ blockHeight: TIP, blockTimestamp: tsAt(TIP), lagSeconds: 6, chainBlockHeight: TIP + 1, blocksBehindHead: 1 } satisfies IndexerStatus) },
   // Two shapes off one directory, exactly as the API serves them: the full rows the
   // Assets page renders, and `fields=filter`'s id/symbol/name projection in the same
@@ -1077,7 +1086,7 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
           ],
         },
         {
-          account: A.krakenEvm,
+          account: A.krakenHot,
           score: 0.68,
           confidence: 'moderate',
           lastSeen: '2026-07-06 09:15:00',
@@ -1130,12 +1139,12 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
   {
     re: /^\/explorer\/tag\/(.+)\/votes-by-referendum$/, fn: (_m, qs) => {
       const limit = Number(qs.get('limit') ?? 25)
-      const hdx = ASSETS[0]
+      const native = ASSETS[0]
       const rows: VoteGroupRow[] = mockVoteRows(null, limit).map(v => ({
         pallet: v.pallet, referendum: v.referendum, voteRefPallet: v.voteRefPallet, voteRefTitle: v.voteRefTitle,
         side: v.side, voters: 2, weighted: v.weighted ?? null, amount: v.amount,
         blockHeight: v.blockHeight, timestamp: v.timestamp, eventIndex: v.eventIndex, extrinsicIndex: v.extrinsicIndex,
-        asset: aref(hdx), valueUsd: v.valueUsd,
+        asset: aref(native), valueUsd: v.valueUsd,
       }))
       return { rows, total: rows.length, complete: true } satisfies VotesByReferendumPage
     },
@@ -1150,18 +1159,18 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
   } },
   {
     re: /^\/explorer\/tag\/(.+)$/, fn: () => {
-      const members = [A.krakenEvm, A.krakenSub]
+      const members = [A.krakenHot, A.krakenCold]
       const balances = ASSETS.slice(0, 5).map((as, i) => {
         const bal = (i + 2) * 40000 / as.price
-        // The tag's HDX row carries the members' summed lock breakdown so the
+        // The tag's BSX row carries the members' summed lock breakdown so the
         // tag balances view exercises the same panel as accounts.
         if (as.assetId === 0) {
-          return { asset: aref(as), total: raw(bal, as.decimals), free: raw(bal * 0.92, as.decimals), reserved: raw(bal * 0.08, as.decimals), lastBlock: TIP - i * 80, valueUsd: bal * as.price, ...hdxBreakdown(bal, as.decimals) }
+          return { asset: aref(as), total: raw(bal, as.decimals), free: raw(bal * 0.92, as.decimals), reserved: raw(bal * 0.08, as.decimals), lastBlock: TIP - i * 80, valueUsd: bal * as.price, ...nativeBreakdown(bal, as.decimals) }
         }
         return { asset: aref(as), total: raw(bal, as.decimals), free: raw(bal, as.decimals), reserved: '0', lastBlock: TIP - i * 80, valueUsd: bal * as.price }
       })
       const portfolioUsd = balances.reduce((s, b) => s + (b.valueUsd ?? 0), 0)
-      const built = buildAddress(A.krakenEvm.accountId)
+      const built = buildAddress(A.krakenHot.accountId)
       return {
         tagId: 'kraken', name: 'Kraken', color: '#7b6cf6', note: 'Exchange — hot + deposit wallets', icon: '/tag-icons/kraken.jpg',
         members, balances,

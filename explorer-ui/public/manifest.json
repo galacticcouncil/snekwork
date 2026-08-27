@@ -1,10 +1,10 @@
 {
-  "name": "Hydration Explorer",
-  "short_name": "Explorer",
+  "name": "Snekwork",
+  "short_name": "Snekwork",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#030816",
-  "theme_color": "#030816",
+  "background_color": "#14161A",
+  "theme_color": "#14161A",
   "icons": [
     {
       "src": "/favicon.svg",

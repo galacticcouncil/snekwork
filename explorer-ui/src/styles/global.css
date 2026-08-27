@@ -1,5 +1,5 @@
 /* ============================================================
-   Hydration Explorer — design-system styles
+   Snekwork — design-system styles
    Fonts: Gazpacho (display), Geist (UI), Geist Mono (data)
    ============================================================ */
 
@@ -42,23 +42,35 @@
      the app runs full-bleed under a black-translucent bar. */
   --safe-top: env(safe-area-inset-top, 0px);
 }
+/* The brand's signature gradient. It appears in exactly ONE place (the wordmark
+   rule under the topbar brand) — everywhere else the flat --accent carries the
+   identity, so the gradient stays a mark rather than a texture. Theme-independent:
+   it is the logotype, not a surface. */
+:root {
+  --brand-gradient: linear-gradient(90deg, #4FFFB0, #B3FF8F, #FF984E);
+}
 :root[data-theme="dark"] {
-  --bg: #030816;
-  --bg-elev: #0d1525;
-  --bg-elev2: #131d30;
+  /* Basilisk's own dark grounds, lightest-last: the card gradient's mid stop,
+     backgroundGray1000, backgroundGray900. */
+  --bg: #14161A;
+  --bg-elev: #1C1A1F;
+  --bg-elev2: #211F24;
   --panel: rgba(255,255,255,0.03);
   --panel-hover: rgba(255,255,255,0.06);
   --border: rgba(255,255,255,0.09);
   --separator: rgba(255,255,255,0.055);
 
-  --text-high: #f5f1f8;
-  --text-medium: #a4abbd;
-  --text-low: #6a7187;
-  --text-lowest: #454c5e;
+  --text-high: #F2F6F4;
+  --text-medium: #ACB2B5;
+  --text-low: #787E82;
+  --text-lowest: #4A4F52;
 
-  --accent: #e53e76;
-  --accent-soft: rgba(229,62,118,0.14);
-  --accent-on: #ffffff;
+  /* Basilisk green (primary400) — 14:1 on --bg, so it carries body-sized link
+     text as well as the brand marks. Anything SITTING ON it takes the dark ink:
+     white on this green is 1.3:1. */
+  --accent: #4FFFB0;
+  --accent-soft: rgba(79,255,176,0.14);
+  --accent-on: #0E1512;
 
   --lavender: #dfb1f3;
   --lavender-deep: #cc6ef4;
@@ -113,21 +125,24 @@
   color-scheme: dark;
 }
 :root[data-theme="light"] {
-  --bg: #EFEDEA;
+  --bg: #EEF1EF;
   --bg-elev: #ffffff;
-  --bg-elev2: #f6f4f1;
-  --panel: rgba(36,14,50,0.035);
-  --panel-hover: rgba(36,14,50,0.07);
-  --border: rgba(36,14,50,0.13);
-  --separator: rgba(36,14,50,0.08);
+  --bg-elev2: #F6F8F7;
+  --panel: rgba(16,32,26,0.035);
+  --panel-hover: rgba(16,32,26,0.07);
+  --border: rgba(16,32,26,0.13);
+  --separator: rgba(16,32,26,0.08);
 
-  --text-high: #232226;
-  --text-medium: #5f5b67;
-  --text-low: #8a8693;
-  --text-lowest: #bdb8c6;
+  --text-high: #1B211E;
+  --text-medium: #575E5A;
+  --text-low: #838A86;
+  --text-lowest: #B7BEBA;
 
-  --accent: #e53e76;
-  --accent-soft: rgba(229,62,118,0.10);
+  /* Basilisk green darkened along its own hue (154°) until it carries text on
+     the light ground: 4.8:1, where the pink it replaces sat at 3.4:1. The brand
+     value itself (#4FFFB0) is 1.1:1 here and can only be a fill, never ink. */
+  --accent: #077A48;
+  --accent-soft: rgba(7,122,72,0.10);
   --accent-on: #ffffff;
 
   --lavender: #b454da;
@@ -259,8 +274,10 @@ svg { display: block; }
 }
 .topbar-inner { display: flex; align-items: center; gap: 20px; height: 60px; min-width: 0; }
 .brand { display: inline-flex; align-items: baseline; gap: 9px; flex-shrink: 0; }
-.brand .logo { width: 22px; height: 22px; color: var(--accent); transform: translateY(3px); }
-.brand .wm { font-family: 'Gazpacho', serif; font-weight: 500; font-size: 18px; letter-spacing: 0; }
+.brand .logo { width: 20px; height: 20px; color: var(--accent); transform: translateY(3px); }
+.brand .wm { position: relative; font-family: 'Gazpacho', serif; font-weight: 500; font-size: 18px; letter-spacing: 0; }
+/* The signature gradient's one appearance: a rule under the wordmark. */
+.brand .wm::after { content: ''; position: absolute; left: 0; right: 0; bottom: -3px; height: 2px; border-radius: 2px; background: var(--brand-gradient); }
 .brand .pr { font-family: 'Gazpacho', serif; font-style: italic; font-weight: 400; font-size: 18px; color: var(--accent); }
 
 /* grouped nav: two dropdown groups (Activity, Chain) + direct links */
@@ -356,7 +373,7 @@ svg { display: block; }
 .filter-toggle:hover { color: var(--text-high); }
 .filter-toggle.open, .filter-toggle.has { color: var(--text-high); border-color: var(--sky); }
 .filter-toggle svg { width: 13px; height: 13px; }
-.filter-toggle .fb { background: var(--accent); color: #fff; border-radius: 9999px; padding: 1px 6px; font-size: 10px; }
+.filter-toggle .fb { background: var(--accent); color: var(--accent-on); border-radius: 9999px; padding: 1px 6px; font-size: 10px; }
 .filter-toggle .chev { color: var(--text-low); }
 .filters.hidden { display: none; }
 .filters { margin-top: 12px; }
@@ -470,7 +487,7 @@ svg { display: block; }
 @keyframes pageIn { from { opacity: 0; transform: translateY(6px); } }
 /* Overlays ease in instead of popping. */
 .search-results, .hovercard { animation: dropIn 140ms ease-out; }
-.apx-tip, .hdx-tip { animation: tipIn 120ms ease-out; }
+.apx-tip, .chart-tip { animation: tipIn 120ms ease-out; }
 @keyframes dropIn { from { opacity: 0; transform: translateY(-4px); } }
 @keyframes tipIn { from { opacity: 0; } }
 /* Tactile press feedback on tappable pills/buttons (matters most on touch).
@@ -522,7 +539,7 @@ svg { display: block; }
 @media (max-width: 620px){
   .ribbon .rs { display: none; }
   .ribbon .cell { padding: 8px 14px; }
-  /* Standalone stat ribbon (e.g. /hdx header): a content-width flex wrap leaves
+  /* Standalone stat ribbon (an asset header): a content-width flex wrap leaves
      the columns ragged on a phone — lay the cells out on an even grid instead so
      labels and values line up. */
   .ribbon.standalone { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px 10px; padding: 14px; }
@@ -616,7 +633,7 @@ svg { display: block; }
 /* Row ids (e.g. 13184944-3) must stay on one line — a break at the hyphen
    reads as two unrelated numbers rather than one block-extrinsic/event index. */
 .tbl td.mono .hash { white-space: nowrap; }
-/* Fee ("1.295 HDX") and Time ("5d 18h ago") must stay on one line in their narrow columns. */
+/* Fee ("1.295 BSX") and Time ("5d 18h ago") must stay on one line in their narrow columns. */
 .tbl td[data-label="Fee"], .tbl td[data-label="Time"] { white-space: nowrap; }
 .accounts-tbl { min-width: 1180px; }
 /* Cap the Account column so a long on-chain identity or tag name can't widen the
@@ -796,12 +813,12 @@ svg { display: block; }
 /* Variant B row: label beside the bar. */
 .bd-row1 { display: flex; align-items: center; gap: 12px; }
 .bd-row1 .tm-metric-label { flex: 0 0 auto; white-space: nowrap; }
-.bd-row1 .hdx-chart-wrap { flex: 1 1 auto; min-width: 0; }
+.bd-row1 .chart-wrap { flex: 1 1 auto; min-width: 0; }
 /* Variant A row: bar (flexible) + legend (natural width) sharing a line, the
    legend landing right after the bar — effectively right-aligned as the bar
    grows to fill the rest of the row. */
 .bd-row2 { display: flex; align-items: center; gap: 14px; }
-.bd-row2 .hdx-chart-wrap { flex: 1 1 auto; min-width: 0; }
+.bd-row2 .chart-wrap { flex: 1 1 auto; min-width: 0; }
 .bd-row2 .bd-sched { flex: 0 0 auto; }
 /* Mobile: both variants collapse to the same stacked look — label line, bar
    full-width below it, legend stacked further below — regardless of which
@@ -810,10 +827,10 @@ svg { display: block; }
   .bd-row1, .bd-row2 { flex-direction: column; align-items: stretch; gap: 6px; }
 }
 .bd-agg { position: relative; height: 16px; border-radius: 8px; background: var(--panel-hover); overflow: hidden; }
-/* the faint inset ring keeps brand-black (GIGAHDX) slices legible between dark neighbors */
+/* the faint inset ring keeps near-black brand slices legible between dark neighbors */
 .bd-agg-seg { position: absolute; top: 0; height: 100%; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-high) 9%, transparent); }
 /* Bar-segment hover tip: mirrors a legend row's markup exactly (dot, cause,
-   compact amount, muted note) — no USD figure, unlike other hdx-chart tips. */
+   compact amount, muted note) — no USD figure, unlike other chart tips. */
 .bd-tip-row { display: inline-flex; align-items: center; gap: 6px; }
 .bd-tip-row .bd-cause, .bd-tip-row .bd-note { overflow: visible; white-space: nowrap; }
 /* Legend: one row per lock/reserve source, mobile-first (today's stacked
@@ -821,7 +838,7 @@ svg { display: block; }
    a single wrapped inline line, each item separated by a muted divider. */
 .bd-sched { display: flex; flex-direction: column; gap: 5px; margin-top: 2px; }
 .bd-sched-row { display: grid; grid-template-columns: 8px 96px 104px 1fr; gap: 8px; align-items: baseline; font-family: 'GeistMono'; font-size: 11.5px; line-height: 1.35; }
-/* the faint ring keeps dark dots (GIGAHDX brand black) legible on dark surfaces */
+/* the faint ring keeps near-black brand dots legible on dark surfaces */
 .bd-dot { width: 8px; height: 8px; border-radius: 50%; align-self: center; box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-low) 60%, transparent); }
 .bd-cause { color: var(--text-high); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bd-sched-amt { color: var(--text-high); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
@@ -868,7 +885,7 @@ svg { display: block; }
 .activity-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
 .activity-chip { font-family: 'GeistMono'; font-size: 11px; letter-spacing: 0.04em; padding: 6px 13px; border-radius: 9999px; border: 1px solid var(--border); background: var(--panel); color: var(--text-medium); transition: color .14s, background .14s, border-color .14s, transform 90ms ease; }
 .activity-chip:hover { color: var(--text-high); }
-.activity-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.activity-chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-on); }
 
 /* The activity type filter as one segmented control (preis's interval picker
    look): a full-width rounded track whose accent pill glides between segments.
@@ -1186,7 +1203,7 @@ svg { display: block; }
      after it (address, accounts count, tag chips) pulls back to the panel's
      own left edge instead of inheriting the avatar's 38px indent. The
      pull-back compensates for an avatar, so it applies only where one is
-     rendered: the avatar-less headers (a list's, the Hydration Tags hero)
+     rendered: the avatar-less headers (a list's, the Basilisk Tags hero)
      have no indent to undo, and the same -38px there dragged every row but
      the title 38px outside the card. */
   .acct-head:has(.acct-avatar, .sk-avatar) .acct-meta > * + * { margin-left: -38px; }
@@ -1208,7 +1225,7 @@ svg { display: block; }
 
 /* progress bar (sync etc) */
 .bar { height: 5px; background: var(--panel); border-radius: 9999px; overflow: hidden; }
-.bar .fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--lavender-deep)); }
+.bar .fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--sky-deep)); }
 
 /* pagination */
 .pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; }
@@ -1699,21 +1716,21 @@ a.apx-mark-go:hover, a.apx-mark-go:active { text-decoration: underline; }
 /* Asset search result: symbol then a muted descriptive name (e.g. DOT · Polkadot). */
 .sr-desc { color: var(--text-low); margin-left: 6px; font-size: 11.5px; }
 
-/* HDX dashboard */
-.hdx-chart-wrap { position: relative; }
-.hdx-tip { position: absolute; transform: translateX(-50%); display: flex; flex-direction: column; gap: 3px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-family: 'GeistMono'; font-size: 11px; white-space: nowrap; pointer-events: none; box-shadow: 0 8px 20px rgba(0,0,0,.4); z-index: 4; }
-.hdx-tip .t-d { color: var(--text-low); }
-.hdx-tip .t-row { display: flex; align-items: center; gap: 6px; color: var(--text-medium); }
-.hdx-tip .t-row i { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.hdx-tip .t-row .tv { margin-left: auto; padding-left: 12px; color: var(--text-high); font-weight: 600; }
-.hdx-ax { font-family: 'GeistMono'; font-size: 10px; fill: var(--text-low); }
+/* stat cards + the chart chrome they sit with */
+.chart-wrap { position: relative; }
+.chart-tip { position: absolute; transform: translateX(-50%); display: flex; flex-direction: column; gap: 3px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-family: 'GeistMono'; font-size: 11px; white-space: nowrap; pointer-events: none; box-shadow: 0 8px 20px rgba(0,0,0,.4); z-index: 4; }
+.chart-tip .t-d { color: var(--text-low); }
+.chart-tip .t-row { display: flex; align-items: center; gap: 6px; color: var(--text-medium); }
+.chart-tip .t-row i { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.chart-tip .t-row .tv { margin-left: auto; padding-left: 12px; color: var(--text-high); font-weight: 600; }
+.chart-ax { font-family: 'GeistMono'; font-size: 10px; fill: var(--text-low); }
 .ribbon .cell .s { font-family: 'GeistMono'; font-size: 10px; color: var(--text-low); }
-.hdx-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 14px; }
+.stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 14px; }
 /* HOLLAR liquidity pools: cap at 4 per row. The min track is a quarter of the
    container (minus its share of the 3 gaps), so a 5th never fits on desktop,
    while the 160px floor still collapses the grid to fewer columns on phones. */
 .pool-cards { grid-template-columns: repeat(auto-fit, minmax(max(160px, calc(25% - 8px)), 1fr)); }
-.hdx-card { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--separator); border-radius: 12px; background: var(--panel); padding: 12px 14px; min-width: 0; }
+.stat-card { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--separator); border-radius: 12px; background: var(--panel); padding: 12px 14px; min-width: 0; }
 /* Unfinalized (pending-head) rows: the data exists but may still reorganize.
    Deliberately subtle — dimmed ink, no extra column — and self-healing: the
    class disappears with the next refetch after finalization. */
@@ -1731,7 +1748,7 @@ a.apx-mark-go:hover, a.apx-mark-go:active { text-decoration: underline; }
 .liq-sub { display: flex; align-items: center; gap: 8px; }
 
 .comp-cell { width: 34%; }
-/* Named comp-, not liq-: `.liq-bar` is already the GIGAHDX liquidation
+/* Named comp-, not liq-: `.liq-bar` is already the liquidation
    histogram's SVG <rect>, and in Chromium CSS width/height WIN over an SVG
    rect's geometry attributes — this rule silently made all 14 of its bars
    860 x 10px, one flat line where a distribution had been. A layout class and
@@ -1766,17 +1783,17 @@ a.apx-mark-go:hover, a.apx-mark-go:active { text-decoration: underline; }
 .conviction-tag { margin-left: 6px; }
 /* A pool card that IS a link (the Liquidity tab's source cards): plain ink,
    hover lifts the border like a table row's hover — the whole card navigates. */
-a.hdx-card-link { text-decoration: none; color: inherit; cursor: pointer; transition: border-color 140ms; }
-a.hdx-card-link:hover { border-color: var(--text-low); }
-a.hdx-card-link:focus-visible { outline: 2px solid var(--sky-deep); outline-offset: 2px; }
+a.stat-card-link { text-decoration: none; color: inherit; cursor: pointer; transition: border-color 140ms; }
+a.stat-card-link:hover { border-color: var(--text-low); }
+a.stat-card-link:focus-visible { outline: 2px solid var(--sky-deep); outline-offset: 2px; }
 /* Amount ⇄ USD unit switch on the pooled-over-time chart. */
 .liq-toggle { display: inline-flex; gap: 2px; border: 1px solid var(--separator); border-radius: 8px; padding: 2px; }
 .liq-toggle button { padding: 3px 10px; font-family: 'GeistMono'; font-size: 11px; color: var(--text-medium); border-radius: 6px; }
 .liq-toggle button.active { background: var(--bg-elev); color: var(--text-high); }
-.hdx-card .hk { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; color: var(--text-high); }
-.hdx-card .hk i { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.hdx-card .hv { font-family: 'GeistMono'; font-size: 17px; font-weight: 600; }
-.hdx-card .hs { font-family: 'GeistMono'; font-size: 11px; color: var(--text-low); }
+.stat-card .hk { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; color: var(--text-high); }
+.stat-card .hk i { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.stat-card .hv { font-family: 'GeistMono'; font-size: 17px; font-weight: 600; }
+.stat-card .hs { font-family: 'GeistMono'; font-size: 11px; color: var(--text-low); }
 
 /* ---- chart reveal: line and area gently fade in on mount. Plays once (React
    reuses the node on hover/data re-renders, so it never re-triggers).

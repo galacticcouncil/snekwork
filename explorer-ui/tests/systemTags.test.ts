@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveTag, allAssociations } from '../src/userTags'
+import { resolveTag, allAssociations } from '../src/systemTags'
 import type { AccountRef } from '../src/types'
 
 const ACC = '0x' + 'ab'.repeat(32)

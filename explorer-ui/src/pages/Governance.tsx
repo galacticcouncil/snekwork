@@ -3,7 +3,7 @@ import { useGovernanceMotions, useGovernanceOverview, useGovernanceReferenda, us
 import { useNow } from '../hooks/useNow'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { Link, paths, setQuery, useQuery, useQueryValue } from '../router'
-import { AddrPill, Crumbs, Dash, DetailTabs, EmptyRow, F, MomentLink, Pager, pendingRows, rowNav, TableSkeleton } from '../components/ui'
+import { AddrPill, Crumbs, Dash, DetailTabs, EmptyRow, F, MomentLink, NATIVE_ASSET, Pager, pendingRows, rowNav, TableSkeleton } from '../components/ui'
 import { estimateBlockCountdown } from '../utils/blockCountdown'
 import { blockSeconds, fmtDuration } from '../utils/blockTime'
 import { ayeSharePct } from '../utils/referendumVotes'
@@ -13,7 +13,7 @@ import type { ActiveReferendumCard, CollectiveMotionRow, ExplorerStats, Governan
 // referenda lead (they are what a visitor can still act on), the full OpenGov
 // and Democracy directories sit behind exact-counted tabs, and the committee
 // motions and pre-OpenGov archive stay one tab away rather than a menu tree
-// deep: Hydration's governance history is small enough to be one page, so the
+// deep: Basilisk's governance history is small enough to be one page, so the
 // page is the information architecture.
 
 const PAGE = 25
@@ -118,7 +118,8 @@ function ReferendaTable({ pallet, page, onPage, shortIndexes }: { pallet: 'openg
   const statusOptions = pallet === 'opengov'
     ? ['submitted', 'deciding', 'confirming', 'approved', 'executed', 'rejected', 'cancelled', 'timed out', 'killed']
     : ['started', 'passed', 'not passed', 'executed', 'cancelled', 'vetoed']
-  const trackOptions = ['root', 'whitelisted_caller', 'referendum_canceller', 'referendum_killer', 'general_admin', 'treasurer', 'spender', 'tipper', 'omnipool_admin', 'economic_parameters']
+  // Basilisk's OpenGov tracks, in runtime id order (0-7) — the select's value IS the id.
+  const trackOptions = ['root', 'whitelisted_caller', 'referendum_canceller', 'referendum_killer', 'general_admin', 'treasurer', 'spender', 'tipper']
   return (
     <>
       <div className="filters gov-filters">
@@ -239,7 +240,7 @@ function TipRow({ t, now }: { t: TreasuryTipRow; now: number }) {
             : t.reason}
       </td>
       <td data-label="Beneficiary">{t.beneficiary ? <AddrPill account={t.beneficiary} noCopy /> : <Dash />}</td>
-      <td data-label="Paid out" className="r mono">{t.payout ? `${F.amount(t.payout, 12)} HDX` : <Dash />}</td>
+      <td data-label="Paid out" className="r mono">{t.payout ? `${F.amount(t.payout, NATIVE_ASSET.decimals)} ${NATIVE_ASSET.symbol}` : <Dash />}</td>
       <td data-label="Status"><StatusBadge status={t.status} /></td>
       <td data-label="When" className="r mono"><MomentLink at={t.closedAt ?? t.openedAt} now={now} /></td>
     </tr>

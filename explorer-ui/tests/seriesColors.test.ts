@@ -85,7 +85,7 @@ describe('separateSeriesColors', () => {
 
 describe('resolveAssetChartColors', () => {
   const entries = [
-    { key: 'hdx', assetId: 0, base: '#f6297c' },   // Hydration pink
+    { key: 'bsx', assetId: 0, base: '#f6297c' },   // native asset, sampled pink
     { key: 'dot', assetId: 5, base: ADOT },        // Polkadot pink family…
     { key: 'vdot', assetId: 15, base: VDOT },      // …all within ΔE 5 of each other
     { key: 'usdt', assetId: 10, base: '#74c742' },
@@ -103,7 +103,7 @@ describe('resolveAssetChartColors', () => {
 
   it('lets the established listing keep its exact icon colour (canonical order is assetId)', () => {
     const out = resolveAssetChartColors(entries)
-    expect(out.get('hdx')).toBe('#f6297c') // lowest id wins the contested pink, untouched
+    expect(out.get('bsx')).toBe('#f6297c') // lowest id wins the contested pink, untouched
     expect(out.get('dot')).not.toBe(ADOT)
     expect(out.get('vdot')).not.toBe(VDOT)
   })

@@ -4,7 +4,7 @@ import { mockSync } from '../tests/fixtures/mockApi'
 // Every detail-page list pages against an exact row total for the filters it is
 // showing, so « ‹ 1…N › » and the Go-to box always name real pages. Fixture lengths:
 // activity 137 rows → 6 pages, extrinsics 1451 → 59, events 26787 → 1072 (PAGE = 25).
-const ACCOUNT = '1L53bUTBopXqDXSXjBdQXFV7jZ8FtdRZS5JoMjGq5z3Cv2zr'
+const ACCOUNT = 'bXkSQSxKBexhk3Y6Ah3MN481hsjta9Uars3MoXufiNViLy3Xo'
 const PAGE = 25
 
 // Read the fixture's own total for a filter, so these assertions stay pinned to the

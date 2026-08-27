@@ -34,7 +34,7 @@ async function installReferendum(page: Page, entryCount: number) {
     contentType: 'application/json',
     body: JSON.stringify({
       pallet: 'opengov', index: 371, title: 'Launch BIL',
-      subsquareUrl: 'https://hydration.subsquare.io/referenda/371',
+      subsquareUrl: 'https://basilisk.subsquare.io/referenda/371',
       track: 0, proposalHash: '0x1268295a7db315fd3fafbdd5c2c120162fc106864ef07909dd9341466de60d65',
       proposalCall: {
         pallet: 'Utility', callName: 'batch_all',
@@ -42,7 +42,7 @@ async function installReferendum(page: Page, entryCount: number) {
         encoded: '0x1a00', byteLength: 6431, decodeError: null,
       },
       status: 'deciding', submittedAt: null, concludedAt: null,
-      asset: { assetId: 0, symbol: 'HDX', name: 'Hydration', decimals: 12, parachainId: 2034 },
+      asset: { assetId: 0, symbol: 'BSX', name: 'Basilisk', decimals: 12, parachainId: 2090 },
       onChainTally: null,
       directTally: {
         ayes: '0', nays: '0', rawAyes: '0', rawNays: '0', support: '0',

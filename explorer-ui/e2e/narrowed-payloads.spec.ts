@@ -7,7 +7,7 @@ import { expect, test } from './fixtures/test'
 // wants the asset directory without prices or sparklines (57% of 74 kB, and only the
 // Assets page renders them). What must hold is that no surface loses anything —
 // each still gets the shape it renders, on its first request.
-const FOX = '1L53bUTBopXqDXSXjBdQXFV7jZ8FtdRZS5JoMjGq5z3Cv2zr'
+const FOX = 'bXkSQSxKBexhk3Y6Ah3MN481hsjta9Uars3MoXufiNViLy3Xo'
 
 function historyRequests(page: import('@playwright/test').Page): string[] {
   const seen: string[] = []

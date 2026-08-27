@@ -31,10 +31,10 @@ describe('parseRoute (clean-path routing, design routes)', () => {
     expect(p(paths.asset(5))).toEqual({ name: 'asset', assetId: 5 })
     expect(p(paths.extrinsicAt(100, 3))).toEqual({ name: 'extrinsic', id: '100-3' })
     expect(p(paths.tag('t1'))).toEqual({ name: 'tag', tagId: 't1' })
-    expect(p(paths.tagsHydration())).toEqual({ name: 'tags-hydration' })
+    expect(p(paths.tagsBasilisk())).toEqual({ name: 'tags-basilisk' })
   })
-  it('/tags/hydration is its own route; any other /tags/* falls back to the hub', () => {
-    expect(p('/tags/hydration')).toEqual({ name: 'tags-hydration' })
+  it('/tags/basilisk is its own route; any other /tags/* falls back to the hub', () => {
+    expect(p('/tags/basilisk')).toEqual({ name: 'tags-basilisk' })
     expect(p('/tags/whatever')).toEqual({ name: 'tags' })
   })
   it('rejects malformed encodings and unsafe numeric identifiers without throwing', () => {

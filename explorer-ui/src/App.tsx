@@ -20,7 +20,7 @@ const EventDetail = lazy(() => import('./pages/EventDetail').then(m => ({ defaul
 const Accounts = lazy(() => import('./pages/Accounts').then(m => ({ default: m.Accounts })))
 const Account = lazy(() => import('./pages/Account').then(m => ({ default: m.Account })))
 const Tags = lazy(() => import('./pages/Tags').then(m => ({ default: m.Tags })))
-const TagsHydration = lazy(() => import('./pages/Tags').then(m => ({ default: m.TagsHydration })))
+const TagsBasilisk = lazy(() => import('./pages/Tags').then(m => ({ default: m.TagsBasilisk })))
 const TagDetail = lazy(() => import('./pages/TagDetail').then(m => ({ default: m.TagDetail })))
 const Assets = lazy(() => import('./pages/Assets').then(m => ({ default: m.Assets })))
 const AssetDetail = lazy(() => import('./pages/AssetDetail').then(m => ({ default: m.AssetDetail })))
@@ -69,7 +69,7 @@ export default function App() {
       case 'accounts': return <Accounts />
       case 'account': return <Account address={route.address} />
       case 'tags': return <Tags />
-      case 'tags-hydration': return <TagsHydration />
+      case 'tags-basilisk': return <TagsBasilisk />
       case 'tag': return <TagDetail tagId={route.tagId} />
       case 'assets': return <Assets />
       case 'asset': return <AssetDetail assetId={route.assetId} />

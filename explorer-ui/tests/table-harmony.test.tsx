@@ -10,13 +10,13 @@ import type { AssetRef, ActivityRow } from '../src/types'
 // visibly wider glyph), and USD value columns are bright like in the
 // accounts/holders tables — only the placeholder stays muted.
 
-const hdx: AssetRef = { assetId: 0, symbol: 'HDX', name: 'Hydration', decimals: 12, parachainId: null }
+const bsx: AssetRef = { assetId: 0, symbol: 'BSX', name: 'Basilisk', decimals: 12, parachainId: null }
 const usdt: AssetRef = { assetId: 10, symbol: 'USDT', name: 'Tether USD', decimals: 6, parachainId: 1000 }
 
 function row(valueUsd: number | null): ActivityRow {
   return {
     type: 'trade', blockHeight: 12848613, timestamp: '2026-07-11 10:00:00', extrinsicIndex: 4,
-    who: null, to: null, asset: null, assetIn: hdx, assetOut: usdt,
+    who: null, to: null, asset: null, assetIn: bsx, assetOut: usdt,
     amount: null, amountIn: '1000000000000', amountOut: '1000000', valueUsd,
   }
 }

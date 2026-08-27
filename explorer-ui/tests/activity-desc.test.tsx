@@ -8,7 +8,7 @@ import type { ActivityRow, AssetRef } from '../src/types'
 // above it. `headed` is what tells the shared description which surface it is on, so
 // the detail page stops repeating its own header while the lists keep every fact.
 
-const hdx: AssetRef = { assetId: 0, symbol: 'HDX', name: 'Hydration', decimals: 12, parachainId: null }
+const bsx: AssetRef = { assetId: 0, symbol: 'BSX', name: 'Basilisk', decimals: 12, parachainId: null }
 
 const base: ActivityRow = {
   type: 'vote', blockHeight: 13267476, timestamp: '2026-07-22 08:01:21', eventIndex: 33, extrinsicIndex: 2,
@@ -17,9 +17,9 @@ const base: ActivityRow = {
 }
 
 const vote: ActivityRow = {
-  ...base, asset: hdx, amount: '24855324262301054799',
+  ...base, asset: bsx, amount: '24855324262301054799',
   votePallet: 'ConvictionVoting', voteAction: 'Voted', voteRef: '368', voteRefPallet: 'opengov',
-  voteRefTitle: 'Tip Request for DIA Oracle Services on Hydration',
+  voteRefTitle: 'Tip Request for DIA Oracle Services on Basilisk',
   voteSide: 'Aye', voteConviction: 'Locked5x',
 }
 
@@ -27,7 +27,7 @@ describe('ActivityDesc — vote', () => {
   it('carries the referendum, the side and the conviction in a list', () => {
     const html = renderToStaticMarkup(<ActivityDesc r={vote} />)
     expect(html).toContain('#368')
-    expect(html).toContain('Tip Request for DIA Oracle Services on Hydration')
+    expect(html).toContain('Tip Request for DIA Oracle Services on Basilisk')
     expect(html).toContain('AYE')
     // As a multiplier, not the runtime's `Locked5x`: the enum reads as neither a
     // conviction nor, in the `None` case, as a value at all.
@@ -44,7 +44,7 @@ describe('ActivityDesc — vote', () => {
 
   it('keeps only the locked capital when the page header already says the rest', () => {
     const html = renderToStaticMarkup(<ActivityDesc r={vote} headed />)
-    expect(html).toContain('HDX')
+    expect(html).toContain('BSX')
     expect(html).toContain('24.9')
     expect(html).not.toContain('#368')
     expect(html).not.toContain('Tip Request')
@@ -55,15 +55,15 @@ describe('ActivityDesc — vote', () => {
 
 describe('ActivityDesc — cross-chain', () => {
   const out: ActivityRow = {
-    ...base, type: 'xcm', xcmDir: 'out', asset: hdx, amount: '1000000000000',
+    ...base, type: 'xcm', xcmDir: 'out', asset: bsx, amount: '1000000000000',
     destChain: 'Moonbeam',
     destAccount: { kind: 'AccountKey20', address: '0x1111111111111111111111111111111111111111', raw: '0x11', subscanUrl: null },
   }
 
-  const inbound: ActivityRow = { ...base, type: 'xcm', xcmDir: 'in', asset: hdx, amount: '1000000000000', fromChain: 'AssetHub' }
+  const inbound: ActivityRow = { ...base, type: 'xcm', xcmDir: 'in', asset: bsx, amount: '1000000000000', fromChain: 'AssetHub' }
 
   // The local end, asserted through its class: the fixture asset is itself named
-  // Hydration, so matching the bare word would pass on the asset alone.
+  // Basilisk, so matching the bare word would pass on the asset alone.
   const local = /class="chain-badge chain-badge-local"/
 
   it('names the destination chain in a list', () => {
@@ -97,18 +97,18 @@ describe('ActivityDesc — cross-chain', () => {
 
   // Which side the local badge lands on is the direction: the chain the balance left
   // for an outbound hop, the chain it reached for an inbound one.
-  it('puts Hydration on the receiving side of an inbound hop', () => {
+  it('puts Basilisk on the receiving side of an inbound hop', () => {
     const html = renderToStaticMarkup(<ActivityDesc r={inbound} />)
     expect(html.indexOf('AssetHub')).toBeLessThan(html.search(local))
   })
 
-  it('puts Hydration on the sending side of an outbound hop', () => {
+  it('puts Basilisk on the sending side of an outbound hop', () => {
     const html = renderToStaticMarkup(<ActivityDesc r={out} />)
     expect(html.search(local)).toBeLessThan(html.indexOf('Moonbeam'))
   })
 
   it('leaves a same-chain transfer with no chain badges at all', () => {
-    const transfer: ActivityRow = { ...base, type: 'transfer', asset: hdx, amount: '1000000000000', to: null }
+    const transfer: ActivityRow = { ...base, type: 'transfer', asset: bsx, amount: '1000000000000', to: null }
     expect(renderToStaticMarkup(<ActivityDesc r={transfer} />)).not.toMatch(local)
   })
 })

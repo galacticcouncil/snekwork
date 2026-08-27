@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { foldVoters, packItems } from '../src/components/voteBubbleLayout'
 import { avgConvictionLabel } from '../src/utils/voteRows'
 import type { ReferendumVoter, AccountRef } from '../src/types'
-import type { ResolvedTag } from '../src/userTags'
+import type { ResolvedTag } from '../src/systemTags'
 
 const account = (id: string): AccountRef => ({ accountId: id, address: id, emoji: '', tag: null, identity: null, profile: null } as unknown as AccountRef)
 

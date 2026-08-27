@@ -1,5 +1,5 @@
 import type { AccountRef, ReferendumVoter } from '../types'
-import type { ResolvedTag } from '../userTags'
+import type { ResolvedTag } from '../systemTags'
 
 // Layout maths for the vote bubble map, kept out of the component file so the
 // component module exports only components (and so the scaling is unit-testable).

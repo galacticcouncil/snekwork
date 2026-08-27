@@ -114,8 +114,8 @@ export function ActivityDetailPage({ slug, id }: { slug: ActivitySlug; id: strin
             {ext && <>
               <div className="dt">Call</div><div className="dd"><CallPill name={ext.callName} /></div>
               <div className="dt">Result</div><div className="dd"><StatusBadge ok={ext.success} /></div>
-              {(ext.fee || ext.feePayment) && <><div className="dt">Fee</div><div className="dd mono"><FeeAmount payment={ext.feePayment} hdxRaw={ext.fee} /></div></>}
-              {hasTip(ext.feePayment, ext.tip) && <><div className="dt">Tip</div><div className="dd mono"><FeeAmount payment={ext.feePayment} hdxRaw={ext.tip} part="tip" /></div></>}
+              {(ext.fee || ext.feePayment) && <><div className="dt">Fee</div><div className="dd mono"><FeeAmount payment={ext.feePayment} nativeRaw={ext.fee} /></div></>}
+              {hasTip(ext.feePayment, ext.tip) && <><div className="dt">Tip</div><div className="dd mono"><FeeAmount payment={ext.feePayment} nativeRaw={ext.tip} part="tip" /></div></>}
             </>}
           </div></div>
         )}

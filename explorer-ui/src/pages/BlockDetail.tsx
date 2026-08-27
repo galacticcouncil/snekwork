@@ -88,7 +88,7 @@ export function BlockDetail({ height }: { height: number }) {
               <div className="dt">State root</div><div className="dd mono wrap-anywhere muted">{data.stateRoot ?? '—'}</div>
               <div className="dt">Extrinsics root</div><div className="dd mono wrap-anywhere muted">{data.extrinsicsRoot ?? '—'}</div>
               <div className="dt">Author</div><div className="dd">{data.author ? <AddrPill account={data.author} noCopy /> : <Dash />}</div>
-              <div className="dt">Spec version</div><div className="dd mono">hydration/{data.specVersion}</div>
+              <div className="dt">Spec version</div><div className="dd mono">basilisk/{data.specVersion}</div>
               <div className="dt">Extrinsics</div><div className="dd num">{data.extrinsicCount}</div>
               <div className="dt">Events</div><div className="dd num">{data.eventCount}</div>
             </div></div>

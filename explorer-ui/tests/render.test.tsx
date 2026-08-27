@@ -58,7 +58,7 @@ describe('ExternalAccountPill — tag/identity precedence on external-chain acco
     subscanUrl: 'https://assethub-polkadot.subscan.io/account/15kUt2i86LHRWCkE3D9Bg1HZAoc2smhn1fwPzDERTb1BXAkX',
     emoji: '🦑',
   }
-  it('shows the Hydration tag name — styled with the tag color — instead of the short address, keeping the external-site suffix', () => {
+  it('shows the system tag name — styled with the tag color — instead of the short address, keeping the external-site suffix', () => {
     const html = renderToStaticMarkup(<ExternalAccountPill account={{ ...base, tag: { id: 'kraken', name: 'Kraken', color: '#7b6cf6', icon: '/tag-icons/kraken.jpg' }, identity: null }} />)
     expect(html).toContain('Kraken')
     expect(html).toContain('class="tag"')

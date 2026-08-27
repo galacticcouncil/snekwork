@@ -4,7 +4,7 @@ import type { ReferendumVoter } from '../types'
 import { HEIGHT, WIDTH, foldVoters, packItems, type TagVoteGroup } from './voteBubbleLayout'
 import { avgConvictionLabel, voteSideLabel } from '../utils/voteRows'
 import { AccountEmoji, F, ShortAddr, TagIcon, moduleName } from './ui'
-import { resolveTag } from '../userTags'
+import { resolveTag } from '../systemTags'
 import type { AccountRef } from '../types'
 
 // Conviction-weighted vote power as ONE bubble map, aye and nay in the same cluster

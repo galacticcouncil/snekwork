@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures/test'
 
-const ACCOUNT = '1L53bUTBopXqDXSXjBdQXFV7jZ8FtdRZS5JoMjGq5z3Cv2zr'
+const ACCOUNT = 'bXkSQSxKBexhk3Y6Ah3MN481hsjta9Uars3MoXufiNViLy3Xo'
 
 test('account detail activity tabs expose the same filters as the global lists', async ({ page }) => {
   await page.goto(`/account/${ACCOUNT}?view=activity`)
@@ -86,7 +86,7 @@ test('tag detail activity tabs expose and send the account-level filters', async
 // The treemap selects the focused asset + its balance history, deep-linked via
 // ?asset=<assetId>.
 test('balance history selection is shareable via the asset query param', async ({ page }) => {
-  const ACCOUNT = '1L53bUTBopXqDXSXjBdQXFV7jZ8FtdRZS5JoMjGq5z3Cv2zr'
+  const ACCOUNT = 'bXkSQSxKBexhk3Y6Ah3MN481hsjta9Uars3MoXufiNViLy3Xo'
   await page.goto(`/account/${ACCOUNT}?view=balances`)
   const tiles = page.locator('.tm-tile:not(.tm-other)')
   await expect(tiles.first()).toBeVisible()

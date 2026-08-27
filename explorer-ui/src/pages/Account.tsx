@@ -10,14 +10,11 @@ import { CloseAccountsSection } from '../components/CloseAccountsSection'
 import { ScopedActivity } from '../components/ScopedActivity'
 import { activityListCount, voteListCount } from '../utils/activityPaging'
 import { VotesTab } from '../components/VotesTab'
-import { allAssociations } from '../userTags'
+import { allAssociations } from '../systemTags'
 
-// Hydration opens any route with the account preselected, so the app shows this
-// account's balances and positions. Deep-link to the swap page: it is the app's
-// landing route, and every other section stays one click away.
-function hydrationAppUrl(address: string): string {
-  return `https://app.hydration.net/trade/swap/market?account=${encodeURIComponent(address)}`
-}
+// The Basilisk app itself. It has no per-account deep link, so this opens the
+// app rather than this account inside it.
+const BASILISK_APP_URL = 'https://bsx.fi/'
 
 export function Account({ address }: { address: string }) {
   const { data, isLoading, isError } = useAddress(address)
@@ -25,7 +22,7 @@ export function Account({ address }: { address: string }) {
   // The proxy announcement delays are block counts the page states in time, so
   // they convert at the chain's measured pace.
   const { data: stats } = useStats(!!data?.proxy)
-  const canonicalAddress = data ? (data.evmAddress ?? data.ss58Polkadot) : null
+  const canonicalAddress = data ? data.ss58 : null
   const rawView = useQueryValue('view', 'overview')
   const legacyAtab = useQueryValue('atab', '')
   // Old links nested Extrinsics/Events under ?view=activity&atab=…; both are
@@ -51,25 +48,25 @@ export function Account({ address }: { address: string }) {
 
   // Document title mirrors the header's display-name logic: best-known name
   // (module > identity > emoji name) plus the short canonical address.
-  const shortAddr = data ? F.shortAddr(data.evmAddress ?? data.ss58Polkadot) : null
+  const shortAddr = data ? F.shortAddr(data.ss58) : null
   // The document title names the ACCOUNT itself (module → identity → emoji
   // name) — its tag memberships are chips on the page, not its name.
   const acctName = data ? (moduleName(data.accountId) ?? data.identity?.display ?? data.emojiName ?? emojiName(data.emoji)) : null
   useDocumentTitle(data ? (acctName ? `${acctName} · ${shortAddr}` : shortAddr) : undefined)
 
-  // Canonicalize the URL: always show the Polkadot SS58 (substrate) or EVM H160
-  // address, never the raw AccountId32 / Hydration SS58. Replace (not push) so the
-  // back button still works.
+  // Canonicalize the URL: always show the Basilisk SS58, never the raw
+  // AccountId32 or the Kusama form. Replace (not push) so the back button still
+  // works.
   useEffect(() => {
     if (!data) return
-    const canonical = data.evmAddress ?? data.ss58Polkadot
+    const canonical = data.ss58
     if (canonical && address !== canonical) redirect(`${paths.account(canonical)}${window.location.search}`)
   }, [data, address])
 
   return (
     <div className="wrap">
       <div className="page-head">
-        <Crumbs items={[{ label: 'Home', to: paths.dashboard() }, { label: 'Accounts', to: paths.accounts() }, { label: data ? F.shortAddr(data.evmAddress ?? data.ss58Polkadot) : '…' }]} />
+        <Crumbs items={[{ label: 'Home', to: paths.dashboard() }, { label: 'Accounts', to: paths.accounts() }, { label: data ? F.shortAddr(data.ss58) : '…' }]} />
       </div>
 
       {isError ? <div className="detail-card" style={{ padding: 32, textAlign: 'center', color: 'var(--text-medium)' }}>Address not recognized</div>
@@ -83,7 +80,7 @@ export function Account({ address }: { address: string }) {
               {/* Above the header card and right-aligned, matching
                   "Open in Subsquare" on a referendum. */}
               <div className="ext-link-row">
-                <a className="ext-link" href={hydrationAppUrl(canonicalAddress ?? address)} target="_blank" rel="noopener">Open in Hydration ↗</a>
+                <a className="ext-link" href={BASILISK_APP_URL} target="_blank" rel="noopener">Open in Basilisk ↗</a>
               </div>
               <div className="acct-head">
                 {/* The page is about the ACCOUNT, so the header always wears the
@@ -104,12 +101,12 @@ export function Account({ address }: { address: string }) {
                       identities card shows "EVM (H160)") — the badge forced the
                       address to wrap mid-token on phones. */}
                   <div className="full">
-                    <span className="mono"><ShortAddr addr={data.evmAddress ?? data.ss58Polkadot} full /></span> <Copy text={data.evmAddress ?? data.ss58Polkadot} />
+                    <span className="mono"><ShortAddr addr={data.ss58} full /></span> <Copy text={data.ss58} />
                   </div>
                   {associations.length > 0 && (
                     <div className="row gap6" style={{ marginTop: 2, flexWrap: 'wrap', alignItems: 'center' }}>
                       <span className="muted" style={{ fontFamily: 'GeistMono', fontSize: 11 }}>Tags</span>
-                      {associations.map(a => <UserTagPill key={`system-${a.id}`} tag={a} address={data.evmAddress ?? data.ss58Polkadot} noCopy noMemberSuffix />)}
+                      {associations.map(a => <UserTagPill key={`system-${a.id}`} tag={a} address={data.ss58} noCopy noMemberSuffix />)}
                     </div>
                   )}
                 </div>
@@ -136,7 +133,7 @@ export function Account({ address }: { address: string }) {
                   const handle = data.identity.twitter.replace(/^@/, '')
                   rows.push({ dt: 'X', dd: <span className="mono"><a href={`https://x.com/${handle}`} target="_blank" rel="noopener">@{handle}</a></span> })
                 }
-                if (data.evmAddress && data.ss58Polkadot) rows.push({ dt: 'Polkadot (SS58)', dd: <span className="mono"><ShortAddr addr={data.ss58Polkadot} full /> <Copy text={data.ss58Polkadot} /></span> })
+                if (data.ss58Kusama) rows.push({ dt: 'Kusama (SS58)', dd: <span className="mono"><ShortAddr addr={data.ss58Kusama} full /> <Copy text={data.ss58Kusama} /></span> })
                 if (!rows.length) return null
                 return (
                   <div className="id-card">

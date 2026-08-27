@@ -7,8 +7,8 @@ import { parseUtcTimestamp } from '../utils/time'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { voteSideLabel } from '../utils/voteRows'
 import { CAT, LIQ_LABELS } from './activityColors'
-import { resolveTag } from '../userTags'
-import type { ResolvedTag } from '../userTags'
+import { resolveTag } from '../systemTags'
+import type { ResolvedTag } from '../systemTags'
 
 /* ============ shared formatters ============ */
 const SUBSCRIPT = '₀₁₂₃₄₅₆₇₈₉'
@@ -258,45 +258,43 @@ export function AssetAmount({ asset, raw, formatted, link = true }: { asset: Ass
 }
 
 // The native asset, for the surfaces that render an amount the chain denominates
-// in HDX without naming an asset alongside it (a transaction fee, a tip).
-export const NATIVE_ASSET: AssetRef = { assetId: 0, iconAssetId: 0, symbol: 'HDX', name: 'Hydration', decimals: 12, parachainId: null }
+// in BSX without naming an asset alongside it (a transaction fee, a tip).
+export const NATIVE_ASSET: AssetRef = { assetId: 0, iconAssetId: 0, symbol: 'BSX', name: 'Basilisk', decimals: 12, parachainId: null }
 
 // A transaction fee, in the asset it was actually charged in.
 //
-// The chain computes every fee in HDX, but an account can nominate any accepted
-// currency to pay in (EVM accounts default to WETH) — so for roughly a fifth of
-// fee-paying extrinsics the HDX figure names an asset that never left the
-// account. When the API resolved what was really debited (`payment`), that is
-// the whole truth of the row and replaces the HDX number; `hdxRaw` carries the
-// ordinary HDX-paying case.
+// The chain computes every fee in BSX, but an account can nominate any accepted
+// currency to pay in — so for a fee-paying extrinsic the BSX figure can name an
+// asset that never left the account. When the API resolved what was really
+// debited (`payment`), that is the whole truth of the row and replaces the BSX
+// number; `nativeRaw` carries the ordinary BSX-paying case.
 //
 // Either way it renders as the explorer's amount convention — icon, ticker, then
 // the figure — so a fee reads the same whichever asset paid it, and the one that
-// is not HDX is legible as such at a glance rather than by its magnitude. The
+// is not BSX is legible as such at a glance rather than by its magnitude. The
 // exact raw amount stays on the title, since a converted fee can be small enough
 // to round away entirely.
 // Whether the extrinsic actually tipped, in whichever asset paid. Surfaces that
 // curate their rows (an activity, a swap, a hover card) spend a line on the tip
 // only when there is one — most transactions carry none, so an unconditional
 // "Tip 0" would be noise, and the extrinsic's own page states it either way.
-export function hasTip(payment?: FeePayment | null, hdxTipRaw?: string | null): boolean {
-  const raw = payment ? payment.tipAmount : hdxTipRaw
+export function hasTip(payment?: FeePayment | null, nativeTipRaw?: string | null): boolean {
+  const raw = payment ? payment.tipAmount : nativeTipRaw
   return raw != null && raw !== '' && !/^0*$/.test(raw)
 }
 
-export function FeeAmount({ payment, hdxRaw, part = 'fee', link = true }: {
+export function FeeAmount({ payment, nativeRaw, part = 'fee', link = true }: {
   payment?: FeePayment | null
-  hdxRaw?: string | null
+  nativeRaw?: string | null
   part?: 'fee' | 'tip'
   link?: boolean
 }) {
   const asset = payment?.asset ?? NATIVE_ASSET
-  // A tip is zero only when there was an HDX figure saying so. An EVM
-  // transaction has none — its priority fee is bundled into the gas charge and
-  // cannot be separated — so the tip there is unknown, not zero.
+  // A tip is zero only when there was a native-currency figure saying so; where
+  // there is none the tip is unknown, not zero.
   const raw = payment
-    ? (part === 'tip' ? payment.tipAmount ?? (hdxRaw != null ? '0' : null) : payment.amount)
-    : hdxRaw
+    ? (part === 'tip' ? payment.tipAmount ?? (nativeRaw != null ? '0' : null) : payment.amount)
+    : nativeRaw
   if (raw == null || raw === '') return <Dash />
   return (
     <span title={`${F.preciseAmount(raw, asset.decimals)} ${asset.symbol}`}>
@@ -321,13 +319,13 @@ export function ShortAddr({ addr, full }: { addr: string; full?: boolean }) {
 
 /* ============ asset logo gradient ============ */
 const ASSET_COLORS: Record<string, [string, string]> = {
-  HDX: ['#e53e76', '#b454da'], DOT: ['#2C89E9', '#95caff'], USDT: ['#74C742', '#45AC1F'],
+  BSX: ['#4FFFB0', '#B3FF8F'], DOT: ['#2C89E9', '#95caff'], USDT: ['#74C742', '#45AC1F'],
   USDC: ['#2C89E9', '#1f5cab'], HOLLAR: ['#b3cf92', '#74C742'], DAI: ['#F7BF06', '#e3ae00'],
   WBTC: ['#F7BF06', '#e3ae00'], iBTC: ['#F7BF06', '#e3ae00'], tBTC: ['#F7BF06', '#e3ae00'], WETH: ['#6e7588', '#a8afc0'],
   vDOT: ['#cc6ef4', '#dfb1f3'], GDOT: ['#2C89E9', '#95caff'], aDOT: ['#cc6ef4', '#dfb1f3'], GLMR: ['#74C742', '#45AC1F'],
   ASTR: ['#ff6868', '#d83b3b'], CFG: ['#dfb1f3', '#cc6ef4'],
 }
-const PALETTE: [string, string][] = [['#e53e76', '#b454da'], ['#2C89E9', '#95caff'], ['#74C742', '#45AC1F'], ['#cc6ef4', '#dfb1f3'], ['#F7BF06', '#e3ae00'], ['#ff6868', '#d83b3b'], ['#6e7588', '#a8afc0'], ['#b3cf92', '#74C742']]
+const PALETTE: [string, string][] = [['#4FFFB0', '#B3FF8F'], ['#2C89E9', '#95caff'], ['#74C742', '#45AC1F'], ['#cc6ef4', '#dfb1f3'], ['#F7BF06', '#e3ae00'], ['#ff6868', '#d83b3b'], ['#6e7588', '#a8afc0'], ['#b3cf92', '#74C742']]
 // Aave aTokens (aUSDC, aUSDT, aEURC…) wrap an underlying token — color them as the
 // underlying (aUSDC reads like USDC) rather than hashing the wrapped symbol to a
 // distinct color. A curated entry for the aToken itself (e.g. aDOT) still wins.
@@ -368,7 +366,7 @@ export function originChainIconUrl(origin: AssetOrigin): string {
 }
 
 // Avoid noisy browser-level blocked requests for assets whose CDN icon format is
-// known from the current Hydration registry. Missing icons go straight to the
+// known from the current Basilisk registry. Missing icons go straight to the
 // local gradient fallback; PNG-only icons skip the missing SVG request.
 const PNG_ICON_IDS = new Set([
   4, 20, 35, 36, 38, 39, 43, 1000085, 1000189, 1000794, 1000796, 1000809,
@@ -397,8 +395,8 @@ export function iconIsSampleable(assetId: number): boolean {
 // svg, so the icon only appears after a manual refresh).
 export function assetIconCandidates(srcId: number, origin?: AssetOrigin | null): string[] {
   const out: string[] = []
-  // Like Hydration UI, globally-consensused assets use their canonical origin
-  // contract icon. Keep the local Hydration icon as a fallback for incomplete
+  // Globally-consensused assets use their canonical origin contract icon. Keep
+  // the local registry icon as a fallback for incomplete
   // external metadata. Polkadot-origin assets continue using the curated local
   // icon and get only an origin-chain badge.
   if (origin?.ecosystem === 'ethereum') {
@@ -1265,7 +1263,7 @@ function ChartSkPlot() {
   )
 }
 // Reserves a fixed-height box for a chart whose loaded card has its own bespoke
-// shape (the /hdx and /hollar sections, where each card holds a differently sized
+// shape (the liquidity pool cards, where each card holds a differently sized
 // column/mirrored/stacked chart). Where the loaded card is the standard
 // `.pf-card` + `.apx-chart` pair, use ChartCardSkeleton instead — it needs no
 // number and stays correct across breakpoints.

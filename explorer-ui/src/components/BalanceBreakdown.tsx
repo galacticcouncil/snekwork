@@ -41,7 +41,7 @@ const causeLabel = (cause: string) => cause.split('+').map(c => sourceMeta(c).la
 const causeColor = (cause: string) => sourceMeta(cause.split('+')[0]).color
 
 // Ordinal same-hue tones: sooner-free = lighter ("shadows" of the cause color).
-// GIGAHDX's brand black can't lighten toward the dark surface, so its shades
+// A near-black brand color can't lighten toward the dark surface, so its shades
 // mix toward a neutral slate that works on both themes.
 const tone = (color: string, pct: number) =>
   `color-mix(in srgb, ${color} ${pct}%, ${color === '#000000' ? '#98a0b4' : 'var(--bg-elev)'})`
@@ -94,7 +94,7 @@ function AggregateBar({ segments }: { segments: Segment[] }) {
     return acc
   }, [])
   return (
-    <div className="hdx-chart-wrap" onMouseLeave={() => setHover(null)}>
+    <div className="chart-wrap" onMouseLeave={() => setHover(null)}>
       <div className="bd-agg" aria-hidden="true">
         {placed.map(s => (
           <span
@@ -104,7 +104,7 @@ function AggregateBar({ segments }: { segments: Segment[] }) {
           />
         ))}
       </div>
-      {hover && <div className="hdx-tip" style={{ left: `${Math.min(88, Math.max(12, hover.leftPct))}%`, top: 22 }}>{hover.tip}</div>}
+      {hover && <div className="chart-tip" style={{ left: `${Math.min(88, Math.max(12, hover.leftPct))}%`, top: 22 }}>{hover.tip}</div>}
     </div>
   )
 }

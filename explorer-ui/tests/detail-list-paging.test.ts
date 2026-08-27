@@ -50,8 +50,8 @@ describe('list totals track their own filters', () => {
     expect(activityListCount('all', '', {})).toEqual({
       tab: 'activity', type: 'all', action: undefined, token: undefined, min: undefined, from: undefined, to: undefined,
     })
-    expect(activityListCount('vote', 'Voted', { token: 'HDX', min: '100', from: '2024-01-01', to: '2024-02-01' })).toEqual({
-      tab: 'activity', type: 'vote', action: 'Voted', token: 'HDX', min: '100', from: '2024-01-01', to: '2024-02-01',
+    expect(activityListCount('vote', 'Voted', { token: 'BSX', min: '100', from: '2024-01-01', to: '2024-02-01' })).toEqual({
+      tab: 'activity', type: 'vote', action: 'Voted', token: 'BSX', min: '100', from: '2024-01-01', to: '2024-02-01',
     })
   })
 
@@ -60,7 +60,7 @@ describe('list totals track their own filters', () => {
     const variants = [
       activityListCount('trade', '', {}),
       activityListCount('all', 'Swap', {}),
-      activityListCount('all', '', { token: 'HDX' }),
+      activityListCount('all', '', { token: 'BSX' }),
       activityListCount('all', '', { min: '10' }),
       activityListCount('all', '', { from: '2024-01-01' }),
       activityListCount('all', '', { to: '2024-01-01' }),

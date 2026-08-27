@@ -10,7 +10,7 @@ import type { AssetBalanceHistory } from '../types'
 export function AssetBalanceChart({ selected, all }: { selected: AssetBalanceHistory; all: AssetBalanceHistory[] }) {
   const cur = selected
   const { series, dates } = balanceChartSeries(selected, all)
-  // Hover/x-axis value: token balance with the asset's symbol (e.g. "12.3456 HDX").
+  // Hover/x-axis value: token balance with the asset's symbol (e.g. "12.3456 BSX").
   const fmtBal = (v: number) => `${F.amount(String(Math.round(v * 10 ** cur.asset.decimals)), cur.asset.decimals)} ${cur.asset.symbol}`
   return (
     <div className="tm-hist">

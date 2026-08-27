@@ -82,8 +82,8 @@ export function ExtrinsicDetail({ id }: { id: string }) {
               {!data.success && data.errorReason && <FailureReasonRow reason={data.errorReason} />}
               {data.signer
                 ? <><div className="dt">Signer</div><div className="dd"><AddrPill account={data.signer} /></div>
-                  <div className="dt">Fee</div><div className="dd mono"><FeeAmount payment={data.feePayment} hdxRaw={data.fee} /></div>
-                  <div className="dt">Tip</div><div className="dd mono"><FeeAmount payment={data.feePayment} hdxRaw={data.tip} part="tip" /></div></>
+                  <div className="dt">Fee</div><div className="dd mono"><FeeAmount payment={data.feePayment} nativeRaw={data.fee} /></div>
+                  <div className="dt">Tip</div><div className="dd mono"><FeeAmount payment={data.feePayment} nativeRaw={data.tip} part="tip" /></div></>
                 : <><div className="dt">Type</div><div className="dd"><span className="badge pending" style={{ background: 'var(--panel)', color: 'var(--text-medium)' }}>Inherent</span></div></>}
             </div></div>
 
@@ -117,7 +117,7 @@ export function ExtrinsicDetail({ id }: { id: string }) {
                 block_height: data.blockHeight, extrinsic_index: data.index, extrinsic_hash: data.hash,
                 call_name: data.callName, signer: data.signer?.address ?? null, success: data.success,
                 fee: data.fee, tip: data.tip,
-                // `fee`/`tip` are the HDX-equivalent the chain computed; this is what
+                // `fee`/`tip` are the BSX-equivalent the chain computed; this is what
                 // was actually debited, when that was a different asset.
                 ...(data.feePayment ? {
                   fee_asset: data.feePayment.asset.symbol,

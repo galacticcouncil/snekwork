@@ -13,7 +13,7 @@ export function useTheme() {
     document.documentElement.setAttribute('data-theme', theme)
     try { localStorage.setItem('explorer-theme', theme) } catch { /* ignore */ }
     const meta = document.querySelector('meta[name="theme-color"]')
-    if (meta) meta.setAttribute('content', theme === 'dark' ? '#030816' : '#EFEDEA')
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#14161A' : '#EEF1EF')
   }, [theme])
   const toggle = useCallback(() => setTheme(t => (t === 'dark' ? 'light' : 'dark')), [])
   return { theme, toggle }

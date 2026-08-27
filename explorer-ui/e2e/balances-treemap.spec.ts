@@ -6,7 +6,7 @@ import { expect, test } from './fixtures/test'
 // each face shows % above value, and clicking a tile focuses that asset — showing
 // its value, amount and reserved lock, then its balance-history graph. Rows below
 // the map cover assets without a market price and assets held only in the past.
-const FOX = '1L53bUTBopXqDXSXjBdQXFV7jZ8FtdRZS5JoMjGq5z3Cv2zr'
+const FOX = 'bXkSQSxKBexhk3Y6Ah3MN481hsjta9Uars3MoXufiNViLy3Xo'
 
 async function area(el: import('@playwright/test').Locator): Promise<number> {
   const b = (await el.boundingBox())!
@@ -136,7 +136,7 @@ test.describe('balances treemap — desktop', () => {
     await expect(page.locator('.tm-detail-sym')).toHaveText(sym2)
   })
 
-  test('focusing HDX shows the aggregated bar and the unlock schedule', async ({ page }) => {
+  test('focusing BSX shows the aggregated bar and the unlock schedule', async ({ page }) => {
     await page.goto(`/account/${FOX}?view=balances&asset=0`)
     const bd = page.locator('[data-testid="balance-breakdown"]')
     await expect(bd).toBeVisible()
@@ -228,7 +228,7 @@ test.describe('balances treemap — desktop', () => {
 
   // The owl folds a long dust tail into an aggregated "Other" tile.
   test('hovering "Other" does not shift the section; it inspects on click', async ({ page }) => {
-    const OWL = '1NPoMQbiA6trJKkjB35uk96MeJD4PGWkLQLH7k7hXEkZpiba'
+    const OWL = 'bXkpnLDkUgStrionA9EsFKxAs1vtB2f28MmpiHqZRpaLpTnAa'
     await page.goto(`/account/${OWL}?view=balances`)
     const other = page.locator('.tm-tile.tm-other')
     await expect(other).toBeVisible()

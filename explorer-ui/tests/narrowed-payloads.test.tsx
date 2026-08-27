@@ -113,7 +113,7 @@ describe('the token filter offers the same options from either asset shape', () 
     // shared /activity?token=5 link showing "5" instead of "DOT" until it was opened.
     const options = tokenFilterOptions(projected)
     expect(options.find(option => option.value === '5')?.label).toBe('DOT')
-    expect(options.find(option => option.value === '0')?.label).toBe('HDX')
+    expect(options.find(option => option.value === '0')?.label).toBe('BSX')
     // Duplicate symbols stay distinguishable because the id is the option value.
     expect(new Set(options.map(option => option.value)).size).toBe(12)
   })

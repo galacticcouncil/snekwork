@@ -48,8 +48,8 @@ function SourceCard({ s, asset }: { s: AssetLiquiditySource; asset: AssetRef }) 
     </>
   )
   return to
-    ? <Link to={to} className="hdx-card hdx-card-link" ariaLabel={`${s.name} pool`}>{body}</Link>
-    : <div className="hdx-card">{body}</div>
+    ? <Link to={to} className="stat-card stat-card-link" ariaLabel={`${s.name} pool`}>{body}</Link>
+    : <div className="stat-card">{body}</div>
 }
 
 export function AssetLiquidityTab({ asset }: { asset: AssetRef }) {
@@ -61,8 +61,8 @@ export function AssetLiquidityTab({ asset }: { asset: AssetRef }) {
   if (isLoading || !data) {
     return (
       <>
-        <div className="hdx-cards pool-cards" style={{ marginTop: 0 }}>
-          {[0, 1, 2, 3].map(i => <div key={i} className="hdx-card" aria-hidden="true"><ChartSkeleton h={92} /></div>)}
+        <div className="stat-cards pool-cards" style={{ marginTop: 0 }}>
+          {[0, 1, 2, 3].map(i => <div key={i} className="stat-card" aria-hidden="true"><ChartSkeleton h={92} /></div>)}
         </div>
         <div className="pf-card" style={{ marginTop: 14 }}><ChartSkeleton h={220} /></div>
       </>
@@ -96,7 +96,7 @@ export function AssetLiquidityTab({ asset }: { asset: AssetRef }) {
                 baseline alignment, and the page is already about this asset. */}
             <span style={{ color: 'var(--text-low)', textTransform: 'none', letterSpacing: 0 }}> · {F.amount(data.totalAmount, asset.decimals)} {asset.symbol} pooled across {data.sources.length} {data.sources.length === 1 ? 'pool' : 'pools'} · {F.usd(data.totalUsd)}</span>
           </div>
-          <div className="hdx-cards pool-cards" style={{ marginTop: 0 }}>
+          <div className="stat-cards pool-cards" style={{ marginTop: 0 }}>
             {cards.map((s, i) => <SourceCard key={`${s.kind}:${s.poolId ?? i}`} s={s} asset={asset} />)}
           </div>
           {rest.length > 0 && (

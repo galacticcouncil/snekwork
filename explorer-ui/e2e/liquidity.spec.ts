@@ -5,7 +5,7 @@ import { expect, test } from './fixtures/test'
 
 test('asset Liquidity tab lists sources by value and links to the pool page', async ({ page }) => {
   await page.goto('/asset/5?tab=liquidity')
-  const cards = page.locator('.pool-cards .hdx-card')
+  const cards = page.locator('.pool-cards .stat-card')
   await expect(cards.first()).toBeVisible()
 
   // DOT sits in both mock pairs, and the fixture's largest DOT holding is the
@@ -17,7 +17,7 @@ test('asset Liquidity tab lists sources by value and links to the pool page', as
   // History chart present with its unit toggle.
   await expect(page.locator('.liq-toggle')).toBeVisible()
 
-  await page.locator('.pool-cards .hdx-card', { hasText: 'vDOT / DOT' }).click()
+  await page.locator('.pool-cards .stat-card', { hasText: 'vDOT / DOT' }).click()
   await expect(page).toHaveURL(/\/pool\/690$/)
 })
 
@@ -42,7 +42,7 @@ test('pool detail shows the pool card, its composition and its LPs', async ({ pa
 
 test('a second pool renders the same way, and an unknown pool 404s', async ({ page }) => {
   await page.goto('/pool/1000194')
-  await expect(page.locator('.page-title')).toContainText('HDX / DOT')
+  await expect(page.locator('.page-title')).toContainText('BSX / DOT')
   await expect(page.locator('.detail-card')).toContainText('Trade fee')
 
   await page.goto('/pool/424242')
@@ -55,7 +55,7 @@ test.describe('mobile', () => {
   for (const path of ['/asset/5?tab=liquidity', '/pool/690']) {
     test(`no horizontal overflow at 390px on ${path}`, async ({ page }) => {
       await page.goto(path)
-      await expect(page.locator('.detail-card, .pool-cards .hdx-card').first()).toBeVisible()
+      await expect(page.locator('.detail-card, .pool-cards .stat-card').first()).toBeVisible()
       const overflow = await page.evaluate(() => {
         const el = document.scrollingElement!
         return el.scrollWidth - el.clientWidth

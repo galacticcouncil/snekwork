@@ -123,8 +123,8 @@ export function TradeDetailPage({ id }: { id: string; slug?: 'swap' }) {
                 <div className="dt">Result</div><div className="dd"><StatusBadge ok={data.success} /></div>
                 {extId && <><div className="dt">Extrinsic</div><div className="dd mono"><Link to={paths.extrinsic(extId)} className="hash">{extId}</Link></div></>}
                 {!extId && eventId && <><div className="dt">Event</div><div className="dd mono"><Link to={paths.event(eventId)} className="hash">{eventId}</Link></div></>}
-                {(data.extrinsicFee || data.feePayment) && <><div className="dt">Fee</div><div className="dd"><FeeAmount payment={data.feePayment} hdxRaw={data.extrinsicFee} /></div></>}
-                {hasTip(data.feePayment, data.extrinsicTip) && <><div className="dt">Tip</div><div className="dd"><FeeAmount payment={data.feePayment} hdxRaw={data.extrinsicTip} part="tip" /></div></>}
+                {(data.extrinsicFee || data.feePayment) && <><div className="dt">Fee</div><div className="dd"><FeeAmount payment={data.feePayment} nativeRaw={data.extrinsicFee} /></div></>}
+                {hasTip(data.feePayment, data.extrinsicTip) && <><div className="dt">Tip</div><div className="dd"><FeeAmount payment={data.feePayment} nativeRaw={data.extrinsicTip} part="tip" /></div></>}
               </div></div>
 
               {hasRoute && <>

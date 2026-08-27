@@ -3,13 +3,13 @@ import { expect, test } from './fixtures/test'
 
 // The phone header inlines a 28px avatar in front of the name and pulls every
 // meta row after it back by that avatar's 38px indent, so the address/note
-// rows sit on the card's own left edge. The Hydration Tags hero renders no
+// rows sit on the card's own left edge. The Basilisk Tags hero renders no
 // avatar at all, and the pull-back has nothing to undo there: unscoped, it
 // dragged every row but the title 38px OUTSIDE the card. Measured against the
 // header's content box, which is where a meta row belongs on both surfaces.
 test.use({ viewport: { width: 390, height: 844 } })
 
-const FOX = '1L53bUTBopXqDXSXjBdQXFV7jZ8FtdRZS5JoMjGq5z3Cv2zr'
+const FOX = 'bXkSQSxKBexhk3Y6Ah3MN481hsjta9Uars3MoXufiNViLy3Xo'
 
 async function metaRowLefts(page: Page): Promise<{ contentLeft: number; rows: number[] }> {
   return page.evaluate(() => {
@@ -26,9 +26,9 @@ async function metaRowLefts(page: Page): Promise<{ contentLeft: number; rows: nu
   })
 }
 
-test('the Hydration Tags hero keeps its subtitle inside the card', async ({ page }) => {
+test('the Basilisk Tags hero keeps its subtitle inside the card', async ({ page }) => {
   await page.goto('/tags')
-  const hero = page.locator('.acct-head', { hasText: 'Hydration Tags' })
+  const hero = page.locator('.acct-head', { hasText: 'Basilisk Tags' })
   await expect(hero).toBeVisible()
   await expect(hero.locator('.acct-avatar')).toHaveCount(0)
 

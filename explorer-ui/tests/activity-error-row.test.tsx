@@ -46,7 +46,7 @@ describe('activity table request failures', () => {
       extrinsicIndex: 1,
       who: null,
       to: null,
-      asset: { assetId: 0, symbol: 'HDX', name: 'HDX', decimals: 12, icon: '', origin: null },
+      asset: { assetId: 0, symbol: 'BSX', name: 'BSX', decimals: 12, icon: '', origin: null },
       assetIn: null,
       assetOut: null,
       amount: '1000000000000',
@@ -57,6 +57,6 @@ describe('activity table request failures', () => {
     const html = renderToStaticMarkup(<ActivityTable rows={[row as never]} now={0} error={new ApiError(503, 'boom')} />)
 
     expect(html).not.toContain('table-error')
-    expect(html).toContain('HDX')
+    expect(html).toContain('BSX')
   })
 })

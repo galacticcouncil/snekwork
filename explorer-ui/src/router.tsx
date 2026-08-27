@@ -34,7 +34,7 @@ export type Route =
   | { name: 'accounts' }
   | { name: 'account'; address: string }
   | { name: 'tags' }
-  | { name: 'tags-hydration' }
+  | { name: 'tags-basilisk' }
   | { name: 'tag'; tagId: string }
   | { name: 'assets' }
   | { name: 'asset'; assetId: number }
@@ -85,13 +85,13 @@ export function parseRoute(loc: string): Route {
     case 'accounts': return { name: 'accounts' }
     case 'account':
       return parts[1] ? { name: 'account', address: parts[1] } : { name: 'accounts' }
-    // /tags/hydration is the system-tag directory's own page; any other
+    // /tags/basilisk is the system-tag directory's own page; any other
     // /tags/* segment (there are none in product today) falls back to the hub.
-    case 'tags': return parts[1] === 'hydration' ? { name: 'tags-hydration' } : { name: 'tags' }
+    case 'tags': return parts[1] === 'basilisk' ? { name: 'tags-basilisk' } : { name: 'tags' }
     case 'tag':
       return parts[1] ? { name: 'tag', tagId: parts[1] } : { name: 'tags' }
     case 'assets': return { name: 'assets' }
-    // /referendum/<pallet>/<index>. The pallet is part of the identity: Hydration
+    // /referendum/<pallet>/<index>. The pallet is part of the identity: Basilisk
     // voted through Democracy (0-206) and OpenGov (0-369) and both index from 0.
     case 'governance': return { name: 'governance' }
     case 'referendum': {
@@ -234,7 +234,7 @@ export const paths = {
   accounts: () => '/accounts',
   account: (addr: string) => `/account/${encodeURIComponent(addr)}`,
   tags: () => '/tags',
-  tagsHydration: () => '/tags/hydration',
+  tagsBasilisk: () => '/tags/basilisk',
   tag: (tagId: string) => `/tag/${encodeURIComponent(tagId)}`,
   assets: () => '/assets',
   asset: (assetId: number) => `/asset/${assetId}`,

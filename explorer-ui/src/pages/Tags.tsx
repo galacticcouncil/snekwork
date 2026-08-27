@@ -3,13 +3,13 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { Link, paths } from '../router'
 import { Crumbs, EmptyRow, TableSkeleton, TagIcon, rowNav } from '../components/ui'
 
-// The one clickable row on the hub: the built-in Hydration directory. Its own
-// table lives at /tags/hydration (TagsHydration below).
-function HydrationTagsHero({ tagCount }: { tagCount: number }) {
+// The one clickable row on the hub: the built-in Basilisk directory. Its own
+// table lives at /tags/basilisk (TagsBasilisk below).
+function BasiliskTagsHero({ tagCount }: { tagCount: number }) {
   return (
-    <Link to={paths.tagsHydration()} className="acct-head" style={{ textDecoration: 'none', color: 'inherit' }}>
+    <Link to={paths.tagsBasilisk()} className="acct-head" style={{ textDecoration: 'none', color: 'inherit' }}>
       <div className="acct-meta">
-        <div className="tag">Hydration Tags</div>
+        <div className="tag">Basilisk Tags</div>
         <div className="full"><span className="muted">{tagCount} tag{tagCount === 1 ? '' : 's'} · the built-in directory</span></div>
       </div>
       <span className="muted" aria-hidden="true" style={{ marginLeft: 'auto', fontSize: 22 }}>→</span>
@@ -30,7 +30,7 @@ export function Tags() {
         <div className="page-title">Tags</div>
       </div>
 
-      <HydrationTagsHero tagCount={systemTags?.length ?? 0} />
+      <BasiliskTagsHero tagCount={systemTags?.length ?? 0} />
     </div>
   )
 }
@@ -39,16 +39,16 @@ export function Tags() {
 // there is intentionally no in-app create/edit/delete. Moved here from /tags
 // (now the discovery hub above) to its own route so a direct link to "the
 // tag table" still works.
-export function TagsHydration() {
-  useDocumentTitle('Hydration Tags')
+export function TagsBasilisk() {
+  useDocumentTitle('Basilisk Tags')
   const { data, isLoading } = useTags()
   const tags = data ?? []
 
   return (
     <div className="wrap">
       <div className="page-head">
-        <Crumbs items={[{ label: 'Home', to: paths.dashboard() }, { label: 'Tags', to: paths.tags() }, { label: 'Hydration' }]} />
-        <div className="page-title">Hydration Tags <span className="sub">{tags.length} tags</span></div>
+        <Crumbs items={[{ label: 'Home', to: paths.dashboard() }, { label: 'Tags', to: paths.tags() }, { label: 'Basilisk' }]} />
+        <div className="page-title">Basilisk Tags <span className="sub">{tags.length} tags</span></div>
       </div>
 
       <div className="muted" style={{ fontFamily: 'GeistMono', fontSize: 12, marginBottom: 16 }}>

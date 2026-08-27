@@ -4,7 +4,7 @@ import { api } from '../api/explorer'
 import { useAddressSummary, useAsset, useExtrinsic, useBlock, useTagSummary, useTrade, useStats } from '../hooks/useExplorerData'
 import { F, AssetIcon, FeeAmount, hasTip, AddrPill, CallPill, PoolBadge, poolHref, StatusBadge, FinalizedBadge, AccountEmoji, emojiName, moduleName, TagIcon, TokenIconRow, UserTagPill } from './ui'
 import { ayeSharePct, selectTally } from '../utils/referendumVotes'
-import { resolveTag, allAssociations } from '../userTags'
+import { resolveTag, allAssociations } from '../systemTags'
 import type { AssetRef } from '../types'
 
 // Global hover preview cards for account (.addr-pill), tag (/tag/… links),
@@ -251,7 +251,7 @@ function AccountHover({ id, vote }: { id: string; vote?: VoteContext }) {
       {associations.length > 0 && (
         <div className="hc-tags">
           {associations.slice(0, MAX_HOVER_TAGS).map(a => (
-            <UserTagPill key={`system-${a.id}`} tag={a} address={data.evmAddress ?? data.ss58Polkadot} noCopy />
+            <UserTagPill key={`system-${a.id}`} tag={a} address={data.ss58} noCopy />
           ))}
           {associations.length > MAX_HOVER_TAGS && <span className="hc-tags-more">+{associations.length - MAX_HOVER_TAGS}</span>}
         </div>
@@ -357,8 +357,8 @@ function ExtrinsicHover({ id }: { id: string }) {
       <div className="hc-row"><span>Result</span><StatusBadge ok={data.success} /></div>
       <div className="hc-row"><span>Hash</span><span className="mono">{F.shortHash(data.hash)}</span></div>
       {data.signer && <div className="hc-row"><span>Signer</span><AddrPill account={data.signer} noCopy /></div>}
-      <div className="hc-row"><span>Fee</span><span className="mono"><FeeAmount payment={data.feePayment} hdxRaw={data.fee} link={false} /></span></div>
-      {hasTip(data.feePayment, data.tip) && <div className="hc-row"><span>Tip</span><span className="mono"><FeeAmount payment={data.feePayment} hdxRaw={data.tip} part="tip" link={false} /></span></div>}
+      <div className="hc-row"><span>Fee</span><span className="mono"><FeeAmount payment={data.feePayment} nativeRaw={data.fee} link={false} /></span></div>
+      {hasTip(data.feePayment, data.tip) && <div className="hc-row"><span>Tip</span><span className="mono"><FeeAmount payment={data.feePayment} nativeRaw={data.tip} part="tip" link={false} /></span></div>}
     </>
   )
 }
@@ -380,7 +380,7 @@ function BlockHover({ id }: { id: number }) {
       <div className="hc-row"><span>Status</span><FinalizedBadge finalized={data.height <= (stats?.finalizedBlock ?? -1)} /></div>
       <div className="hc-row"><span>Time</span><span className="mono">{F.datetime(data.timestamp)}</span></div>
       {data.author && <div className="hc-row"><span>Author</span><AddrPill account={data.author} noCopy /></div>}
-      <div className="hc-row"><span>Spec</span><span className="mono">hydration/{data.specVersion}</span></div>
+      <div className="hc-row"><span>Spec</span><span className="mono">basilisk/{data.specVersion}</span></div>
       <div className="hc-row"><span>Extrinsics</span><span className="mono">{F.int(data.extrinsicCount)}</span></div>
       <div className="hc-row"><span>Events</span><span className="mono">{F.int(data.eventCount)}</span></div>
     </>

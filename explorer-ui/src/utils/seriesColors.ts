@@ -26,7 +26,7 @@
 // greys 3–6, while genuinely different colours sit well above 10.
 const FLOOR = 8
 // Shade steps, nearest first: hue and chroma stay exact, only L moves. The
-// widest steps exist for three/four-way pile-ups (DOT/vDOT/aDOT plus HDX).
+// widest steps exist for three/four-way pile-ups (DOT/vDOT/aDOT plus BSX).
 const L_STEPS = [0.08, -0.08, 0.16, -0.16, 0.24, -0.24]
 
 function srgbToLinear(c: number): number {

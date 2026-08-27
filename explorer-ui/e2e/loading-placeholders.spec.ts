@@ -91,7 +91,7 @@ for (const [name, viewport] of [['phone', { width: 390, height: 844 }], ['deskto
 // So the invariant asserted always is that the placeholder is never SHORTER than
 // the card, which is the direction that dropped content under the reader; the
 // exact match is asserted whenever the loaded head does carry the four it drew.
-const ACCOUNT = '1L53bUTBopXqDXSXjBdQXFV7jZ8FtdRZS5JoMjGq5z3Cv2zr'
+const ACCOUNT = 'bXkSQSxKBexhk3Y6Ah3MN481hsjta9Uars3MoXufiNViLy3Xo'
 
 for (const [name, viewport] of [['phone', { width: 390, height: 844 }], ['desktop', { width: 1440, height: 900 }]] as const) {
   test.describe(`chart card placeholders (${name})`, () => {

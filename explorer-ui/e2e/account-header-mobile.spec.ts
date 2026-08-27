@@ -6,7 +6,7 @@ import { expect, test } from './fixtures/test'
 // last and largest.
 test.use({ viewport: { width: 390, height: 844 } })
 
-const FOX = '1L53bUTBopXqDXSXjBdQXFV7jZ8FtdRZS5JoMjGq5z3Cv2zr'
+const FOX = 'bXkSQSxKBexhk3Y6Ah3MN481hsjta9Uars3MoXufiNViLy3Xo'
 
 test('the identity keeps its own row; every stat shares one line below', async ({ page }) => {
   await page.goto(`/account/${FOX}`)

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { BalanceBreakdown } from '../src/components/BalanceBreakdown'
 import type { AddressBalance } from '../src/types'
 
-const HDX = { assetId: 0, symbol: 'HDX', name: 'Hydration', decimals: 12, parachainId: null }
+const BSX = { assetId: 0, symbol: 'BSX', name: 'Basilisk', decimals: 12, parachainId: null }
 const raw = (v: number) => BigInt(Math.round(v * 1e6)).toString() + '0'.repeat(6)
 // `until` dates are rendered relative to the real Date.now() (fmtIn), so anchor
 // them to now — hardcoded calendar dates would flip to "now" once real time
@@ -11,7 +11,7 @@ const raw = (v: number) => BigInt(Math.round(v * 1e6)).toString() + '0'.repeat(6
 const inDays = (n: number) => new Date(Date.now() + n * 86400e3).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '')
 
 function bal(over: Partial<AddressBalance>): AddressBalance {
-  return { asset: HDX, total: raw(1000), free: raw(920), reserved: raw(80), lastBlock: 1, valueUsd: 21.84, ...over }
+  return { asset: BSX, total: raw(1000), free: raw(920), reserved: raw(80), lastBlock: 1, valueUsd: 21.84, ...over }
 }
 
 // The adaptive breakdown band also renders an off-screen, aria-hidden clone

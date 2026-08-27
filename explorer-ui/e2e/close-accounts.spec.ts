@@ -1,17 +1,17 @@
 import type { Page, Route } from '@playwright/test'
 import { expect, test } from './fixtures/test'
 
-const ACCOUNT = '1L53bUTBopXqDXSXjBdQXFV7jZ8FtdRZS5JoMjGq5z3Cv2zr'
-const CANDIDATE = '0xF73a2B8c1D4e9A06b5C8f2E1a3D70c9B4e6F18aD'
+const ACCOUNT = 'bXkSQSxKBexhk3Y6Ah3MN481hsjta9Uars3MoXufiNViLy3Xo'
+const CANDIDATE = 'bXnBa9ZGcRPENS2kDhVn3Um2pE2RNSMURHicG82FnsMhJZHsE'
+const CANDIDATE_ID = '0xf73a2b8c1d4e9a06b5c8f2e1a3d70c9b4e6f18ad'
 
 function detailFor(address: string) {
-  const evm = /^0x[0-9a-f]{40}$/i.test(address)
-  const accountId = evm
-    ? `0x45544800${address.slice(2).toLowerCase()}0000000000000000`
+  const accountId = address === CANDIDATE
+    ? CANDIDATE_ID
     : '0xaa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899'
   return {
-    input: address, kind: evm ? 'evm' : 'ss58', accountId, emoji: '🦊', evmAddress: evm ? address : null,
-    ss58: evm ? ACCOUNT : address, ss58Polkadot: evm ? ACCOUNT : address,
+    input: address, kind: 'ss58', accountId, emoji: '🦊',
+    ss58: address, ss58Kusama: '',
     tag: null, identity: null, relatedAccountIds: [accountId], balances: [], topAssets: [], portfolioUsd: 0,
     liquidityPositions: [], proxy: null, multisig: null,
     multisigMemberships: [], portfolioSeries: [], portfolioDates: [], balanceHistory: [],
@@ -35,7 +35,7 @@ function closeResponse() {
   return {
     accounts: [{
       account: {
-        accountId: `0x45544800${CANDIDATE.slice(2).toLowerCase()}0000000000000000`, address: CANDIDATE, emoji: '🦑',
+        accountId: CANDIDATE_ID, address: CANDIDATE, emoji: '🦑',
         tag: { id: 'kraken', name: 'Kraken', color: '#7b6cf6', icon: '/tag-icons/kraken.jpg' },
       },
       score: 0.91, confidence: 'strong', lastSeen: '2026-07-09 18:42:00',

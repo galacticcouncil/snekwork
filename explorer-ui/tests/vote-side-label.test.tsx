@@ -75,7 +75,7 @@ const voter = (over: Partial<ReferendumVoter>): ReferendumVoter => ({
 // The bubbles feed the account hover card its vote row, so a card and the votes table
 // underneath it must not disagree about the same vote.
 describe('VoteBubbles vote side', () => {
-  const render = (v: ReferendumVoter) => renderToStaticMarkup(<VoteBubbles voters={[v]} decimals={12} symbol="HDX" />)
+  const render = (v: ReferendumVoter) => renderToStaticMarkup(<VoteBubbles voters={[v]} decimals={12} symbol="BSX" />)
 
   it('hands the hover card the side actually cast, not the side its weight landed on', () => {
     const splitAbstain = voter({

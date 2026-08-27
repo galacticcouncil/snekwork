@@ -26,7 +26,7 @@ export interface AccountIdentity {
 
 export interface AccountRef {
   accountId: string
-  address: string        // Polkadot SS58 or EVM 0x (never Hydration SS58)
+  address: string        // canonical Basilisk SS58 (prefix 10041)
   emoji: string          // Omniwatch/snakewatch identity emoji
   emojiName?: string     // human-readable name for the custom emoji/icon (e.g. Discord emoji name)
   emojiUrl?: string      // custom image icon (e.g. a Discord avatar) — render in place of the emoji char
@@ -48,7 +48,6 @@ export interface ExplorerStats {
   transfers24h: number
   extrinsics24h: number
   activeAccounts24h: number
-  hdxPrice: number | null
 }
 
 export type ExplorerAssetType = 'Native' | 'Derivative' | 'Token'
@@ -125,7 +124,7 @@ export interface TradeDetail {
   limit: { kind: 'minReceived' | 'maxPaid'; amount: string; asset: AssetRef; marginPct: number | null } | null
   extrinsicFee: string | null
   extrinsicTip: string | null
-  // Set when the fee did not settle in HDX; shown instead of `extrinsicFee` and
+  // Set when the fee did not settle in BSX; shown instead of `extrinsicFee` and
   // `extrinsicTip`, whose tip slot it carries as `tipAmount`.
   feePayment?: FeePayment
   route: TradeHop[]
@@ -198,9 +197,9 @@ export interface BlockDetail extends BlockSummary {
 }
 
 export interface ExtrinsicEvent { eventIndex: number; name: string; args: unknown; decoded?: boolean }
-// What the fee actually cost, when the signer's fee currency is not HDX (or when
-// there is no HDX figure at all — an EVM transaction). `fee`/`tip` still carry
-// the HDX-equivalent the chain computed; a surface holding this shows it INSTEAD.
+// What the fee actually cost, when the signer's fee currency is not BSX (or when
+// there is no BSX figure at all). `fee`/`tip` still carry the BSX-equivalent the
+// chain computed; a surface holding this shows it INSTEAD.
 export interface FeePayment {
   asset: AssetRef
   amount: string
@@ -252,7 +251,7 @@ export interface BalanceLockComponent { kind: 'lock' | 'reserve' | 'hold' | 'dep
 // The binding unlock timeline across ALL of the account's locks: when how much
 // of the frozen balance actually becomes transferable, and which lock causes it
 // ('cause'; ties join with '+'). Act-now semantics: `conditional` marks slices
-// that only free if the owner acts now (GIGAHDX staked → 28d after unstaking).
+// that only free if the owner acts now (a staked position → its unbonding period).
 // Slice amounts sum to `frozen`.
 export interface BalanceUnlockSlice { state: 'releasable' | 'scheduled' | 'active'; cause: string; amount: string; until?: string; linear?: boolean; conditional?: boolean }
 // `frozen` is the non-transferable part of `free` (per-account max lock, summed
@@ -277,9 +276,10 @@ export interface AddressDetail {
   emoji: string
   emojiName?: string
   emojiUrl?: string
-  evmAddress: string | null
+  // The canonical display form; `ss58Kusama` is the same key under the relay's
+  // prefix, shown as a secondary identity row.
   ss58: string
-  ss58Polkadot: string
+  ss58Kusama: string
   tag: TagRef | null
   identity: AccountIdentity | null
   relatedAccountIds: string[]

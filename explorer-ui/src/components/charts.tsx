@@ -4,17 +4,17 @@ import type { ReactNode } from 'react'
 import { compactAmount } from './ui'
 
 /* ============ formatting ============ */
-// Compact HDX amount — the shared explorer-wide rough scale (1.56B · 797M ·
+// Compact token amount — the shared explorer-wide rough scale (1.56B · 797M ·
 // 12.6k · 537 · 0.0₅7191), centralized in ui.tsx.
-export function fmtHdx(v: number): string {
+export function fmtTokens(v: number): string {
   return compactAmount(v)
 }
 
 // Compact form for on-bar clamp labels: whole millions once past ~10M, so the
 // value labels on adjacent clamped columns keep clear space between them
-// (147.94M → "148M"). Billions still collapse via fmtHdx (1.61B).
-export function fmtHdxTick(v: number): string {
-  return Math.abs(v) >= 1e7 ? fmtHdx(Math.round(v / 1e6) * 1e6) : fmtHdx(v)
+// (147.94M → "148M"). Billions still collapse via fmtTokens (1.61B).
+export function fmtTokensTick(v: number): string {
+  return Math.abs(v) >= 1e7 ? fmtTokens(Math.round(v / 1e6) * 1e6) : fmtTokens(v)
 }
 
 /* ============ legend ============ */
@@ -66,7 +66,7 @@ export function ShareBar({ segments, h = 44 }: { segments: ShareSegment[]; h?: n
   for (let i = 0, run = 0; i < segs.length; i++) { offsets.push(run); run += segs[i].value }
   const rects = segs.map((s, i) => ({ ...s, x0: offsets[i] / total * 100, w: s.value / total * 100 }))
   return (
-    <div ref={wrapRef} className="hdx-chart-wrap" onMouseLeave={() => setHover(null)}>
+    <div ref={wrapRef} className="chart-wrap" onMouseLeave={() => setHover(null)}>
       <svg width="100%" height={h} role="img">
         <defs><clipPath id={clipId}><rect x="0" y="0" width="100%" height={h} rx="8" /></clipPath></defs>
         <g clipPath={`url(#${clipId})`}>
@@ -79,7 +79,7 @@ export function ShareBar({ segments, h = 44 }: { segments: ShareSegment[]; h?: n
           ))}
         </g>
       </svg>
-      {hover && <div className="hdx-tip" style={{ left: tipLeft(hover.leftPct), top: h + 8 }}>{hover.tip}</div>}
+      {hover && <div className="chart-tip" style={{ left: tipLeft(hover.leftPct), top: h + 8 }}>{hover.tip}</div>}
     </div>
   )
 }
@@ -100,7 +100,7 @@ export function niceAxisMax(v: number): number {
 
 /* ============ stacked area (pool composition over time) ============ */
 // `hatch` overlays a faint light diagonal texture on the band's fill and a
-// light halo under its top edge — for brand-black bands (GIGAHDX) that would
+// light halo under its top edge — for near-black brand bands that would
 // otherwise vanish into a dark background. The light marks disappear on light
 // surfaces, where the black fill carries itself.
 export interface AreaSeries { key: string; label: string; color: string; values: (number | null)[]; hatch?: boolean }
@@ -138,7 +138,7 @@ function dateTicks(n: number): number[] {
 // hover follow StackedColumnChart / AreaChart conventions; no animation.
 // `showShare={false}` drops the tooltip's per-bucket share suffix — a chart
 // already plotting shares (100%-stacked mode) would repeat every value.
-export function StackedAreaChart({ buckets, series, h = 220, yFmt = fmtHdx, showShare = true }: {
+export function StackedAreaChart({ buckets, series, h = 220, yFmt = fmtTokens, showShare = true }: {
   buckets: string[]; series: AreaSeries[]; h?: number; yFmt?: (v: number) => string; showShare?: boolean
 }) {
   const hatchId = useId()
@@ -170,13 +170,13 @@ export function StackedAreaChart({ buckets, series, h = 220, yFmt = fmtHdx, show
   }
   const hoverTotal = hover != null ? series.reduce((s, x) => s + (x.values[hover] ?? 0), 0) : 0
   return (
-    <div ref={wrapRef} className="hdx-chart-wrap apx-wrap" onPointerDown={onMove} onPointerMove={onMove}
+    <div ref={wrapRef} className="chart-wrap apx-wrap" onPointerDown={onMove} onPointerMove={onMove}
       onPointerLeave={e => { if (e.pointerType === 'mouse') setHover(null) }}>
       <svg className="day-chart" viewBox={`0 0 ${W} ${h}`}>
         {[0, 0.5, 1].map(t => (
           <g key={t}>
             <line x1={padL} x2={W - padR} y1={sy(max * t).toFixed(1)} y2={sy(max * t).toFixed(1)} stroke="var(--separator)" strokeWidth="1" />
-            <text className="hdx-ax" x={padL - 8} y={(sy(max * t) + 3).toFixed(1)} textAnchor="end">{yFmt(max * t)}</text>
+            <text className="chart-ax" x={padL - 8} y={(sy(max * t) + 3).toFixed(1)} textAnchor="end">{yFmt(max * t)}</text>
           </g>
         ))}
         {series.some(x => x.hatch) && (
@@ -195,12 +195,12 @@ export function StackedAreaChart({ buckets, series, h = 220, yFmt = fmtHdx, show
           </g>
         ))}
         {dateTicks(n).map(i => (
-          <text key={i} className="hdx-ax" x={sx(i).toFixed(1)} y={h - 4} textAnchor={i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}>{monthTick(buckets[i])}</text>
+          <text key={i} className="chart-ax" x={sx(i).toFixed(1)} y={h - 4} textAnchor={i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}>{monthTick(buckets[i])}</text>
         ))}
         {hover != null && <line x1={sx(hover).toFixed(1)} x2={sx(hover).toFixed(1)} y1={padT} y2={h - padB} stroke="var(--text-medium)" strokeOpacity="0.55" />}
       </svg>
       {hover != null && (
-        <div className="hdx-tip" style={{ left: tipLeft(sx(hover) / W * 100), top: 2 }}>
+        <div className="chart-tip" style={{ left: tipLeft(sx(hover) / W * 100), top: 2 }}>
           <span className="t-d">{buckets[hover]}</span>
           {series.map(s => s.values[hover] != null && (
             <span key={s.key} className="t-row"><i style={{ background: s.color }} />{s.label}

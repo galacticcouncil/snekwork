@@ -75,9 +75,9 @@ export function voteSubjectLabel(
   return referendumPallet ? `Referendum #${referendum}` : `Motion ${referendum}`
 }
 
-// Governance locks are denominated in HDX (asset 0, 12 decimals). Only used to render an
+// Governance locks are denominated in BSX (asset 0, 12 decimals). Only used to render an
 // empty/loading votes table, before any row's own asset is available.
-export const assetDescriptorFallback = { assetId: 0, iconAssetId: 0, symbol: 'HDX', name: 'Hydration', decimals: 12 } as AssetRef
+export const assetDescriptorFallback = { assetId: 0, iconAssetId: 0, symbol: 'BSX', name: 'Basilisk', decimals: 12 } as AssetRef
 
 // The capital-weighted average conviction of a combined vote, derived from the
 // two integer sums the aggregate carries: weighted = Σ(capital × conviction),

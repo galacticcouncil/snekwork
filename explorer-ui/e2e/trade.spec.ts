@@ -24,7 +24,7 @@ test('trade detail renders asset chips for route, fees, price, and execution val
   await expect(executionPrice).toContainText('DOT')
 
   const fee = detailsValue(/^Fee$/)
-  await expect(fee.locator('.asset-chip')).toContainText('HDX')
+  await expect(fee.locator('.asset-chip')).toContainText('BSX')
   await expect(fee.locator('.mono')).not.toHaveText('—')
 
   const execution = page.locator('.detail-card').filter({ hasText: 'Min received (limit)' })

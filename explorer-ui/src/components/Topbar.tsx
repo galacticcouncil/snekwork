@@ -13,7 +13,7 @@ type NavItem = { to: string; label: string; match: Route['name'][] }
 type NavGroup = { label: string; items: NavItem[]; menuItems?: NavItem[] }
 const IT = {
   activity: { to: paths.activity(), label: 'Activity', match: ['activity'] } as NavItem,
-  accounts: { to: paths.accounts(), label: 'Accounts', match: ['accounts', 'account', 'tags', 'tags-hydration', 'tag'] } as NavItem,
+  accounts: { to: paths.accounts(), label: 'Accounts', match: ['accounts', 'account', 'tags', 'tags-basilisk', 'tag'] } as NavItem,
   assets: { to: paths.assets(), label: 'Assets', match: ['assets', 'asset', 'holders'] } as NavItem,
   // Pools live under Liquidity, so a pool highlights there.
   liquidity: { to: paths.liquidity(), label: 'Liquidity', match: ['liquidity', 'pool'] } as NavItem,
@@ -107,10 +107,11 @@ export function Topbar({ route }: { route: Route }) {
     <header className={`topbar${isDashboard ? ' topbar-dash' : ''}`}>
       <div className="wrap topbar-inner">
         <Link className="brand" to={paths.dashboard()}>
-          <svg className="logo" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-            <path d="M18.0532 11.3604C18.2827 11.1319 18.5778 10.8381 18.8718 10.5463C19.5265 9.89543 19.5265 8.83853 18.8718 8.18664L18.1782 7.49598C15.6959 9.96786 11.982 10.4637 9.00484 8.98646C11.017 9.35678 13.1028 9.06807 14.951 8.0785C16.1876 7.41641 16.4222 5.74741 15.4295 4.75886L11.3366 0.683262C10.4217 -0.227754 8.93928 -0.227754 8.02542 0.683262L3.61392 5.07613C6.51941 3.84682 10.0089 4.4171 12.3714 6.78594C8.76716 5.04349 4.30136 5.66171 1.3088 8.64164C1.07931 8.87016 0.78323 9.16499 0.490223 9.45676C-0.163408 10.1086 -0.163408 11.1645 0.490223 11.8154L1.18279 12.505C3.66515 10.0332 7.37896 9.53735 10.3562 11.0146C8.34404 10.6442 6.25816 10.933 4.40996 11.9225C3.17339 12.5846 2.93878 14.2536 3.93152 15.2422L8.0244 19.3178C8.93928 20.2288 10.4217 20.2288 11.3356 19.3178L15.7471 14.9249C12.8416 16.1542 9.35215 15.5839 6.98965 13.2151C10.5938 14.9575 15.0596 14.3393 18.0522 11.3594L18.0532 11.3604Z" />
+          {/* Basilisk's mark: the disc with the snake-eye slit cut out of it. */}
+          <svg className="logo" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true">
+            <path d="M15.6661 0.111816C18.7648 0.111636 21.7939 1.04333 24.3705 2.78907C26.9471 4.53482 28.9553 7.0162 30.1412 9.91942C31.3271 12.8226 31.6374 16.0173 31.0329 19.0994C30.4284 22.1815 28.9363 25.0125 26.7452 27.2346C24.554 29.4566 21.7624 30.9699 18.7232 31.5829C15.684 32.1959 12.5339 31.8812 9.67106 30.6785C6.80826 29.4759 4.36142 27.4393 2.63998 24.8264C0.918544 22.2135 -0.000177668 19.1415 2.57714e-08 15.9991C2.57714e-08 13.9127 0.405218 11.8468 1.19251 9.91927C1.9798 7.99174 3.13375 6.24035 4.58848 4.76508C6.04321 3.28981 7.77023 2.11957 9.67092 1.32116C11.5716 0.522752 13.6088 0.111816 15.6661 0.111816ZM10.5548 15.9991C10.5548 23.6771 15.6661 29.901 15.6661 29.901C15.6661 29.901 20.7773 23.6771 20.7773 15.9991C20.7773 8.32103 15.6661 2.09806 15.6661 2.09806C15.6661 2.09806 10.5548 8.32194 10.5548 15.9991Z" />
           </svg>
-          <span className="wm">Hydration</span>
+          <span className="wm">Snekwork</span>
           <span className="pr">explorer</span>
         </Link>
 
@@ -163,7 +164,7 @@ export function Topbar({ route }: { route: Route }) {
           <nav className="drawer" role="dialog" aria-modal="true" aria-label="Menu" onClick={e => e.stopPropagation()}>
             <div className="drawer-head">
               <span className="brand">
-                <span className="wm">Hydration</span><span className="pr">explorer</span>
+                <span className="wm">Snekwork</span><span className="pr">explorer</span>
               </span>
               <button className="theme-toggle" onClick={() => setDrawer(false)} aria-label="Close menu">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
