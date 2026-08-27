@@ -8,18 +8,13 @@ import {
   markRawRangeRunning,
 } from './ranges.js'
 import type {
-  RawAccountAliasRow,
   RawBalanceObservationRow,
   RawBridgeEvidenceRow,
   RawBlockRow,
   RawBlockSnapshotRow,
   RawCallRow,
-  RawEvmLogRow,
   RawEventRow,
   RawExtrinsicRow,
-  RawMoneyMarketEventRow,
-  RawMoneyMarketPositionRow,
-  RawMoneyMarketReserveRow,
   RawOperationTraceRow,
   RawParserWarningRow,
   RawXcmActivityRow,
@@ -44,12 +39,7 @@ export class RawClickHouseStore {
   private readonly callsBatch: BatchAccumulator<RawCallRow>
   private readonly eventsBatch: BatchAccumulator<RawEventRow>
   private readonly snapshotsBatch: BatchAccumulator<RawBlockSnapshotRow>
-  private readonly accountAliasesBatch: BatchAccumulator<RawAccountAliasRow>
   private readonly balanceObservationsBatch: BatchAccumulator<RawBalanceObservationRow>
-  private readonly evmLogsBatch: BatchAccumulator<RawEvmLogRow>
-  private readonly moneyMarketEventsBatch: BatchAccumulator<RawMoneyMarketEventRow>
-  private readonly moneyMarketPositionsBatch: BatchAccumulator<RawMoneyMarketPositionRow>
-  private readonly moneyMarketReservesBatch: BatchAccumulator<RawMoneyMarketReserveRow>
   private readonly xcmActivityBatch: BatchAccumulator<RawXcmActivityRow>
   private readonly bridgeEvidenceBatch: BatchAccumulator<RawBridgeEvidenceRow>
   private readonly operationTracesBatch: BatchAccumulator<RawOperationTraceRow>
@@ -62,12 +52,7 @@ export class RawClickHouseStore {
     this.callsBatch = new BatchAccumulator<RawCallRow>(flushThreshold)
     this.eventsBatch = new BatchAccumulator<RawEventRow>(flushThreshold)
     this.snapshotsBatch = new BatchAccumulator<RawBlockSnapshotRow>(flushThreshold)
-    this.accountAliasesBatch = new BatchAccumulator<RawAccountAliasRow>(flushThreshold)
     this.balanceObservationsBatch = new BatchAccumulator<RawBalanceObservationRow>(flushThreshold)
-    this.evmLogsBatch = new BatchAccumulator<RawEvmLogRow>(flushThreshold)
-    this.moneyMarketEventsBatch = new BatchAccumulator<RawMoneyMarketEventRow>(flushThreshold)
-    this.moneyMarketPositionsBatch = new BatchAccumulator<RawMoneyMarketPositionRow>(flushThreshold)
-    this.moneyMarketReservesBatch = new BatchAccumulator<RawMoneyMarketReserveRow>(flushThreshold)
     this.xcmActivityBatch = new BatchAccumulator<RawXcmActivityRow>(flushThreshold)
     this.bridgeEvidenceBatch = new BatchAccumulator<RawBridgeEvidenceRow>(flushThreshold)
     this.operationTracesBatch = new BatchAccumulator<RawOperationTraceRow>(flushThreshold)
@@ -94,28 +79,8 @@ export class RawClickHouseStore {
     this.snapshotsBatch.add(rows)
   }
 
-  addAccountAliases(rows: RawAccountAliasRow[]): void {
-    this.accountAliasesBatch.add(rows)
-  }
-
   addBalanceObservations(rows: RawBalanceObservationRow[]): void {
     this.balanceObservationsBatch.add(rows)
-  }
-
-  addEvmLogs(rows: RawEvmLogRow[]): void {
-    this.evmLogsBatch.add(rows)
-  }
-
-  addMoneyMarketEvents(rows: RawMoneyMarketEventRow[]): void {
-    this.moneyMarketEventsBatch.add(rows)
-  }
-
-  addMoneyMarketPositions(rows: RawMoneyMarketPositionRow[]): void {
-    this.moneyMarketPositionsBatch.add(rows)
-  }
-
-  addMoneyMarketReserves(rows: RawMoneyMarketReserveRow[]): void {
-    this.moneyMarketReservesBatch.add(rows)
   }
 
   addXcmActivity(rows: RawXcmActivityRow[]): void {
@@ -179,10 +144,6 @@ export class RawClickHouseStore {
     await this.flushBatch(this.snapshotsBatch, 'price_data.raw_block_snapshots')
   }
 
-  async flushAccountAliases(): Promise<void> {
-    await this.flushBatch(this.accountAliasesBatch, 'price_data.raw_account_aliases')
-  }
-
   async flushBalanceObservations(): Promise<void> {
     const rows = this.balanceObservationsBatch.flush()
     if (rows.length === 0) return
@@ -212,22 +173,6 @@ export class RawClickHouseStore {
         format: 'JSONEachRow',
       })
     }
-  }
-
-  async flushEvmLogs(): Promise<void> {
-    await this.flushBatch(this.evmLogsBatch, 'price_data.raw_evm_logs')
-  }
-
-  async flushMoneyMarketEvents(): Promise<void> {
-    await this.flushBatch(this.moneyMarketEventsBatch, 'price_data.raw_money_market_events')
-  }
-
-  async flushMoneyMarketPositions(): Promise<void> {
-    await this.flushBatch(this.moneyMarketPositionsBatch, 'price_data.raw_money_market_positions')
-  }
-
-  async flushMoneyMarketReserves(): Promise<void> {
-    await this.flushBatch(this.moneyMarketReservesBatch, 'price_data.raw_money_market_reserves')
   }
 
   async flushXcmActivity(): Promise<void> {
@@ -260,12 +205,7 @@ export class RawClickHouseStore {
       this.callsBatch.size,
       this.eventsBatch.size,
       this.snapshotsBatch.size,
-      this.accountAliasesBatch.size,
       this.balanceObservationsBatch.size,
-      this.evmLogsBatch.size,
-      this.moneyMarketEventsBatch.size,
-      this.moneyMarketPositionsBatch.size,
-      this.moneyMarketReservesBatch.size,
       this.xcmActivityBatch.size,
       this.bridgeEvidenceBatch.size,
       this.operationTracesBatch.size,
@@ -279,12 +219,7 @@ export class RawClickHouseStore {
     await this.flushCalls()
     await this.flushEvents()
     await this.flushSnapshots()
-    await this.flushAccountAliases()
     await this.flushBalanceObservations()
-    await this.flushEvmLogs()
-    await this.flushMoneyMarketEvents()
-    await this.flushMoneyMarketPositions()
-    await this.flushMoneyMarketReserves()
     await this.flushXcmActivity()
     await this.flushBridgeEvidence()
     await this.flushOperationTraces()

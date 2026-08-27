@@ -33,7 +33,7 @@ describe('parseSubsquareTitle', () => {
   // SubSquare answers 200 with its own branding for a referendum that does not
   // exist (/referenda/9999 verified live), so a naive parse would store that as
   // ref 9999's name — the same absent-value-looks-real trap that made a missing
-  // DCA order render as HDX->HDX.
+  // order render as HDX->HDX.
   it('rejects the generic site title a missing referendum returns', () => {
     expect(parseSubsquareTitle('<title>SubSquare | hydradx governance platform</title>')).toBeNull()
     expect(parseSubsquareTitle('<title>  SubSquare  </title>')).toBeNull()

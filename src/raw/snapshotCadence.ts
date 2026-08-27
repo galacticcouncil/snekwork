@@ -1,20 +1,17 @@
 // How often a raw_block_snapshots row is written.
 //
 // Today: every block. The payload is a full re-serialization of pool + registry
-// state, measured at 272,909 B (essentially constant), 15.4k rows/day, 3.61 GiB/day
-// uncompressed and 114.9 MiB/day on disk — the largest table in the database and
-// 36% of all ClickHouse growth, with 70.2% of blocks reusing the previous pool
-// state unchanged. At a 2 s block time all of that triples.
+// state, and it is the largest table in the database, with most blocks reusing the
+// previous pool state unchanged.
 //
 // RAW_SNAPSHOT_EVERY_N_BLOCKS is the lever that holds that volume flat: keep one
 // snapshot per N blocks and the table's growth divides by N. It defaults to 1
 // (today's behaviour, no change) because it is NOT free — see the coupling note on
 // `assertSnapshotEveryNBlocks` below.
 //
-// The constraint the lever must respect: three materialized views in
+// The constraint the lever must respect: materialized views in
 // clickhouse/schema/003_materialized_views.sql sample the pool state at
-// `block_height % 600 = 0` — omnipool_pool_state_history_mv,
-// xyk_pool_reserve_history_mv and stableswap_pool_state_history_mv
+// `block_height % 600 = 0`
 // (`grep -n 'block_height % 600' clickhouse/schema/003_materialized_views.sql`;
 // deliberately not cited by line, because line numbers in that file move and this
 // comment exists to be read at the NEXT cadence change). Those MVs fire on the

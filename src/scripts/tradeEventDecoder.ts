@@ -1,10 +1,6 @@
 export const LEGACY_SWAP_EVENT_NAMES = [
-  'Omnipool.SellExecuted',
-  'Omnipool.BuyExecuted',
   'XYK.SellExecuted',
   'XYK.BuyExecuted',
-  'Stableswap.SellExecuted',
-  'Stableswap.BuyExecuted',
 ] as const
 
 export const BROADCAST_SWAP_EVENT_NAMES = [
@@ -54,14 +50,6 @@ function parseAssetAmounts(value: unknown): TradeAssetAmount[] {
 
 export function decodeRawTrade(row: RawTradeEventRow): DecodedRawTrade | null {
   const args = JSON.parse(row.args_json) as Record<string, unknown>
-
-  if (row.event_name === 'Omnipool.SellExecuted' || row.event_name === 'Omnipool.BuyExecuted' || row.event_name === 'Stableswap.SellExecuted' || row.event_name === 'Stableswap.BuyExecuted') {
-    return {
-      account: normalizeAccount(args.who),
-      inputs: [{ assetId: Number(args.assetIn), amount: BigInt(args.amountIn as string) }],
-      outputs: [{ assetId: Number(args.assetOut), amount: BigInt(args.amountOut as string) }],
-    }
-  }
 
   if (row.event_name === 'XYK.SellExecuted') {
     return {

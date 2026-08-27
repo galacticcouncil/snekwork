@@ -21,21 +21,11 @@ export const processor = new SubstrateBatchProcessor()
   // Swap events are used for volume extraction
   .addEvent({
     name: [
-      'Omnipool.TokenAdded',
-      'Omnipool.TokenRemoved',
       'XYK.PoolCreated',
       'XYK.PoolDestroyed',
-      'Stableswap.PoolCreated',
-      'Stableswap.AmplificationChanging',
-      'Stableswap.FeeUpdated',
-      'Stableswap.LiquidityAdded',
       'Tokens.Transfer',
-      'Omnipool.SellExecuted',
-      'Omnipool.BuyExecuted',
       'XYK.SellExecuted',
       'XYK.BuyExecuted',
-      'Stableswap.SellExecuted',
-      'Stableswap.BuyExecuted',
       'Broadcast.Swapped',
       'Broadcast.Swapped2',
       'Broadcast.Swapped3',

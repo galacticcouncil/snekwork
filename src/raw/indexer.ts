@@ -4,37 +4,25 @@ import { config } from '../config.js'
 import { isSwapEvent } from '../registry/swapEvents.js'
 import { AssetRegistryTracker } from '../registry/tracker.js'
 import { hasAssetRegistryMetadataEvent } from '../registry/events.js'
-import { AtokenReserveMap } from '../registry/atokenReserves.js'
 import { PoolCompositionCache } from '../pool/compositionCache.js'
-import { updateErc20Registry } from '../evm/balances.js'
 import { rawProcessor } from './processor.js'
 import type { RawCall, RawEvent, RawExtrinsic } from './processor.js'
-import { aliasRowsForBoundEvent, aliasRowsForEvmParticipants } from './accountIdentity.js'
 import { extractBalanceObservations } from './balance.js'
 import { withoutRelayChainProof } from './callArgs.js'
 import { RawDatabase } from './database.js'
-import { extractEvmLogs } from './evmLogs.js'
 import {
   buildSnapshotPayload,
   buildSnapshotState,
   detectPoolAffectingSetStorage,
-  getOmnipoolAccount,
-  getStableswapPoolAccount,
-  readOmnipoolState,
-  readStableswapState,
   readXYKState,
 } from './snapshot.js'
 import {
   callAddressToString,
-  evmAccountForm,
   extractSigner,
   toClickHouseDateTime,
   toJsonString,
 } from './json.js'
-import { assertMoneyMarketPositionConfig, extractMoneyMarketRows, snapshotMoneyMarketPositions } from './moneyMarket.js'
-import { createClickHouseClient } from '../db/client.js'
 import { minutesFromEnvironment } from '../util/env.js'
-import { MS_PER_MINUTE, crossedChainTimeBoundary } from '../util/chainTimeCadence.js'
 import { retainsSnapshotAtHeight, snapshotEveryNBlocksFromEnvironment } from './snapshotCadence.js'
 import { fetchChainHead, fetchFinalizedHead } from '../rpc/head.js'
 import type {
@@ -64,8 +52,7 @@ export function boundedRawRangeFromOptions(
   return { fromBlock: options.fromBlock, toBlock: options.toBlock }
 }
 
-const SNAPSHOT_FAMILIES = ['assets', 'omnipool', 'xyk', 'stableswap']
-type PoolFamily = 'omnipool' | 'xyk' | 'stableswap'
+const SNAPSHOT_FAMILIES = ['assets', 'xyk']
 
 function serializeBlock(
   header: {
@@ -93,28 +80,10 @@ function serializeBlock(
   }
 }
 
-// Recover the initiating account for natively-unsigned *user* extrinsics whose
-// Substrate signature is absent (signer null). evmSenderByExt maps each
-// extrinsic index to the H160 from its Ethereum.Executed event, if any.
-function recoverEffectiveSigner(
-  extrinsic: RawExtrinsic,
-  evmSenderByExt: Map<number, string>,
-): string | null {
-  const callName = extrinsic.call?.name
-  if (callName === 'Ethereum.transact') {
-    return evmAccountForm(evmSenderByExt.get(extrinsic.index))
-  }
-  if (callName === 'MultiTransactionPayment.dispatch_permit') {
-    return evmAccountForm((extrinsic.call?.args as { from?: unknown } | undefined)?.from)
-  }
-  return null
-}
-
 function serializeExtrinsic(
   extrinsic: RawExtrinsic,
   blockTimestamp: string,
   ingestSource: string,
-  evmSenderByExt: Map<number, string>,
 ): RawExtrinsicRow {
   const signer = extractSigner(extrinsic.signature)
   return {
@@ -124,7 +93,7 @@ function serializeExtrinsic(
     extrinsic_hash: extrinsic.hash ?? '',
     version: extrinsic.version ?? 0,
     signer,
-    effective_signer: signer == null ? recoverEffectiveSigner(extrinsic, evmSenderByExt) : null,
+    effective_signer: null,
     fee: extrinsic.fee?.toString() ?? null,
     tip: extrinsic.tip?.toString() ?? null,
     success: extrinsic.success ? 1 : 0,
@@ -202,62 +171,6 @@ function snapshotTraceEnabled(): boolean {
   return process.env.RAW_SNAPSHOT_TRACE === 'true'
 }
 
-// Periodic Money Market position re-aggregation: on every 12h chain-time boundary,
-// re-read every known borrower's getUserAccountData so the explorer's portfolio
-// history reflects interest accrual + oracle price drift between a borrower's own
-// MM actions (event-only snapshots otherwise freeze an untouched position). 12h is
-// ~1 sample per explorer history bucket over a multi-week window.
-function mmPeriodicSnapshotEnabled(): boolean {
-  return (process.env.RAW_MM_PERIODIC_SNAPSHOT_ENABLED ?? 'true') !== 'false'
-}
-
-// 12h of chain time, not 7,200 blocks. The cost of this job is an eth_call per
-// known borrower (3,216 positions read from 5,598 borrowers at the last measured
-// run), so the block-count form would have tripled its RPC fan-out at a 2s block
-// time purely as an artefact of how the interval was written down.
-function mmSnapshotIntervalMinutes(): number {
-  return minutesFromEnvironment('RAW_MM_SNAPSHOT_INTERVAL_MINUTES', 720, {
-    name: 'RAW_MM_SNAPSHOT_INTERVAL_BLOCKS',
-  })
-}
-
-// Seed the borrower set from positions already in ClickHouse so a freshly started
-// worker re-snapshots accounts opened before its range (a fresh wipe just yields an
-// empty map, which then grows from event-driven positions as blocks are processed).
-// Each borrower carries the earliest block it is known at, so a worker below the
-// money market's deployment — or below an individual account's first position —
-// does not read positions that cannot exist yet.
-async function loadKnownBorrowers(): Promise<Map<string, number>> {
-  const borrowers = new Map<string, number>()
-  const client = createClickHouseClient()
-  try {
-    const res = await client.query({
-      query: `SELECT user_address, min(block_height) AS first_block
-              FROM price_data.raw_money_market_positions
-              WHERE user_address != ''
-              GROUP BY user_address`,
-      format: 'JSONEachRow',
-    })
-    for (const row of await res.json<{ user_address: string; first_block: number | string }>()) {
-      if (row.user_address) borrowers.set(row.user_address, Number(row.first_block))
-    }
-  } finally {
-    await client.close()
-  }
-  return borrowers
-}
-
-// Borrowers whose first known position is at or below the snapshot height. Reading
-// the rest would ask the pool contract for accounts that do not exist yet, which
-// answers with a decode failure per borrower rather than a position.
-export function borrowersAtHeight(borrowers: Map<string, number>, blockHeight: number): string[] {
-  const at: string[] = []
-  for (const [address, firstBlock] of borrowers) {
-    if (firstBlock <= blockHeight) at.push(address)
-  }
-  return at
-}
-
 function phaseTraceEnabled(): boolean {
   return process.env.RAW_PHASE_TRACE === 'true'
 }
@@ -292,40 +205,17 @@ async function traceSnapshotRead<T>(blockHeight: number, label: string, read: ()
   }
 }
 
-function addSwapFamilies(
-  event: RawEvent,
-  specVersion: number,
-  families: Set<PoolFamily>,
-  forceAll: () => void,
-): void {
+// A swap that could have moved an XYK pool's reserves. A Broadcast swap whose
+// filler type cannot be read is treated as one rather than risking a stale
+// snapshot.
+function swapMayAffectXykPools(event: RawEvent, specVersion: number): boolean {
   const name = event.name ?? ''
-  if (!isSwapEvent(name, specVersion)) return
+  if (!isSwapEvent(name, specVersion)) return false
+  if (name.startsWith('XYK.')) return true
+  if (!name.startsWith('Broadcast.Swapped')) return false
 
-  if (name.startsWith('Omnipool.')) {
-    families.add('omnipool')
-    return
-  }
-  if (name.startsWith('XYK.')) {
-    families.add('xyk')
-    return
-  }
-  if (name.startsWith('Stableswap.')) {
-    families.add('stableswap')
-    return
-  }
-
-  if (name.startsWith('Broadcast.Swapped')) {
-    const fillerKind = (event.args as { fillerType?: { __kind?: string } } | undefined)?.fillerType?.__kind
-    if (fillerKind === 'Omnipool') {
-      families.add('omnipool')
-    } else if (fillerKind === 'XYK') {
-      families.add('xyk')
-    } else if (fillerKind === 'Stableswap') {
-      families.add('stableswap')
-    } else if (fillerKind == null) {
-      forceAll()
-    }
-  }
+  const fillerKind = (event.args as { fillerType?: { __kind?: string } } | undefined)?.fillerType?.__kind
+  return fillerKind === 'XYK' || fillerKind == null
 }
 
 function liveFinalityPollIntervalMs(): number {
@@ -340,7 +230,6 @@ function liveFinalityPollIntervalMs(): number {
 
 export async function runRaw(options: RawRunOptions = {}): Promise<void> {
   validateBlockRange(options)
-  assertMoneyMarketPositionConfig()
 
   const pipelineId = options.pipelineId ?? process.env.RAW_PIPELINE_ID ?? 'raw-main'
   const boundedRange = boundedRawRangeFromOptions(options)
@@ -429,26 +318,9 @@ export async function runRaw(options: RawRunOptions = {}): Promise<void> {
     )
   }
 
-  const mmSnapshotEnabled = mmPeriodicSnapshotEnabled()
-  const mmSnapshotIntervalMs = mmSnapshotIntervalMinutes() * MS_PER_MINUTE
-  // Authoritative wrapper↔base relation for the snapshot payload the price
-  // pipeline replays; reloaded when the asset registry changes.
-  const atokenReserves = new AtokenReserveMap()
-  await atokenReserves.refresh()
-  let knownBorrowers = new Map<string, number>()
-  if (mmSnapshotEnabled) {
-    try {
-      knownBorrowers = await loadKnownBorrowers()
-      console.log(`[Raw] Money Market periodic snapshot enabled (every ${mmSnapshotIntervalMs / MS_PER_MINUTE} minutes of chain time); seeded ${knownBorrowers.size} borrowers`)
-    } catch (error) {
-      console.warn('[Raw] Failed to seed Money Market borrower set; will accumulate from events', error)
-    }
-  }
-
   let currentState: SnapshotState | null = null
   let previousBlockHash: string | null = null
   let previousBlockHeight: number | null = null
-  let previousBlockTimestampMs: number | null = null
   let previousSpecVersion: number | null = null
 
   let lastLogBlock = startBlock
@@ -456,10 +328,7 @@ export async function runRaw(options: RawRunOptions = {}): Promise<void> {
   let extrinsicsPersisted = 0
   let callsPersisted = 0
   let eventsPersisted = 0
-  let aliasRowsPersisted = 0
   let balanceRowsPersisted = 0
-  let evmLogsPersisted = 0
-  let moneyMarketRowsPersisted = 0
   let xcmRowsPersisted = 0
   let parserWarningsPersisted = 0
   let snapshotsRefreshed = 0
@@ -471,7 +340,6 @@ export async function runRaw(options: RawRunOptions = {}): Promise<void> {
       if (firstHeight <= previousBlockHeight) {
         previousBlockHash = null
         previousBlockHeight = null
-        previousBlockTimestampMs = null
       } else if (firstHeight > previousBlockHeight + 1) {
         throw new Error(`[Raw][Integrity] Processor gap between blocks ${previousBlockHeight} and ${firstHeight}`)
       }
@@ -496,28 +364,13 @@ export async function runRaw(options: RawRunOptions = {}): Promise<void> {
         compositionCache.invalidateAll()
       }
 
-      // Captured before the update: the money-market cadence below asks whether
-      // this block is the first one past a chain-time boundary, which needs the
-      // previous block's timestamp.
-      const priorBlockTimestampMs = previousBlockTimestampMs
-
       previousBlockHash = block.header.hash
       previousBlockHeight = blockHeight
-      previousBlockTimestampMs = block.header.timestamp ?? null
       previousSpecVersion = specVersion
 
       ctx.store.addBlocks([serializeBlock(block.header, ingestSource)])
 
-      // Ethereum.transact carries no Substrate signature; its real sender is the
-      // H160 surfaced by the Ethereum.Executed event in the same extrinsic.
-      const evmSenderByExt = new Map<number, string>()
-      for (const event of block.events) {
-        if (event.name !== 'Ethereum.Executed' || event.extrinsicIndex == null) continue
-        const from = (event.args as { from?: unknown } | undefined)?.from
-        if (typeof from === 'string') evmSenderByExt.set(event.extrinsicIndex, from)
-      }
-
-      const extrinsicRows = block.extrinsics.map(extrinsic => serializeExtrinsic(extrinsic, blockTimestamp, ingestSource, evmSenderByExt))
+      const extrinsicRows = block.extrinsics.map(extrinsic => serializeExtrinsic(extrinsic, blockTimestamp, ingestSource))
       const callRows = block.calls.map(call => serializeCall(call, blockTimestamp, ingestSource))
       const eventRows = block.events.map(event => serializeEvent(event, blockTimestamp, ingestSource))
 
@@ -529,19 +382,6 @@ export async function runRaw(options: RawRunOptions = {}): Promise<void> {
       callsPersisted += callRows.length
       eventsPersisted += eventRows.length
 
-      const accountAliasRows = block.events.flatMap(event => aliasRowsForBoundEvent(event, blockTimestamp, ingestSource))
-      const evmLogRows = extractEvmLogs(block.events, blockTimestamp, ingestSource)
-      for (const evmLog of evmLogRows) {
-        accountAliasRows.push(...aliasRowsForEvmParticipants(
-          evmLog.participants,
-          evmLog.block_height,
-          evmLog.block_timestamp,
-          evmLog.event_index,
-          ingestSource,
-          evmLog.extrinsic_index,
-        ))
-      }
-
       const balances = await tracePhase(blockHeight, 'balances', () => extractBalanceObservations(
           block.header,
           blockTimestamp,
@@ -549,60 +389,19 @@ export async function runRaw(options: RawRunOptions = {}): Promise<void> {
           block.calls,
           ingestSource,
         ))
-      const moneyMarket = await tracePhase(blockHeight, 'money_market', () => extractMoneyMarketRows(evmLogRows, ingestSource))
       const xcmBridgeOperations = extractXcmBridgeAndOperationRows(block.events, block.calls, blockTimestamp, ingestSource)
 
-      ctx.store.addAccountAliases(accountAliasRows)
-      ctx.store.addEvmLogs(evmLogRows)
       ctx.store.addBalanceObservations(balances.observations)
-      ctx.store.addParserWarnings([...balances.warnings, ...moneyMarket.warnings])
-      ctx.store.addMoneyMarketEvents(moneyMarket.events)
-      ctx.store.addMoneyMarketPositions(moneyMarket.positions)
-      ctx.store.addMoneyMarketReserves(moneyMarket.reserves)
+      ctx.store.addParserWarnings(balances.warnings)
       ctx.store.addXcmActivity(xcmBridgeOperations.xcmActivity)
       ctx.store.addBridgeEvidence(xcmBridgeOperations.bridgeEvidence)
       ctx.store.addOperationTraces(xcmBridgeOperations.operationTraces)
 
-      aliasRowsPersisted += accountAliasRows.length
-      evmLogsPersisted += evmLogRows.length
       balanceRowsPersisted += balances.observations.length
-      parserWarningsPersisted += balances.warnings.length + moneyMarket.warnings.length + evmLogRows.filter(row => row.warning != null).length
-      moneyMarketRowsPersisted += moneyMarket.events.length + moneyMarket.positions.length + moneyMarket.reserves.length
+      parserWarningsPersisted += balances.warnings.length
       xcmRowsPersisted += xcmBridgeOperations.xcmActivity.length +
         xcmBridgeOperations.bridgeEvidence.length +
         xcmBridgeOperations.operationTraces.length
-
-      // Track every borrower seen via event-driven positions, then re-snapshot the
-      // whole set on chain-time boundaries — the first block past each 12h mark on
-      // the absolute UTC grid. Deterministic like the absolute-height boundary it
-      // replaces (it depends only on the two adjacent block timestamps, not on where
-      // a worker started), so each boundary is covered exactly once across the
-      // parallel range workers and a replay writes the same heights. The one case it
-      // cannot see is a boundary falling on a worker's very first block, where there
-      // is no previous block to compare with; that boundary is skipped rather than
-      // guessed at, which costs one sample and keeps replays reproducible.
-      // eth_call failures degrade to parser warnings, never abort the block.
-      if (mmSnapshotEnabled) {
-        for (const position of moneyMarket.positions) {
-          if (!position.user_address) continue
-          const firstBlock = knownBorrowers.get(position.user_address)
-          if (firstBlock == null || blockHeight < firstBlock) knownBorrowers.set(position.user_address, blockHeight)
-        }
-        if (crossedChainTimeBoundary(priorBlockTimestampMs, block.header.timestamp, mmSnapshotIntervalMs)) {
-          const borrowers = borrowersAtHeight(knownBorrowers, blockHeight)
-          if (borrowers.length > 0) {
-            const mmSnapshot = await tracePhase(blockHeight, 'mm_periodic_snapshot', () =>
-              snapshotMoneyMarketPositions(borrowers, blockHeight, blockTimestamp, ingestSource))
-            ctx.store.addMoneyMarketPositions(mmSnapshot.positions)
-            ctx.store.addParserWarnings(mmSnapshot.warnings)
-            moneyMarketRowsPersisted += mmSnapshot.positions.length
-            parserWarningsPersisted += mmSnapshot.warnings.length
-            if (mmSnapshot.positions.length > 0 || mmSnapshot.warnings.length > 0) {
-              console.log(`[Raw][MM] Periodic snapshot @${blockHeight}: ${mmSnapshot.positions.length} positions, ${mmSnapshot.warnings.length} warnings (${borrowers.length} borrowers)`)
-            }
-          }
-        }
-      }
 
       // Force the scan when this block carries an asset-registry event: the raw
       // pipeline sees every event, and the snapshot payload written for this and
@@ -610,111 +409,50 @@ export async function runRaw(options: RawRunOptions = {}): Promise<void> {
       // waits for the periodic scan bakes the OLD name into ~100 minutes of
       // snapshot payloads, which replay/backfill then treats as era truth).
       const changedAssets = await tracePhase(blockHeight, 'asset_registry', () => registry.maybeSnapshot(blockHeight, block.header, { force: hasAssetRegistryMetadataEvent(block.events) }))
-      if (changedAssets.length > 0) await atokenReserves.refresh()
-      const atokenEquivalences = registry.getAtokenEquivalences(atokenReserves.underlyings)
-      const atokenIds = registry.getAtokenIds(atokenReserves.underlyings)
-      const lpEquivalences = registry.getLpAliases()
-      const aaveTokenIds = new Set(atokenIds)
-      for (const [, displayId] of lpEquivalences) {
-        aaveTokenIds.add(displayId)
-      }
-      updateErc20Registry(registry.getErc20Contracts(), aaveTokenIds)
-
-      const compositionChanges = compositionCache.processEvents(block.events)
-      const refreshFamilies = new Set<PoolFamily>()
-      if (compositionChanges.omnipoolChanged) refreshFamilies.add('omnipool')
-      if (compositionChanges.xykChanged) refreshFamilies.add('xyk')
-      if (compositionChanges.stableswapChanged) refreshFamilies.add('stableswap')
-      let forceAllPoolFamilies = currentState == null || specChanged
+      let refreshXyk = currentState == null || specChanged || compositionCache.processEvents(block.events).xykChanged
 
       const hasSetStorageAffectingPools = detectPoolAffectingSetStorage(block.calls)
       if (hasSetStorageAffectingPools) {
         console.warn(`[Raw][SetStorage] Pool-affecting System.set_storage detected at block ${blockHeight}`)
         compositionCache.invalidateAll()
-        forceAllPoolFamilies = true
+        refreshXyk = true
       }
 
-      const [omnipoolAssetIds, xykPoolEntries, stableswapPoolEntries] = await tracePhase(
+      const xykPoolEntries = await tracePhase(
         blockHeight,
         'pool_composition',
-        () => Promise.all([
-          compositionCache.getOmnipoolAssets(block.header),
-          compositionCache.getXYKPools(block.header),
-          compositionCache.getStableswapPools(block.header),
-        ]),
+        () => compositionCache.getXYKPools(block.header),
       )
 
-      const omnipoolPoolAccount = getOmnipoolAccount()
-      const xykPoolAccounts = new Set<string>()
-      const stableswapPoolAccounts = new Set<string>()
-      const poolAccounts = new Set<string>([omnipoolPoolAccount])
+      const poolAccounts = new Set<string>()
       if (xykPoolEntries != null) {
         for (const pool of xykPoolEntries) {
-          xykPoolAccounts.add(pool.poolAccount)
           poolAccounts.add(pool.poolAccount)
-        }
-      }
-      if (stableswapPoolEntries != null) {
-        for (const pool of stableswapPoolEntries) {
-          const account = getStableswapPoolAccount(pool.poolId)
-          stableswapPoolAccounts.add(account)
-          poolAccounts.add(account)
         }
       }
 
       for (const event of block.events) {
         if (event.name === 'Tokens.Transfer') {
           const args = event.args as { from: string; to: string }
-          for (const account of [args.from, args.to]) {
-            if (account === omnipoolPoolAccount) {
-              refreshFamilies.add('omnipool')
-            } else if (xykPoolAccounts.has(account)) {
-              refreshFamilies.add('xyk')
-            } else if (stableswapPoolAccounts.has(account)) {
-              refreshFamilies.add('stableswap')
-            } else if (poolAccounts.has(account)) {
-              forceAllPoolFamilies = true
-            }
-          }
+          if (poolAccounts.has(args.from) || poolAccounts.has(args.to)) refreshXyk = true
         }
-        addSwapFamilies(event, specVersion, refreshFamilies, () => {
-          forceAllPoolFamilies = true
-        })
+        if (swapMayAffectXykPools(event, specVersion)) refreshXyk = true
       }
 
-      const refreshOmnipool = forceAllPoolFamilies || refreshFamilies.has('omnipool')
-      const refreshXyk = forceAllPoolFamilies || refreshFamilies.has('xyk')
-      const refreshStableswap = forceAllPoolFamilies || refreshFamilies.has('stableswap')
-      const poolsNeedRefresh = refreshOmnipool || refreshXyk || refreshStableswap
-
-      if (poolsNeedRefresh) {
-        const [omnipoolAssets, xykPools, stableswapPools] = await Promise.all([
-          refreshOmnipool && omnipoolAssetIds != null
-            ? traceSnapshotRead(blockHeight, `omnipool assets=${omnipoolAssetIds.length}`, () => readOmnipoolState(block.header, omnipoolAssetIds))
-            : Promise.resolve(currentState?.omnipool_assets ?? []),
-          refreshXyk && xykPoolEntries != null
-            ? traceSnapshotRead(blockHeight, `xyk pools=${xykPoolEntries.length}`, () => readXYKState(block.header, xykPoolEntries))
-            : Promise.resolve(currentState?.xyk_pools ?? []),
-          refreshStableswap && stableswapPoolEntries != null
-            ? traceSnapshotRead(blockHeight, `stableswap pools=${stableswapPoolEntries.length}`, () => readStableswapState(block.header, stableswapPoolEntries))
-            : Promise.resolve(currentState?.stableswap_pools ?? []),
-        ])
+      if (refreshXyk) {
+        const xykPools = xykPoolEntries != null
+          ? await traceSnapshotRead(blockHeight, `xyk pools=${xykPoolEntries.length}`, () => readXYKState(block.header, xykPoolEntries))
+          : currentState?.xyk_pools ?? []
 
         currentState = buildSnapshotState({
           assets: registry.getAssetsMetadata(),
-          atokenEquivalences,
-          lpEquivalences,
-          omnipoolAssets,
           xykPools,
-          stableswapPools,
         })
         snapshotsRefreshed++
       } else if (changedAssets.length > 0 && currentState != null) {
         currentState = {
           ...currentState,
           assets: registry.getAssetsMetadata(),
-          atoken_equivalences: [...atokenEquivalences].sort((a, b) => a[0] - b[0] || a[1] - b[1]),
-          lp_equivalences: [...lpEquivalences].sort((a, b) => a[0] - b[0] || a[1] - b[1]),
         }
       } else {
         snapshotsReused++
@@ -745,10 +483,7 @@ export async function runRaw(options: RawRunOptions = {}): Promise<void> {
           `${extrinsicsPersisted} extrinsics | ` +
           `${callsPersisted} calls | ` +
           `${eventsPersisted} events | ` +
-          `${aliasRowsPersisted} aliases | ` +
           `${balanceRowsPersisted} balances | ` +
-          `${evmLogsPersisted} evm logs | ` +
-          `${moneyMarketRowsPersisted} money market rows | ` +
           `${xcmRowsPersisted} xcm/bridge/operation rows | ` +
           `${parserWarningsPersisted} warnings | ` +
           `${snapshotsRefreshed} refreshed | ` +
@@ -760,10 +495,7 @@ export async function runRaw(options: RawRunOptions = {}): Promise<void> {
         extrinsicsPersisted = 0
         callsPersisted = 0
         eventsPersisted = 0
-        aliasRowsPersisted = 0
         balanceRowsPersisted = 0
-        evmLogsPersisted = 0
-        moneyMarketRowsPersisted = 0
         xcmRowsPersisted = 0
         parserWarningsPersisted = 0
         snapshotsRefreshed = 0

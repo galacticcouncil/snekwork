@@ -43,46 +43,6 @@ describe('raw balance storage key decoding', () => {
 })
 
 describe('raw balance event extraction', () => {
-  it('ignores raw EVM log payloads when collecting balance candidates', async () => {
-    const block = {
-      height: 2,
-      hash: '0x01',
-      _runtime: {
-        checkStorageType: () => {
-          throw new Error('balance storage should not be read for EVM.Log')
-        },
-      },
-    } as unknown as StorageBlock
-    const evmLog = {
-      name: 'EVM.Log',
-      index: 7,
-      callAddress: [0],
-      args: {
-        log: {
-          address: '0x1111111111111111111111111111111111111111',
-          topics: [
-            '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-            ACCOUNT,
-          ],
-          data: '0x',
-        },
-      },
-    } as unknown as RawEvent
-
-    const result = await extractBalanceObservations(
-      block,
-      '2026-06-19 00:00:00',
-      [evmLog],
-      [],
-      'sqd',
-    )
-
-    expect(result).toEqual({
-      observations: [],
-      warnings: [],
-    })
-  })
-
   it('skips (and warns instead of fabricating HDX for) a multi-asset event whose asset id cannot be decoded', async () => {
     const block = {
       height: 3,
@@ -160,59 +120,6 @@ describe('raw balance event extraction', () => {
         block,
         '2026-06-19 00:00:00',
         [balancesTransfer],
-        [],
-        'sqd',
-      )
-
-      expect(result.warnings).toEqual([])
-      expect(result.observations).toHaveLength(1)
-      expect(result.observations[0].asset_id).toBe('0')
-      expect(result.observations[0].account_id).toBe(ACCOUNT)
-    } finally {
-      ;(systemStorage.account.v205 as unknown as { is: typeof originalIs }).is = originalIs
-      ;(systemStorage.account.v205 as unknown as { get: typeof originalGet }).get = originalGet
-      ;(systemStorage.account.v205 as unknown as { getDefault: typeof originalDefault }).getDefault = originalDefault
-    }
-  })
-
-  it('still assumes the native asset for EVMAccounts events, which never carry an asset id', async () => {
-    // EVMAccounts.Bound is native-implied by construction (binding touches the
-    // account's native balance via fees/deposits; ERC20 movement arrives through
-    // the EVM-log path). It must keep producing a native observation — only
-    // Tokens./Currencies. shapes without a decodable asset id are skipped.
-    const block = { height: 6, hash: '0x05' } as unknown as StorageBlock
-    const originalIs = systemStorage.account.v205.is
-    const originalGet = systemStorage.account.v205.get
-    const originalDefault = systemStorage.account.v205.getDefault
-
-    ;(systemStorage.account.v205 as unknown as { is: typeof originalIs }).is = () => true
-    ;(systemStorage.account.v205 as unknown as { get: typeof originalGet }).get = async () => ({
-      nonce: 0,
-      consumers: 0,
-      providers: 0,
-      sufficients: 0,
-      data: { free: 7n, reserved: 0n, frozen: 0n, flags: 0n },
-    } as never)
-    ;(systemStorage.account.v205 as unknown as { getDefault: typeof originalDefault }).getDefault = () => ({
-      nonce: 0,
-      consumers: 0,
-      providers: 0,
-      sufficients: 0,
-      data: { free: 0n, reserved: 0n, frozen: 0n, flags: 0n },
-    } as never)
-
-    try {
-      const bound = {
-        name: 'EVMAccounts.Bound',
-        index: 9,
-        callAddress: [0],
-        args: { account: ACCOUNT },
-      } as unknown as RawEvent
-
-      const result = await extractBalanceObservations(
-        block,
-        '2026-06-19 00:00:00',
-        [bound],
         [],
         'sqd',
       )

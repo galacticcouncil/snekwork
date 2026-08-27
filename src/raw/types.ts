@@ -69,22 +69,6 @@ export interface RawBlockSnapshotRow {
   ingest_source: string
 }
 
-export interface RawAccountAliasRow {
-  block_height: number
-  block_timestamp: string
-  event_index: number | null
-  extrinsic_index: number | null
-  account_id: string | null
-  alias_type: string
-  alias_value: string
-  evm_address: string | null
-  primary_profile: string
-  relationship: string
-  evidence_json: string
-  confidence: number
-  ingest_source: string
-}
-
 export interface RawBalanceObservationRow {
   block_height: number
   block_timestamp: string
@@ -102,77 +86,6 @@ export interface RawBalanceObservationRow {
   source_name: string
   source_event_index: number | null
   source_call_address: string | null
-  evidence_json: string
-  ingest_source: string
-}
-
-export interface RawEvmLogRow {
-  block_height: number
-  block_timestamp: string
-  event_index: number
-  extrinsic_index: number | null
-  call_address: string | null
-  contract_address: string
-  topic0: string | null
-  topics: string[]
-  data: string
-  decode_status: string
-  event_signature: string | null
-  event_name: string | null
-  decoded_args_json: string
-  participants: string[]
-  assets: string[]
-  warning: string | null
-  raw_log_json: string
-  ingest_source: string
-}
-
-export interface RawMoneyMarketEventRow {
-  block_height: number
-  block_timestamp: string
-  event_index: number
-  contract_address: string
-  pool_address: string | null
-  event_name: string
-  user_address: string | null
-  account_id: string | null
-  asset_address: string | null
-  amount: string | null
-  participants: string[]
-  decoded_args_json: string
-  position_observation_id: string | null
-  evidence_json: string
-  ingest_source: string
-}
-
-export interface RawMoneyMarketPositionRow {
-  block_height: number
-  block_timestamp: string
-  observation_id: string
-  user_address: string
-  account_id: string | null
-  pool_address: string
-  total_collateral_base: string
-  total_debt_base: string
-  available_borrows_base: string
-  current_liquidation_threshold: string
-  ltv: string
-  health_factor: string
-  evidence_json: string
-  ingest_source: string
-}
-
-export interface RawMoneyMarketReserveRow {
-  block_height: number
-  block_timestamp: string
-  event_index: number
-  contract_address: string
-  pool_address: string
-  event_name: string
-  reserve_address: string | null
-  asset_address: string | null
-  metrics_json: string
-  decoded_args_json: string
   evidence_json: string
   ingest_source: string
 }
@@ -254,16 +167,6 @@ export interface RawIngestionStateRow {
   updated_at?: string
 }
 
-export interface SnapshotOmnipoolAsset {
-  asset_id: number
-  hub_reserve: string
-  reserve: string
-  shares: string
-  protocol_shares: string
-  cap: string
-  tradable: number
-}
-
 export interface SnapshotXykPoolState {
   pool_account: string
   asset_a: number
@@ -272,28 +175,9 @@ export interface SnapshotXykPoolState {
   reserve_b: string
 }
 
-export interface SnapshotStableswapPoolState {
-  pool_id: number
-  assets: number[]
-  reserves: string[]
-  amplification: string
-  fee: number
-  total_issuance?: string
-  peg_multipliers?: [string, string][]
-  initial_amplification: number
-  final_amplification: number
-  initial_block: number
-  final_block: number
-}
-
 export interface SnapshotState {
   assets: AssetMetadata[]
-  atoken_equivalences: [number, number][]
-  lp_equivalences: [number, number][]
-  omnipool_account: string
-  omnipool_assets: SnapshotOmnipoolAsset[]
   xyk_pools: SnapshotXykPoolState[]
-  stableswap_pools: SnapshotStableswapPoolState[]
 }
 
 export interface SnapshotPayload {
@@ -306,17 +190,8 @@ export interface SnapshotPayload {
   }
   assets: {
     items: AssetMetadata[]
-    atoken_equivalences: [number, number][]
-    lp_equivalences: [number, number][]
-  }
-  omnipool: {
-    account: string
-    assets: SnapshotOmnipoolAsset[]
   }
   xyk: {
     pools: SnapshotXykPoolState[]
-  }
-  stableswap: {
-    pools: SnapshotStableswapPoolState[]
   }
 }

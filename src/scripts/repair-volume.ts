@@ -41,15 +41,7 @@ interface TradeLeg extends TradeAssetAmount {
 }
 
 export interface AliasState {
-  atokenToBase: Map<number, number>
-  lpToDisplay: Map<number, number>
   decimals: Map<number, number>
-}
-
-interface AssetAliasRow {
-  asset_id: number
-  symbol: string
-  decimals: number
 }
 
 export interface PriceVolumeRow {
@@ -266,76 +258,11 @@ export function decodeTrade(row: RawEventRow): DecodedTrade | null {
   return decodeRawTrade(row)
 }
 
-function parseEquivalenceList(value: unknown): [number, number][] {
-  if (!Array.isArray(value)) return []
-  const pairs: [number, number][] = []
-
-  for (const item of value) {
-    if (Array.isArray(item) && item.length >= 2) {
-      pairs.push([Number(item[0]), Number(item[1])])
-    }
-  }
-
-  return pairs.filter(([left, right]) => Number.isFinite(left) && Number.isFinite(right))
-}
-
-function aliasStateFromAssetRows(rows: AssetAliasRow[]): AliasState {
-  const atokenToBase = new Map<number, number>()
-  const lpToDisplay = new Map<number, number>()
-  const decimals = new Map<number, number>()
-  const symbolToId = new Map<string, number>()
-
-  for (const item of rows) {
-    if (Number.isInteger(item.asset_id) && Number.isInteger(item.decimals)) {
-      decimals.set(item.asset_id, item.decimals)
-    }
-    if (!symbolToId.has(item.symbol)) {
-      symbolToId.set(item.symbol, item.asset_id)
-    }
-  }
-
-  for (const item of rows) {
-    if (item.symbol.startsWith('a') && item.symbol.length > 1) {
-      const baseId = symbolToId.get(item.symbol.slice(1))
-      if (baseId !== undefined && baseId !== item.asset_id) {
-        atokenToBase.set(item.asset_id, baseId)
-      }
-    }
-
-    const lpMatch = item.symbol.match(/^\d+-Pool-(.+)$/)
-    if (lpMatch) {
-      const displayId = symbolToId.get(lpMatch[1])
-      if (displayId !== undefined && displayId !== item.asset_id) {
-        lpToDisplay.set(item.asset_id, displayId)
-      }
-    }
-  }
-
-  return { atokenToBase, lpToDisplay, decimals }
-}
-
 export function aliasStateFromSnapshot(payloadJson: string): AliasState {
   const payload = JSON.parse(payloadJson) as {
-    assets?: {
-      items?: Array<{ assetId: number; symbol?: string; decimals: number }>
-      atoken_equivalences?: unknown
-      lp_equivalences?: unknown
-    }
+    assets?: { items?: Array<{ assetId: number; decimals: number }> }
   }
 
-  const inferred = aliasStateFromAssetRows((payload.assets?.items ?? []).flatMap(item => {
-    if (typeof item.symbol !== 'string') return []
-    return [{ asset_id: item.assetId, symbol: item.symbol, decimals: item.decimals }]
-  }))
-  const atokenToBase = new Map(inferred.atokenToBase)
-  for (const [baseId, aTokenId] of parseEquivalenceList(payload.assets?.atoken_equivalences)) {
-    atokenToBase.set(aTokenId, baseId)
-  }
-
-  const lpToDisplay = new Map(inferred.lpToDisplay)
-  for (const [lpId, displayId] of parseEquivalenceList(payload.assets?.lp_equivalences)) {
-    lpToDisplay.set(lpId, displayId)
-  }
   const decimals = new Map<number, number>()
   for (const item of payload.assets?.items ?? []) {
     if (Number.isInteger(item.assetId) && Number.isInteger(item.decimals)) {
@@ -343,19 +270,13 @@ export function aliasStateFromSnapshot(payloadJson: string): AliasState {
     }
   }
 
-  return { atokenToBase, lpToDisplay, decimals }
+  return { decimals }
 }
 
-export function canonicalAssetId(assetId: number, aliases: AliasState): number {
-  const baseId = aliases.atokenToBase.get(assetId)
-  const canonicalId = baseId ?? assetId
-  return aliases.lpToDisplay.get(canonicalId) ?? canonicalId
-}
-
-function canonicalTradeLegs(trade: DecodedTrade, aliases: AliasState): { inputs: TradeLeg[]; outputs: TradeLeg[] } {
+function canonicalTradeLegs(trade: DecodedTrade): { inputs: TradeLeg[]; outputs: TradeLeg[] } {
   return {
-    inputs: trade.inputs.map(input => ({ ...input, canonicalAssetId: canonicalAssetId(input.assetId, aliases) })),
-    outputs: trade.outputs.map(output => ({ ...output, canonicalAssetId: canonicalAssetId(output.assetId, aliases) })),
+    inputs: trade.inputs.map(input => ({ ...input, canonicalAssetId: input.assetId })),
+    outputs: trade.outputs.map(output => ({ ...output, canonicalAssetId: output.assetId })),
   }
 }
 
@@ -401,7 +322,7 @@ export function rowsForTrade(
   aliases: AliasState,
   prices: Map<string, string>
 ): { tradeRows: TradeVolumeRow[]; priceRows: PriceVolumeRow[] } {
-  const { inputs, outputs } = canonicalTradeLegs(trade, aliases)
+  const { inputs, outputs } = canonicalTradeLegs(trade)
   const outputOriginalsByCanonical = originalsByCanonicalAsset(outputs)
   const inputOriginalsByCanonical = originalsByCanonicalAsset(inputs)
   const tradeRowsByAsset = new Map<number, TradeVolumeRow>()
@@ -805,12 +726,9 @@ async function repairChunk(
   }
 
   const sourceAssetIds = new Set<number>()
-  for (const { blockHeight, trade } of trades) {
-    const aliases = snapshots.get(blockHeight)
-    if (!aliases) throw new Error(`Missing aliases for block ${blockHeight}`)
+  for (const { trade } of trades) {
     for (const leg of [...trade.inputs, ...trade.outputs]) {
       sourceAssetIds.add(leg.assetId)
-      sourceAssetIds.add(canonicalAssetId(leg.assetId, aliases))
     }
   }
   const prices = await queryPricesForAssets(client, options.from, options.to, [...sourceAssetIds].sort((a, b) => a - b))

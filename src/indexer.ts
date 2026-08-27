@@ -1,21 +1,16 @@
 import { processor } from './processor.js'
-import { calculate_amplification } from '@galacticcouncil/math-stableswap'
 import { Database } from './db/database.js'
 import { AssetRegistryTracker } from './registry/tracker.js'
-import { AtokenReserveMap } from './registry/atokenReserves.js'
 import { PoolCompositionCache } from './pool/compositionCache.js'
 import { resolvePrices } from './price/graph.js'
 import { config } from './config.js'
 import { validateBlockRange } from './blockRange.js'
-import { deriveOmnipoolAccount, deriveStableswapPoolAccount } from './util/account.js'
-import { u8aToHex } from '@polkadot/util'
-import type { OmnipoolAssetState, XYKPool, StableswapPool } from './price/types.ts'
+import type { XYKPool } from './price/types.ts'
 import type { Block } from './types/support.ts'
 import * as storage from './types/storage.ts'
 import { hasAssetRegistryMetadataEvent } from './registry/events.js'
 import { isSwapEvent } from './registry/swapEvents.js'
 import { extractTradeVolumeFromSwaps, extractVolumeFromSwaps, mergePriceAndVolumeRows } from './blocks/extractVolume.js'
-import { readErc20Balances, isKnownErc20, updateErc20Registry } from './evm/balances.js'
 import {
   ClickHouseSnapshotReader,
   diffAssetRows,
@@ -77,150 +72,6 @@ function getHistoricalSnapshotEntry(
   return result.value
 }
 
-// Derive and cache the Omnipool sovereign account (constant across all blocks)
-// Convert to hex string for SQD storage API compatibility (Bytes = string)
-const omnipoolAccount = u8aToHex(deriveOmnipoolAccount())
-
-// Cache for Stableswap pool sovereign accounts (derived from pool IDs)
-// Key: pool ID, Value: hex-encoded AccountId32
-const stableswapAccountCache = new Map<number, string>()
-
-function getStableswapPoolAccount(poolId: number): string {
-  let account = stableswapAccountCache.get(poolId)
-  if (!account) {
-    account = u8aToHex(deriveStableswapPoolAccount(poolId))
-    stableswapAccountCache.set(poolId, account)
-  }
-  return account
-}
-
-function syncRegistryPricingState(
-  registry: AssetRegistryTracker,
-  existingLpEquivalences: Map<number, number>,
-  atokenUnderlyings: Map<string, number>,
-): {
-  atokenEquivalences: [number, number][]
-  atokenIds: Set<number>
-  lpEquivalences: Map<number, number>
-} {
-  const atokenEquivalences = registry.getAtokenEquivalences(atokenUnderlyings)
-  const atokenIds = registry.getAtokenIds(atokenUnderlyings)
-  const lpEquivalences = new Map(existingLpEquivalences)
-  const aaveTokenIds = new Set(atokenIds)
-
-  for (const [lpId, displayId] of registry.getLpAliases()) {
-    if (!lpEquivalences.has(lpId)) {
-      lpEquivalences.set(lpId, displayId)
-      console.log(`[LpAlias] ${lpId} → ${displayId}`)
-    }
-    aaveTokenIds.add(displayId)
-  }
-
-  updateErc20Registry(registry.getErc20Contracts(), aaveTokenIds)
-
-  return { atokenEquivalences, atokenIds, lpEquivalences }
-}
-
-/**
- * Read Omnipool asset states from chain storage using cached asset IDs
- *
- * Reads real token reserves from Tokens.Accounts storage for the Omnipool sovereign account.
- * Fails closed when a required storage codec/read is unavailable so an unknown
- * runtime cannot be checkpointed with plausible-looking fallback reserves.
- */
-async function readOmnipoolState(block: Block, assetIds: number[]): Promise<Map<number, OmnipoolAssetState>> {
-  const omnipoolAssets = new Map<number, OmnipoolAssetState>()
-
-  if (!storage.omnipool.assets.v115.is(block)) {
-    throw new Error(`Unsupported Omnipool.Assets storage at block ${block.height}`)
-  }
-
-  try {
-    // Use getMany to batch-read asset states for known assets
-    const assetStates = await storage.omnipool.assets.v115.getMany(block, assetIds)
-
-    // Batch-read all Tokens.Accounts reserves in one call
-    let balances: Awaited<ReturnType<typeof storage.tokens.accounts.v108.getMany>> | undefined
-    if (!storage.tokens.accounts.v108.is(block)) {
-      throw new Error(`Unsupported Tokens.Accounts storage at block ${block.height}`)
-    }
-    try {
-      const keys = assetIds.map(id => [omnipoolAccount, id] as [string, number])
-      balances = await storage.tokens.accounts.v108.getMany(block, keys)
-    } catch (error) {
-      throw new Error(`Tokens.Accounts reserve read failed at block ${block.height}`, { cause: error })
-    }
-
-    // Collect ERC20 assets that need EVM balance reads
-    const erc20Gaps: Array<{ idx: number; assetId: number }> = []
-
-    for (let i = 0; i < assetIds.length; i++) {
-      const assetId = assetIds[i]
-      const assetState = assetStates[i]
-      if (!assetState) continue
-
-      // For ERC20 assets, Tokens.Accounts is stale/empty — always read from EVM.
-      // For native assets, use Tokens.Accounts balance or fall back to shares.
-      let reserve = assetState.shares
-      if (isKnownErc20(assetId)) {
-        erc20Gaps.push({ idx: i, assetId })
-      } else if (balances && balances[i] && balances[i]!.free > 0n) {
-        reserve = balances[i]!.free
-      }
-
-      omnipoolAssets.set(assetId, {
-        hubReserve: assetState.hubReserve,
-        reserve,
-        shares: assetState.shares,
-        protocolShares: assetState.protocolShares,
-        cap: assetState.cap,
-        tradable: assetState.tradable.bits,
-      })
-    }
-
-    // HDX (asset 0) is the native token — its balance lives in System.Account,
-    // not Tokens.Accounts. Read it separately to get the correct reserve.
-    const hdxState = omnipoolAssets.get(0)
-    if (hdxState) {
-      try {
-        let hdxFree: bigint | undefined
-        if (storage.system.account.v205.is(block)) {
-          const acct = await storage.system.account.v205.get(block, omnipoolAccount)
-          hdxFree = acct?.data.free
-        } else if (storage.system.account.v100.is(block)) {
-          const acct = await storage.system.account.v100.get(block, omnipoolAccount)
-          hdxFree = acct?.data.free
-        } else {
-          throw new Error(`Unsupported System.Account storage at block ${block.height}`)
-        }
-        if (hdxFree && hdxFree > 0n) {
-          hdxState.reserve = hdxFree
-        }
-      } catch (error) {
-        throw new Error(`System.Account HDX reserve read failed at block ${block.height}`, { cause: error })
-      }
-    }
-
-    // Fill ERC20 gaps from EVM storage
-    if (erc20Gaps.length > 0) {
-      const erc20AssetIds = erc20Gaps.map(g => g.assetId)
-      const evmBalances = await readErc20Balances(block, erc20AssetIds, omnipoolAccount)
-      for (let g = 0; g < erc20Gaps.length; g++) {
-        if (evmBalances[g] > 0n) {
-          const state = omnipoolAssets.get(erc20Gaps[g].assetId)
-          if (state) {
-            state.reserve = evmBalances[g]
-          }
-        }
-      }
-    }
-  } catch (error) {
-    throw new Error(`Failed to read Omnipool state at block ${block.height}`, { cause: error })
-  }
-
-  return omnipoolAssets
-}
-
 /**
  * Read XYK pool states from chain storage using cached pool entries
  *
@@ -268,170 +119,6 @@ async function readXYKState(
   }
 
   return xykPools
-}
-
-let stableswapPegStorageSeen = false
-
-/**
- * Read Stableswap pool states from chain storage using cached pool entries
- *
- * Uses cached pool metadata (assets, amplification params, fee) and only reads
- * token reserves from Tokens.Accounts per block.
- *
- * Reserves are read from the pool's sovereign account via Tokens.Accounts.
- * Each pool's sovereign account is derived from PalletId("stblpool") + pool_id sub-account.
- */
-async function readStableswapState(
-  block: Block,
-  pools: Array<{
-    poolId: number
-    assets: number[]
-    initialAmplification: number
-    finalAmplification: number
-    initialBlock: number
-    finalBlock: number
-    fee: number
-  }>
-): Promise<{ pools: StableswapPool[]; totalIssuances: Map<number, bigint> }> {
-  const stableswapPools: StableswapPool[] = []
-  let totalIssuances = new Map<number, bigint>()
-
-  if (!storage.tokens.accounts.v108.is(block)) {
-    throw new Error(`Unsupported Tokens.Accounts storage for Stableswap pools at block ${block.height}`)
-  }
-
-  try {
-    // Batch-read all pool reserves across all pools in one call
-    const keys: [string, number][] = []
-    const poolOffsets: number[] = []  // Track starting index for each pool
-
-    for (const poolEntry of pools) {
-      poolOffsets.push(keys.length)  // Current pool starts at this index
-      const poolAccount = getStableswapPoolAccount(poolEntry.poolId)
-      for (const assetId of poolEntry.assets) {
-        keys.push([poolAccount, assetId])
-      }
-    }
-
-    const balances = await storage.tokens.accounts.v108.getMany(block, keys)
-
-    // Batch-read TotalIssuance for each pool's LP token (LP assetId == poolId)
-    if (!storage.tokens.totalIssuance.v108.is(block)) {
-      throw new Error(`Unsupported Tokens.TotalIssuance storage at block ${block.height}`)
-    }
-    const lpAssetIds = pools.map(p => p.poolId)
-    const issuances = await storage.tokens.totalIssuance.v108.getMany(block, lpAssetIds)
-    for (let i = 0; i < lpAssetIds.length; i++) {
-      const val = issuances[i]
-      if (val !== undefined && val > 0n) {
-        totalIssuances.set(lpAssetIds[i], val)
-      }
-    }
-
-    // Map results back to per-pool reserves using offsets
-    for (let i = 0; i < pools.length; i++) {
-      const poolEntry = pools[i]
-
-      // Calculate current amplification parameter using the official stableswap math package.
-      // This keeps ramp periods aligned with the protocol implementation.
-      const currentBlock = block.height
-      let amplification: bigint
-      try {
-        amplification = BigInt(calculate_amplification(
-          poolEntry.initialAmplification.toString(),
-          poolEntry.finalAmplification.toString(),
-          poolEntry.initialBlock.toString(),
-          poolEntry.finalBlock.toString(),
-          currentBlock.toString(),
-        ))
-      } catch {
-        if (currentBlock >= poolEntry.finalBlock) {
-          amplification = BigInt(poolEntry.finalAmplification)
-        } else if (currentBlock <= poolEntry.initialBlock) {
-          amplification = BigInt(poolEntry.initialAmplification)
-        } else {
-          const totalBlocks = poolEntry.finalBlock - poolEntry.initialBlock
-          const elapsedBlocks = currentBlock - poolEntry.initialBlock
-          const initialAmp = BigInt(poolEntry.initialAmplification)
-          const finalAmp = BigInt(poolEntry.finalAmplification)
-
-          amplification = initialAmp +
-            ((finalAmp - initialAmp) * BigInt(elapsedBlocks)) / BigInt(totalBlocks)
-        }
-      }
-
-      // Extract reserves for this pool using offset.
-      // For ERC20 assets (aTokens, HOLLAR), Tokens.Accounts returns null —
-      // fall back to reading EVM.AccountStorages via SQD.
-      const startIdx = poolOffsets[i]
-      const reserves: bigint[] = []
-      let hasErc20Gap = false
-
-      for (let j = 0; j < poolEntry.assets.length; j++) {
-        const balance = balances[startIdx + j]
-        if (balance && balance.free > 0n) {
-          reserves.push(balance.free)
-        } else {
-          reserves.push(0n)
-          if (isKnownErc20(poolEntry.assets[j])) {
-            hasErc20Gap = true
-          }
-        }
-      }
-
-      // Fill ERC20 gaps from EVM storage
-      if (hasErc20Gap) {
-        const poolAccount = getStableswapPoolAccount(poolEntry.poolId)
-        const evmBalances = await readErc20Balances(block, poolEntry.assets, poolAccount)
-        for (let j = 0; j < reserves.length; j++) {
-          if (reserves[j] === 0n && evmBalances[j] > 0n) {
-            reserves[j] = evmBalances[j]
-          }
-        }
-      }
-
-      // Read peg info if available (drifting peg pools like GDOT, GETH, GSOL)
-      let pegMultipliers: [bigint, bigint][] | undefined
-      try {
-        let peg: { current?: Array<[bigint, bigint]> } | undefined
-        let pegStorageSupported = false
-        if (storage.stableswap.poolPegs.v378.is(block)) {
-          pegStorageSupported = true
-          peg = await storage.stableswap.poolPegs.v378.get(block, poolEntry.poolId)
-        } else if (storage.stableswap.poolPegs.v323.is(block)) {
-          pegStorageSupported = true
-          peg = await storage.stableswap.poolPegs.v323.get(block, poolEntry.poolId)
-        } else if (storage.stableswap.poolPegs.v305.is(block)) {
-          pegStorageSupported = true
-          peg = await storage.stableswap.poolPegs.v305.get(block, poolEntry.poolId)
-        }
-        if (!pegStorageSupported && stableswapPegStorageSeen) {
-          throw new Error(`Unsupported Stableswap.PoolPegs storage at block ${block.height}`)
-        }
-        stableswapPegStorageSeen ||= pegStorageSupported
-        const currentPeg = peg?.current
-        if (currentPeg != null && currentPeg.length > 0) {
-          pegMultipliers = currentPeg
-        }
-      } catch (error) {
-        throw new Error(`Failed to read stableswap peg at block ${block.height} for pool ${poolEntry.poolId}`, { cause: error })
-      }
-
-      stableswapPools.push({
-        poolId: poolEntry.poolId,
-        assets: poolEntry.assets,
-        reserves,
-        amplification,
-        fee: poolEntry.fee,
-        totalIssuance: totalIssuances.get(poolEntry.poolId),
-        pegMultipliers,
-      })
-    }
-  } catch (error) {
-    throw new Error(`Failed to read Stableswap state at block ${block.height}`, { cause: error })
-  }
-
-  return { pools: stableswapPools, totalIssuances }
 }
 
 export async function run(options: RunOptions = {}): Promise<void> {
@@ -516,16 +203,6 @@ export async function run(options: RunOptions = {}): Promise<void> {
     // Previous prices for carry-forward optimization
   let previousPrices: Map<number, string> | null = null
   let lastUnpricedKey = ''
-  let atokenEquivalences: [number, number][] = []
-  let atokenIds: Set<number> = new Set()
-  // Authoritative wrapper↔base relation from Aave's initialized reserves; a
-  // duplicated symbol (four USDC ids) cannot be resolved without it. Reloaded on
-  // registry changes, which is when a new wrapper can appear.
-  const atokenReserves = new AtokenReserveMap()
-  await atokenReserves.refresh()
-  // LP → wrapper equivalences (e.g. 2-Pool-GDOT(690) → GDOT(69))
-  // Detected from asset registry symbol patterns (N-Pool-X → X)
-  let lpEquivalences = new Map<number, number>()
   // Tracking for skip rate logging
   let blocksSkipped = 0
   let blocksProcessed = 0
@@ -644,16 +321,10 @@ export async function run(options: RunOptions = {}): Promise<void> {
 
       const hasSetStorageAffectingPools = detectPoolAffectingSetStorage(block.calls)
       const hasAssetRegistryChange = hasAssetRegistryMetadataEvent(block.events)
-      let currentAtokenEquivalences = atokenEquivalences
-      let currentAtokenIds = atokenIds
-      let currentLpEquivalences = lpEquivalences
       let decimals = registry.getDecimals()
       let assetsTracked = registry.getCacheSize()
       let shouldProcess = true
-      let omnipoolAssets = new Map<number, OmnipoolAssetState>()
       let xykPools: XYKPool[] = []
-      let stableswapPools: StableswapPool[] = []
-      let totalIssuances = new Map<number, bigint>()
       let historicalSnapshot: HistoricalSnapshotState | null = null
       while (true) {
         const currentHistoricalEntry = getHistoricalSnapshotEntry(nextHistoricalSnapshot)
@@ -680,9 +351,6 @@ export async function run(options: RunOptions = {}): Promise<void> {
 
         if (!historicalRegistryInitialized || hasAssetRegistryChange) {
           await registry.maybeSnapshot(blockHeight, block.header, { force: true })
-          await atokenReserves.refresh()
-          ;({ atokenEquivalences, atokenIds, lpEquivalences } =
-            syncRegistryPricingState(registry, lpEquivalences, atokenReserves.underlyings))
           historicalRegistryInitialized = true
         }
 
@@ -692,19 +360,6 @@ export async function run(options: RunOptions = {}): Promise<void> {
         const historicalDecimals = historicalRegistryInitialized
           ? registry.getDecimals()
           : historicalSnapshot.decimals
-        const historicalAtokenEquivalences = historicalRegistryInitialized
-          ? atokenEquivalences
-          : historicalSnapshot.atokenEquivalences
-        const historicalAtokenIds = historicalRegistryInitialized
-          ? atokenIds
-          : historicalSnapshot.atokenIds
-        const historicalLpEquivalences = historicalRegistryInitialized
-          ? lpEquivalences
-          : historicalSnapshot.lpEquivalences
-
-        currentAtokenEquivalences = historicalAtokenEquivalences
-        currentAtokenIds = historicalAtokenIds
-        currentLpEquivalences = historicalLpEquivalences
         decimals = historicalDecimals
         assetsTracked = historicalAssetRows.length
 
@@ -734,19 +389,13 @@ export async function run(options: RunOptions = {}): Promise<void> {
         if (!hasPoolAffectingTransfer && !hasSetStorageAffectingPools && !compositionChanged && !hasSwapEvents && previousPrices !== null) {
           shouldProcess = false
         } else {
-          omnipoolAssets = historicalSnapshot.omnipoolAssets
           xykPools = historicalSnapshot.xykPools
-          stableswapPools = historicalSnapshot.stableswapPools
-          totalIssuances = historicalSnapshot.totalIssuances
         }
 
         previousHistoricalSnapshot = {
           ...historicalSnapshot,
           assetRows: historicalAssetRows,
           decimals: historicalDecimals,
-          atokenEquivalences: historicalAtokenEquivalences,
-          atokenIds: historicalAtokenIds,
-          lpEquivalences: historicalLpEquivalences,
         }
       } else {
         // Asset registry snapshot (every N blocks)
@@ -754,46 +403,24 @@ export async function run(options: RunOptions = {}): Promise<void> {
         if (newAssets.length > 0) {
           ctx.store.addAssets(newAssets)
         }
-        if (newAssets.length > 0 || hasAssetRegistryChange) {
-          await atokenReserves.refresh()
-          ;({ atokenEquivalences, atokenIds, lpEquivalences } =
-            syncRegistryPricingState(registry, lpEquivalences, atokenReserves.underlyings))
-        }
-
-        currentAtokenEquivalences = atokenEquivalences
-        currentAtokenIds = atokenIds
-        currentLpEquivalences = lpEquivalences
         decimals = registry.getDecimals()
         assetsTracked = registry.getCacheSize()
 
         // Update pool composition cache from events
-        const compositionChanges = compositionCache.processEvents(block.events)
-        const compositionChanged = compositionChanges.omnipoolChanged ||
-          compositionChanges.xykChanged ||
-          compositionChanges.stableswapChanged
+        const { xykChanged: compositionChanged } = compositionCache.processEvents(block.events)
 
         if (hasSetStorageAffectingPools) {
           console.warn(`[SetStorage] Pool-affecting System.set_storage detected at block ${blockHeight}`)
           compositionCache.invalidateAll()
         }
 
-        const omnipoolAssetIds = await compositionCache.getOmnipoolAssets(block.header)
         const xykPoolEntries = await compositionCache.getXYKPools(block.header)
-        const stableswapPoolEntries = await compositionCache.getStableswapPools(block.header)
 
         // Build set of known pool accounts for transfer event filtering
         const poolAccounts = new Set<string>()
-        poolAccounts.add(omnipoolAccount)
-
         if (xykPoolEntries) {
           for (const pool of xykPoolEntries) {
             poolAccounts.add(pool.poolAccount)
-          }
-        }
-
-        if (stableswapPoolEntries) {
-          for (const pool of stableswapPoolEntries) {
-            poolAccounts.add(getStableswapPoolAccount(pool.poolId))
           }
         }
 
@@ -816,20 +443,7 @@ export async function run(options: RunOptions = {}): Promise<void> {
           shouldProcess = false
         } else {
           try {
-            let stableswapResult: { pools: StableswapPool[]; totalIssuances: Map<number, bigint> }
-            ;[omnipoolAssets, xykPools, stableswapResult] = await Promise.all([
-              omnipoolAssetIds
-                ? readOmnipoolState(block.header, omnipoolAssetIds)
-                : Promise.resolve(new Map()),
-              xykPoolEntries
-                ? readXYKState(block.header, xykPoolEntries)
-                : Promise.resolve([]),
-              stableswapPoolEntries
-                ? readStableswapState(block.header, stableswapPoolEntries)
-                : Promise.resolve({ pools: [], totalIssuances: new Map() }),
-            ])
-            stableswapPools = stableswapResult.pools
-            totalIssuances = stableswapResult.totalIssuances
+            xykPools = xykPoolEntries ? await readXYKState(block.header, xykPoolEntries) : []
           } catch (error) {
             throw new Error(
               `[Runtime] Storage read failed at block ${blockHeight} (spec_version: ${specVersion})`,
@@ -854,20 +468,10 @@ export async function run(options: RunOptions = {}): Promise<void> {
       blocksProcessed++
 
       const { prices, hopCounts, unpricedConnected } = resolvePrices(
-        omnipoolAssets,
         xykPools,
-        stableswapPools,
         decimals,
-        config.USD_REFERENCE_IDS[0] ?? 10,
-        config.LRNA_ASSET_ID,
-        config.OMNIPOOL_BRIDGE_IDS,
-        currentAtokenEquivalences,
-        totalIssuances,
         config.USD_REFERENCE_IDS,
-        {
-          minGraphPathLiquidityUsd: config.GRAPH_MIN_PATH_LIQUIDITY_USD,
-          lpEquivalences: currentLpEquivalences,
-        },
+        { minGraphPathLiquidityUsd: config.GRAPH_MIN_PATH_LIQUIDITY_USD },
       )
 
       const unpricedKey = unpricedConnected.join(',')
@@ -884,13 +488,6 @@ export async function run(options: RunOptions = {}): Promise<void> {
 
       previousPrices = prices
 
-      const atokenToBase = new Map(currentAtokenEquivalences.map(([base, aToken]) => [aToken, base]))
-      const canonicalVolumeAssetId = (assetId: number): number => {
-        const baseId = atokenToBase.get(assetId)
-        const canonicalId = baseId ?? assetId
-        return currentLpEquivalences.get(canonicalId) ?? canonicalId
-      }
-
       // Extract volume from swap events in this block
       const volumeRows = extractVolumeFromSwaps(
         block.events,
@@ -898,7 +495,6 @@ export async function run(options: RunOptions = {}): Promise<void> {
         specVersion,
         prices,
         decimals,
-        canonicalVolumeAssetId
       )
       const tradeVolumeRows = extractTradeVolumeFromSwaps(
         block.events,
@@ -906,23 +502,11 @@ export async function run(options: RunOptions = {}): Promise<void> {
         specVersion,
         prices,
         decimals,
-        canonicalVolumeAssetId
       )
       swapEventsProcessed += block.events.filter(event => isSwapEvent(event.name, specVersion)).length
 
-      // Copy LP token prices to their wrapper tokens (e.g. 2-Pool-GDOT(690) → GDOT(69))
-      // Detected from Aave ReserveInitialized EVM events
-      for (const [lpId, wrapperId] of currentLpEquivalences) {
-        const lpPrice = prices.get(lpId)
-        if (lpPrice && !prices.has(wrapperId)) {
-          prices.set(wrapperId, lpPrice)
-          hopCounts.set(wrapperId, hopCounts.get(lpId) ?? 0)
-        }
-      }
-
-      const lpIds = new Set(currentLpEquivalences.keys())
       const priceRows = Array.from(prices.entries())
-        .filter(([assetId, usdPrice]) => !currentAtokenIds.has(assetId) && !lpIds.has(assetId) && parseFloat(usdPrice) > 0)
+        .filter(([, usdPrice]) => parseFloat(usdPrice) > 0)
         .map(([assetId, usdPrice]) => ({
           asset_id: assetId,
           block_height: blockHeight,

@@ -408,12 +408,12 @@ describe('mergePriceAndVolumeRows', () => {
 
 describe('isSwapEvent', () => {
   it('uses legacy swap events before unified runtime support', () => {
-    expect(isSwapEvent('Omnipool.SellExecuted', 201)).toBe(true);
+    expect(isSwapEvent('XYK.SellExecuted', 201)).toBe(true);
     expect(isSwapEvent('Broadcast.Swapped3', 201)).toBe(false);
   });
 
   it('switches to unified broadcast events from spec 282 onward', () => {
-    expect(isSwapEvent('Omnipool.SellExecuted', 282)).toBe(false);
+    expect(isSwapEvent('XYK.SellExecuted', 282)).toBe(false);
     expect(isSwapEvent('Broadcast.Swapped3', 323)).toBe(true);
   });
 });
@@ -429,11 +429,11 @@ describe('extractVolumeFromSwaps', () => {
   ]);
 
   it('extracts legacy swap events before the unified swap cutoff', () => {
-    const event = createMockEvent('Omnipool.SellExecuted', {
+    const event = createMockEvent('XYK.SellExecuted', {
       assetIn: 5,
       assetOut: 10,
-      amountIn: 1000000000000n,
-      amountOut: 2000000000000n,
+      amount: 1000000000000n,
+      salePrice: 2000000000000n,
     });
 
     const rows = extractVolumeFromSwaps([event], 100, 201, prices, decimals);
@@ -446,11 +446,11 @@ describe('extractVolumeFromSwaps', () => {
   });
 
   it('ignores legacy swap events after the unified swap cutoff', () => {
-    const event = createMockEvent('Omnipool.SellExecuted', {
+    const event = createMockEvent('XYK.SellExecuted', {
       assetIn: 5,
       assetOut: 10,
-      amountIn: 1000000000000n,
-      amountOut: 2000000000000n,
+      amount: 1000000000000n,
+      salePrice: 2000000000000n,
     });
 
     const rows = extractVolumeFromSwaps([event], 100, 282, prices, decimals);
@@ -460,7 +460,7 @@ describe('extractVolumeFromSwaps', () => {
 
   it('extracts unified broadcast swap events after the cutoff', () => {
     const event = createMockEvent('Broadcast.Swapped3', {
-      fillerType: { __kind: 'Omnipool' },
+      fillerType: { __kind: 'XYK' },
       operation: { __kind: 'ExactIn' },
       inputs: [{ asset: 5, amount: 1000000000000n }],
       outputs: [{ asset: 10, amount: 2000000000000n }],
@@ -512,86 +512,6 @@ describe('extractVolumeFromSwaps', () => {
     });
   });
 
-  it('canonicalizes wrapper assets before aggregation and skips wrapper self-conversions', () => {
-    const routeWrap = createMockEvent('Broadcast.Swapped3', {
-      fillerType: { __kind: 'AAVE' },
-      operation: { __kind: 'ExactIn' },
-      inputs: [{ asset: 5, amount: 1000000000000n }],
-      outputs: [{ asset: 1001, amount: 1000000000000n }],
-      fees: [],
-      swapper: 'alice',
-      filler: 'aave',
-      operationStack: [],
-    });
-    const routeSwap = createMockEvent('Broadcast.Swapped3', {
-      fillerType: { __kind: 'Omnipool' },
-      operation: { __kind: 'ExactIn' },
-      inputs: [{ asset: 1001, amount: 1000000000000n }],
-      outputs: [{ asset: 10, amount: 2000000000000n }],
-      fees: [],
-      swapper: 'alice',
-      filler: 'pool',
-      operationStack: [],
-    });
-    const wrapperPrices: PriceMap = new Map([
-      [5, '2.000000000000'],
-      [1001, '2.000000000000'],
-      [10, '1.500000000000'],
-    ]);
-    const wrapperDecimals: AssetDecimals = new Map([
-      [5, 12],
-      [1001, 12],
-      [10, 12],
-    ]);
-    const canonicalize = (assetId: number) => assetId === 1001 ? 5 : assetId;
-
-    const rows = extractVolumeFromSwaps([routeWrap, routeSwap], 100, 323, wrapperPrices, wrapperDecimals, canonicalize);
-
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({
-      asset_id: 5,
-      native_volume_sell: '1000000000000',
-      usd_volume_sell: '2.000000000000',
-      native_volume_buy: '0',
-      usd_volume_buy: '0.000000000000',
-    });
-    expect(rows[1]).toMatchObject({
-      asset_id: 10,
-      native_volume_buy: '2000000000000',
-      usd_volume_buy: '3.000000000000',
-    });
-  });
-
-  it('uses the canonical asset price when a wrapper leg has no direct price', () => {
-    const event = createMockEvent('Broadcast.Swapped3', {
-      fillerType: { __kind: 'Stableswap', value: 690 },
-      operation: { __kind: 'LiquidityRemove' },
-      inputs: [{ asset: 690, amount: 2000000000000000000n }],
-      outputs: [{ asset: 10, amount: 2500000n }],
-      fees: [],
-      swapper: 'alice',
-      filler: 'pool',
-      operationStack: [],
-    });
-    const wrapperPrices: PriceMap = new Map([
-      [69, '1.250000000000'],
-      [10, '1.000000000000'],
-    ]);
-    const wrapperDecimals: AssetDecimals = new Map([
-      [69, 18],
-      [690, 18],
-      [10, 6],
-    ]);
-    const canonicalize = (assetId: number) => assetId === 690 ? 69 : assetId;
-
-    const rows = extractVolumeFromSwaps([event], 100, 323, wrapperPrices, wrapperDecimals, canonicalize);
-
-    expect(rows[0]).toMatchObject({
-      asset_id: 69,
-      native_volume_sell: '2000000000000000000',
-      usd_volume_sell: '2.500000000000',
-    });
-  });
 });
 
 describe('extractTradeVolumeFromSwaps', () => {
@@ -605,12 +525,12 @@ describe('extractTradeVolumeFromSwaps', () => {
   ]);
 
   it('preserves legacy trader accounts in per-account volume rows', () => {
-    const event = createMockEvent('Omnipool.SellExecuted', {
+    const event = createMockEvent('XYK.SellExecuted', {
       who: 'alice',
       assetIn: 5,
       assetOut: 10,
-      amountIn: 1000000000000n,
-      amountOut: 2000000000000n,
+      amount: 1000000000000n,
+      salePrice: 2000000000000n,
     });
 
     const rows = extractTradeVolumeFromSwaps([event], 100, 201, prices, decimals);
@@ -634,7 +554,7 @@ describe('extractTradeVolumeFromSwaps', () => {
 
   it('aggregates repeated broadcast trades by asset, block, and account', () => {
     const first = createMockEvent('Broadcast.Swapped3', {
-      fillerType: { __kind: 'Omnipool' },
+      fillerType: { __kind: 'XYK' },
       operation: { __kind: 'ExactIn' },
       inputs: [{ asset: 5, amount: 1000000000000n }],
       outputs: [{ asset: 10, amount: 2000000000000n }],
@@ -644,7 +564,7 @@ describe('extractTradeVolumeFromSwaps', () => {
       operationStack: [],
     });
     const second = createMockEvent('Broadcast.Swapped3', {
-      fillerType: { __kind: 'Omnipool' },
+      fillerType: { __kind: 'XYK' },
       operation: { __kind: 'ExactIn' },
       inputs: [{ asset: 5, amount: 500000000000n }],
       outputs: [{ asset: 10, amount: 1000000000000n }],
@@ -675,7 +595,7 @@ describe('extractTradeVolumeFromSwaps', () => {
 
   it('counts a trade once per account and asset when duplicate legs are present', () => {
     const event = createMockEvent('Broadcast.Swapped3', {
-      fillerType: { __kind: 'Omnipool' },
+      fillerType: { __kind: 'XYK' },
       operation: { __kind: 'ExactIn' },
       inputs: [
         { asset: 5, amount: 1000000000000n },
@@ -702,57 +622,4 @@ describe('extractTradeVolumeFromSwaps', () => {
     });
   });
 
-  it('does not create same-account buy and sell rows for wrapper conversions', () => {
-    const routeWrap = createMockEvent('Broadcast.Swapped3', {
-      fillerType: { __kind: 'AAVE' },
-      operation: { __kind: 'ExactIn' },
-      inputs: [{ asset: 5, amount: 1000000000000n }],
-      outputs: [{ asset: 1001, amount: 1000000000000n }],
-      fees: [],
-      swapper: 'dave',
-      filler: 'aave',
-      operationStack: [],
-    });
-    const routeSwap = createMockEvent('Broadcast.Swapped3', {
-      fillerType: { __kind: 'Omnipool' },
-      operation: { __kind: 'ExactIn' },
-      inputs: [{ asset: 1001, amount: 1000000000000n }],
-      outputs: [{ asset: 10, amount: 2000000000000n }],
-      fees: [],
-      swapper: 'dave',
-      filler: 'pool',
-      operationStack: [],
-    });
-    const wrapperPrices: PriceMap = new Map([
-      [5, '2.000000000000'],
-      [1001, '2.000000000000'],
-      [10, '1.500000000000'],
-    ]);
-    const wrapperDecimals: AssetDecimals = new Map([
-      [5, 12],
-      [1001, 12],
-      [10, 12],
-    ]);
-    const canonicalize = (assetId: number) => assetId === 1001 ? 5 : assetId;
-
-    const rows = extractTradeVolumeFromSwaps([routeWrap, routeSwap], 100, 323, wrapperPrices, wrapperDecimals, canonicalize);
-
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({
-      asset_id: 5,
-      account: 'dave',
-      native_volume_sell: '1000000000000',
-      usd_volume_sell: '2.000000000000',
-      native_volume_buy: '0',
-      usd_volume_buy: '0.000000000000',
-      trade_count: 1,
-    });
-    expect(rows[1]).toMatchObject({
-      asset_id: 10,
-      account: 'dave',
-      native_volume_buy: '2000000000000',
-      usd_volume_buy: '3.000000000000',
-      trade_count: 1,
-    });
-  });
 });

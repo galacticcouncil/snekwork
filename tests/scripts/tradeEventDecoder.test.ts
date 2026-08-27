@@ -7,8 +7,8 @@ function event(eventName: string, args: object) {
 
 describe('trade event decoder', () => {
   it('decodes legacy pool trades', () => {
-    expect(decodeRawTrade(event('Omnipool.SellExecuted', {
-      who: '0xaccount', assetIn: 0, assetOut: 5, amountIn: '100', amountOut: '200',
+    expect(decodeRawTrade(event('XYK.SellExecuted', {
+      who: '0xaccount', assetIn: 0, assetOut: 5, amount: '100', salePrice: '200',
     }))).toEqual({
       account: '0xaccount',
       inputs: [{ assetId: 0, amount: 100n }],

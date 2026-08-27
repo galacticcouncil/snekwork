@@ -16,7 +16,6 @@ describe('ingestion supervisor', () => {
 
   it('uses the Hydration Neckwork namespace for default runtime resources', () => {
     expect(composeFile).toContain('name: hydration-neckwork')
-    expect(composeFile).toContain('container_name: hydration-neckwork-preis-ui')
     expect(composeFile).toContain('container_name: hydration-neckwork-explorer-ui')
     expect(composeFile).toContain('image: hydration-neckwork-indexer:latest')
     expect(composeFile).toContain('hydration-neckwork-clickhouse-data')

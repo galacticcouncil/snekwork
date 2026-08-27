@@ -4,7 +4,7 @@ import * as systemStorage from '../types/system/storage.js'
 import * as tokensStorage from '../types/tokens/storage.js'
 import type { RawCall, RawEvent } from './processor.js'
 import { callAddressToString, callSourceIndex, toJsonString } from './json.js'
-import { deriveTruncatedAccountId, extractHexLike, normalizeAccountId, normalizeH160 } from './accountIdentity.js'
+import { extractHexLike, normalizeAccountId } from './accountId.js'
 import type { RawBalanceObservationRow, RawParserWarningRow } from './types.js'
 import { chunk, forEachConcurrent } from '../util/collections.js'
 
@@ -301,12 +301,6 @@ function collectAccounts(value: unknown): string[] {
       return
     }
 
-    const h160 = normalizeH160(current)
-    if (h160 != null && /address|evm|h160|account|from|to|who|owner|user|recipient|sender/i.test(keyHint)) {
-      accounts.add(deriveTruncatedAccountId(h160))
-      return
-    }
-
     if (Array.isArray(current)) {
       for (const item of current) visit(item, keyHint)
       return
@@ -326,15 +320,13 @@ function collectAccounts(value: unknown): string[] {
 }
 
 function isBalanceEvent(name: string): boolean {
-  if (name === 'EVM.Log') return false
   return /^(Balances|Tokens|Currencies)\./.test(name) ||
     name === 'System.NewAccount' ||
-    name === 'System.KilledAccount' ||
-    /^(EVM|EVMAccounts)\./.test(name)
+    name === 'System.KilledAccount'
 }
 
 function isBalanceCall(name: string): boolean {
-  return /^(Balances|Tokens|Currencies|EVM|EVMAccounts)\./.test(name)
+  return /^(Balances|Tokens|Currencies)\./.test(name)
 }
 
 function isAdministrativeCall(name: string): boolean {
@@ -343,22 +335,16 @@ function isAdministrativeCall(name: string): boolean {
 }
 
 // Pallets whose balance events/calls imply the native asset by construction:
-// their args never carry a substrate asset id. Balances./System. are native-
-// only; EVM./EVMAccounts. events (Executed, Bound, …) also never encode a
-// substrate asset — the intended observation there is the account's NATIVE
-// balance (gas fees, binding deposits), and ERC20 movements arrive through the
-// dedicated EVM-log path instead. Only Tokens./Currencies. genuinely encode an
-// asset id in their args, so an empty collectAssets() result there means the
-// shape couldn't be decoded (runtime change) — skip + warn rather than
+// their args never carry a substrate asset id. Only Tokens./Currencies. genuinely
+// encode an asset id in their args, so an empty collectAssets() result there means
+// the shape couldn't be decoded (runtime change) — skip + warn rather than
 // fabricate a native observation for an unknown asset.
 function isNativeImpliedEventSource(name: string): boolean {
-  return name.startsWith('Balances.') || name.startsWith('System.') ||
-    name.startsWith('EVM.') || name.startsWith('EVMAccounts.')
+  return name.startsWith('Balances.') || name.startsWith('System.')
 }
 
 function isNativeImpliedCallSource(name: string): boolean {
-  return name.startsWith('Balances.') ||
-    name.startsWith('EVM.') || name.startsWith('EVMAccounts.')
+  return name.startsWith('Balances.')
 }
 
 // Event candidates have no per-row warning channel (candidatesFromEvent only

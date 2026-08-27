@@ -2,7 +2,7 @@
  * Volume Extraction Module
  *
  * Pure functions for extracting and aggregating trading volume from swap events:
- * - Decodes swap events from Omnipool, XYK, and Stableswap pallets
+ * - Decodes XYK and Broadcast swap events
  * - Calculates USD-denominated volumes using bigint-only arithmetic
  * - Generates bidirectional volume rows (sell + buy for each swap)
  * - Aggregates volumes by asset and merges with price rows
@@ -14,9 +14,7 @@
 import type { PriceMap, AssetDecimals } from '../price/types.js';
 import type { PriceRow, TradeVolumeRow } from '../db/schema.js';
 import { isSwapEvent } from '../registry/swapEvents.js';
-import * as omnipool from '../types/omnipool/events.js';
 import * as xyk from '../types/xyk/events.js';
-import * as stableswap from '../types/stableswap/events.js';
 import * as broadcast from '../types/broadcast/events.js';
 import { aggregateTradeVolumeRows, sumBigIntStrings, sumDecimal128Strings, sumVolumeFields } from './volumeMath.js';
 
@@ -42,8 +40,6 @@ interface DecodedTrade {
   trader?: string | null;
 }
 
-export type AssetCanonicalizer = (assetId: number) => number;
-
 interface CanonicalTradeLeg extends DecodedTradeAssetAmount {
   canonicalAssetId: number;
 }
@@ -59,17 +55,10 @@ interface EventLike {
 
 function canonicalTradeLegs(
   trade: DecodedTrade,
-  canonicalizeAssetId: AssetCanonicalizer
 ): { inputs: CanonicalTradeLeg[]; outputs: CanonicalTradeLeg[] } {
   return {
-    inputs: trade.inputs.map(input => ({
-      ...input,
-      canonicalAssetId: canonicalizeAssetId(input.assetId),
-    })),
-    outputs: trade.outputs.map(output => ({
-      ...output,
-      canonicalAssetId: canonicalizeAssetId(output.assetId),
-    })),
+    inputs: trade.inputs.map(input => ({ ...input, canonicalAssetId: input.assetId })),
+    outputs: trade.outputs.map(output => ({ ...output, canonicalAssetId: output.assetId })),
   };
 }
 
@@ -229,10 +218,9 @@ function tradeToVolumeRows(
   blockHeight: number,
   prices: PriceMap,
   decimals: AssetDecimals,
-  canonicalizeAssetId: AssetCanonicalizer = assetId => assetId
 ): PriceRow[] {
   const rows: PriceRow[] = [];
-  const { inputs, outputs } = canonicalTradeLegs(trade, canonicalizeAssetId);
+  const { inputs, outputs } = canonicalTradeLegs(trade);
   const outputOriginalsByCanonical = originalsByCanonicalAsset(outputs);
   const inputOriginalsByCanonical = originalsByCanonicalAsset(inputs);
 
@@ -272,16 +260,11 @@ function tradeToVolumeRows(
 }
 
 /**
- * Decode a swap event using version-guarded typegen codecs
- *
- * Handles all swap events across Omnipool, XYK, and Stableswap with
- * runtime version detection via .is() and schema-specific decoding.
+ * Decode a legacy XYK swap event using version-guarded typegen codecs
  *
  * Field mapping:
- * - Omnipool: direct field mapping (assetIn, assetOut, amountIn, amountOut)
  * - XYK.SellExecuted: amount -> amountIn, salePrice -> amountOut
  * - XYK.BuyExecuted: buyPrice -> amountIn, amount -> amountOut
- * - Stableswap: direct field mapping
  *
  * @param event - Event-like object with name, block, and args
  * @returns DecodedSwap or null if event is not a swap or decoding fails
@@ -289,88 +272,14 @@ function tradeToVolumeRows(
 function decodeSwapEvent(event: EventLike): DecodedSwap | null {
   const { name } = event;
   const isLegacySwapName =
-    name === 'Omnipool.SellExecuted' ||
-    name === 'Omnipool.BuyExecuted' ||
     name === 'XYK.SellExecuted' ||
-    name === 'XYK.BuyExecuted' ||
-    name === 'Stableswap.SellExecuted' ||
-    name === 'Stableswap.BuyExecuted';
+    name === 'XYK.BuyExecuted';
 
   if (!isLegacySwapName) {
     return null;
   }
 
   try {
-    // Omnipool.SellExecuted
-    if (name === 'Omnipool.SellExecuted') {
-      // Try newest to oldest: v201 -> v170 -> v115
-      if (omnipool.sellExecuted.v201.is(event)) {
-        const decoded = omnipool.sellExecuted.v201.decode(event);
-        return {
-          trader: normalizeAccount(decoded.who),
-          assetIn: decoded.assetIn,
-          assetOut: decoded.assetOut,
-          amountIn: decoded.amountIn,
-          amountOut: decoded.amountOut,
-        };
-      }
-      if (omnipool.sellExecuted.v170.is(event)) {
-        const decoded = omnipool.sellExecuted.v170.decode(event);
-        return {
-          trader: normalizeAccount(decoded.who),
-          assetIn: decoded.assetIn,
-          assetOut: decoded.assetOut,
-          amountIn: decoded.amountIn,
-          amountOut: decoded.amountOut,
-        };
-      }
-      if (omnipool.sellExecuted.v115.is(event)) {
-        const decoded = omnipool.sellExecuted.v115.decode(event);
-        return {
-          trader: normalizeAccount(decoded.who),
-          assetIn: decoded.assetIn,
-          assetOut: decoded.assetOut,
-          amountIn: decoded.amountIn,
-          amountOut: decoded.amountOut,
-        };
-      }
-    }
-
-    // Omnipool.BuyExecuted
-    if (name === 'Omnipool.BuyExecuted') {
-      // Try newest to oldest: v201 -> v170 -> v115
-      if (omnipool.buyExecuted.v201.is(event)) {
-        const decoded = omnipool.buyExecuted.v201.decode(event);
-        return {
-          trader: normalizeAccount(decoded.who),
-          assetIn: decoded.assetIn,
-          assetOut: decoded.assetOut,
-          amountIn: decoded.amountIn,
-          amountOut: decoded.amountOut,
-        };
-      }
-      if (omnipool.buyExecuted.v170.is(event)) {
-        const decoded = omnipool.buyExecuted.v170.decode(event);
-        return {
-          trader: normalizeAccount(decoded.who),
-          assetIn: decoded.assetIn,
-          assetOut: decoded.assetOut,
-          amountIn: decoded.amountIn,
-          amountOut: decoded.amountOut,
-        };
-      }
-      if (omnipool.buyExecuted.v115.is(event)) {
-        const decoded = omnipool.buyExecuted.v115.decode(event);
-        return {
-          trader: normalizeAccount(decoded.who),
-          assetIn: decoded.assetIn,
-          assetOut: decoded.assetOut,
-          amountIn: decoded.amountIn,
-          amountOut: decoded.amountOut,
-        };
-      }
-    }
-
     // XYK.SellExecuted
     if (name === 'XYK.SellExecuted') {
       if (xyk.sellExecuted.v183.is(event)) {
@@ -395,34 +304,6 @@ function decodeSwapEvent(event: EventLike): DecodedSwap | null {
           assetOut: decoded.assetOut,
           amountIn: decoded.buyPrice,    // XYK: buyPrice -> amountIn
           amountOut: decoded.amount,     // XYK: amount -> amountOut
-        };
-      }
-    }
-
-    // Stableswap.SellExecuted
-    if (name === 'Stableswap.SellExecuted') {
-      if (stableswap.sellExecuted.v183.is(event)) {
-        const decoded = stableswap.sellExecuted.v183.decode(event);
-        return {
-          trader: normalizeAccount(decoded.who),
-          assetIn: decoded.assetIn,
-          assetOut: decoded.assetOut,
-          amountIn: decoded.amountIn,
-          amountOut: decoded.amountOut,
-        };
-      }
-    }
-
-    // Stableswap.BuyExecuted
-    if (name === 'Stableswap.BuyExecuted') {
-      if (stableswap.buyExecuted.v183.is(event)) {
-        const decoded = stableswap.buyExecuted.v183.decode(event);
-        return {
-          trader: normalizeAccount(decoded.who),
-          assetIn: decoded.assetIn,
-          assetOut: decoded.assetOut,
-          amountIn: decoded.amountIn,
-          amountOut: decoded.amountOut,
         };
       }
     }
@@ -534,7 +415,6 @@ export function extractVolumeFromSwaps(
   specVersion: number,
   prices: PriceMap,
   decimals: AssetDecimals,
-  canonicalizeAssetId: AssetCanonicalizer = assetId => assetId
 ): PriceRow[] {
   const volumeRows: PriceRow[] = [];
 
@@ -552,7 +432,7 @@ export function extractVolumeFromSwaps(
     }
 
     // Generate volume rows from all input and output asset legs
-    const rows = tradeToVolumeRows(trade, blockHeight, prices, decimals, canonicalizeAssetId);
+    const rows = tradeToVolumeRows(trade, blockHeight, prices, decimals);
     volumeRows.push(...rows);
   }
 
@@ -564,7 +444,6 @@ function tradeToAccountVolumeRows(
   blockHeight: number,
   prices: PriceMap,
   decimals: AssetDecimals,
-  canonicalizeAssetId: AssetCanonicalizer = assetId => assetId
 ): TradeVolumeRow[] {
   const account = normalizeAccount(trade.trader);
   if (!account) {
@@ -572,7 +451,7 @@ function tradeToAccountVolumeRows(
   }
 
   const rowsByAsset = new Map<number, TradeVolumeRow>();
-  const { inputs, outputs } = canonicalTradeLegs(trade, canonicalizeAssetId);
+  const { inputs, outputs } = canonicalTradeLegs(trade);
   const outputOriginalsByCanonical = originalsByCanonicalAsset(outputs);
   const inputOriginalsByCanonical = originalsByCanonicalAsset(inputs);
 
@@ -635,7 +514,6 @@ export function extractTradeVolumeFromSwaps(
   specVersion: number,
   prices: PriceMap,
   decimals: AssetDecimals,
-  canonicalizeAssetId: AssetCanonicalizer = assetId => assetId
 ): TradeVolumeRow[] {
   const tradeRows: TradeVolumeRow[] = [];
 
@@ -649,7 +527,7 @@ export function extractTradeVolumeFromSwaps(
       continue;
     }
 
-    tradeRows.push(...tradeToAccountVolumeRows(trade, blockHeight, prices, decimals, canonicalizeAssetId));
+    tradeRows.push(...tradeToAccountVolumeRows(trade, blockHeight, prices, decimals));
   }
 
   return aggregateTradeVolumeRows(tradeRows);

@@ -1,14 +1,3 @@
-// hubReserve comes from Omnipool.Assets storage
-// reserve comes from Tokens.Accounts for the Omnipool sovereign account
-export interface OmnipoolAssetState {
-  hubReserve: bigint;    // LRNA reserves
-  reserve: bigint;       // Token reserves (from Tokens pallet)
-  shares: bigint;
-  protocolShares: bigint;
-  cap: bigint;
-  tradable: number;      // Tradability bits
-}
-
 /**
  * XYK constant product pool
  */
@@ -17,19 +6,6 @@ export interface XYKPool {
   assetB: number;
   reserveA: bigint;
   reserveB: bigint;
-}
-
-/**
- * Stableswap pool with amplification curve
- */
-export interface StableswapPool {
-  poolId: number;
-  assets: number[];      // Asset IDs in the pool
-  reserves: bigint[];    // Reserves for each asset
-  amplification: bigint; // Current amplification parameter
-  fee: number;          // Permill fee
-  totalIssuance?: bigint; // LP share issuance, used by package math for spot pricing
-  pegMultipliers?: [bigint, bigint][]; // Per-asset peg ratios [numerator, denominator]
 }
 
 /**
@@ -42,11 +18,11 @@ export type AssetDecimals = Map<number, number>;
  */
 export type PriceMap = Map<number, string>;
 
-export type EdgeKind = 'xyk' | 'stableswap' | 'atoken';
+export type EdgeKind = 'xyk';
 
 export interface GraphEdge {
   toAsset: number;
-  poolId: number | null;        // null for aToken equivalences
+  poolId: number | null;
   kind: EdgeKind;
   liquidity: bigint;            // For tie-breaking: normalized reserve sum
   computePrice: (knownPrice: bigint, precision: number) => bigint;
@@ -56,7 +32,7 @@ export interface GraphEdge {
 export interface QueueEntry {
   assetId: number;
   priceBigint: bigint;   // 24-decimal internal representation
-  hopCount: number;       // real pool crossings (aToken edges = 0 cost)
+  hopCount: number;       // real pool crossings
 }
 
 export interface ResolvedPrices {

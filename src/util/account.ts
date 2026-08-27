@@ -1,5 +1,4 @@
 import { u8aConcat, stringToU8a } from '@polkadot/util'
-import { blake2AsU8a } from '@polkadot/util-crypto'
 
 // Substrate PalletId to AccountId32 derivation using AccountIdConversion trait.
 // Concatenates "modl" prefix (4 bytes) + palletId (8 bytes) + zero-pad to 32 bytes.
@@ -34,23 +33,4 @@ export function deriveSubAccount(baseAccount: Uint8Array, index: number): Uint8A
   const zeroPadding = new Uint8Array(16)
 
   return u8aConcat(prefix, indexBytes, zeroPadding)
-}
-
-let cachedOmnipoolAccount: Uint8Array | null = null
-
-export function deriveOmnipoolAccount(): Uint8Array {
-  if (cachedOmnipoolAccount === null) {
-    cachedOmnipoolAccount = derivePalletAccount('omnipool')
-  }
-  return cachedOmnipoolAccount
-}
-
-// Stableswap pool accounts use blake2_256(POOL_IDENTIFIER + poolId_u32_LE)
-// where POOL_IDENTIFIER = b"sts" (from pallet_stableswap::POOL_IDENTIFIER)
-export function deriveStableswapPoolAccount(poolId: number): Uint8Array {
-  const identifier = stringToU8a('sts')
-  const poolIdBytes = new Uint8Array(4)
-  new DataView(poolIdBytes.buffer).setUint32(0, poolId, true)
-
-  return blake2AsU8a(u8aConcat(identifier, poolIdBytes), 256)
 }

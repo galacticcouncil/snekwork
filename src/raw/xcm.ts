@@ -1,6 +1,6 @@
 import type { RawCall, RawEvent } from './processor.js'
 import { callAddressToString, callSourceIndex, toJsonString } from './json.js'
-import { deriveTruncatedAccountId, extractHexLike, normalizeAccountId, normalizeH160 } from './accountIdentity.js'
+import { deriveTruncatedAccountId, extractHexLike, normalizeAccountId, normalizeH160 } from './accountId.js'
 import type { RawBridgeEvidenceRow, RawOperationTraceRow, RawXcmActivityRow } from './types.js'
 
 export interface XcmExtractionResult {

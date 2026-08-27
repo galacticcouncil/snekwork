@@ -16,9 +16,6 @@ export interface Config {
   RPC_CAPACITY: number
   RPC_HEAD_POLL_MS: number
 
-  // Non-Hydration identity sources, `key=url[@block]` and highest priority first.
-  IDENTITY_CHAINS: string
-
   // ClickHouse connection settings
   CLICKHOUSE_URL: string
   CLICKHOUSE_DB: string
@@ -30,13 +27,9 @@ export interface Config {
   RAW_FLUSH_BLOCKS: number
   RAW_FLUSH_INTERVAL_MS: number
 
-  // Hydration chain constants
-  LRNA_ASSET_ID: number
-  // Assets that can bridge Omnipool state into USD pricing.
-  OMNIPOOL_BRIDGE_IDS: number[]
   // Canonical USD references. These are treated as a peer basket.
   USD_REFERENCE_IDS: number[]
-  // Minimum bottleneck liquidity for non-Omnipool graph paths to be used as price observations.
+  // Minimum bottleneck liquidity for a graph path to be used as a price observation.
   GRAPH_MIN_PATH_LIQUIDITY_USD: number
 }
 
@@ -63,18 +56,6 @@ export const config: Config = {
   // 3:1; 750ms keeps roughly that ratio at 2s and 8:1 today.
   RPC_HEAD_POLL_MS: integerFromEnvironment('RPC_HEAD_POLL_MS', 750),
 
-  // Identity sources beyond Hydration, in falling display priority. The People
-  // chains are where Polkadot and Kusama identities actually live — both relay
-  // chains migrated theirs in 2024 and no Asset Hub ever carried the pallet.
-  // Testnet names are free to mint, so they rank last and only fill gaps.
-  // Set IDENTITY_CHAINS to an empty string to use Hydration alone.
-  IDENTITY_CHAINS: process.env.IDENTITY_CHAINS ?? [
-    'polkadot-people=https://polkadot-people-rpc.polkadot.io',
-    'kusama-people=https://kusama-people-rpc.polkadot.io',
-    'westend-people=https://westend-people-rpc.polkadot.io',
-    'paseo-people=https://people-paseo.rotko.net',
-  ].join(','),
-
   // ClickHouse connection
   CLICKHOUSE_URL: stringFromEnvironment('CLICKHOUSE_HOST', 'http://localhost:18123'),
   CLICKHOUSE_DB: 'price_data',
@@ -94,22 +75,15 @@ export const config: Config = {
   RAW_FLUSH_BLOCKS: integerFromEnvironment('RAW_FLUSH_BLOCKS', 10, { min: 1 }),
   RAW_FLUSH_INTERVAL_MS: integerFromEnvironment('RAW_FLUSH_INTERVAL_MS', 5_000, { min: 0 }),
 
-  // Hydration chain asset IDs
-  LRNA_ASSET_ID: 1,   // LRNA is the Omnipool hub token
-  // Assets that can bridge Omnipool pricing into the stable basket.
-  // 222 is deliberately treated as a bridge, not as a canonical USD reference.
-  OMNIPOOL_BRIDGE_IDS: [10, 22, 222],
-  // USD references are treated symmetrically: the basket stays centered on $1,
-  // while any 10/22 deviation is split across both assets instead of privileging 10.
+  // USD references are treated symmetrically: the basket stays centered on $1.
   USD_REFERENCE_IDS: [10, 22],
   // 0 (no gate) on purpose: any positive floor permanently unprices every asset
   // whose only venue is an isolated pool below it (PEN, NEURO, UNQ, SUB, NODL, …
   // were dark for five weeks under the previous 12 000), and the surfaces that
-  // read those prices — the official-UI API, preis, account valuations — treat
-  // "no price" as "does not exist". The gate is also not what protects deep
-  // assets: Omnipool prices are authoritative and the weighted median prefers
-  // the deepest path, so a dust pool can only ever price an asset that has no
-  // deeper venue — for which its actual on-chain marginal price is the best
-  // available truth.
+  // read those prices — account valuations, asset charts — treat "no price" as
+  // "does not exist". The gate is also not what protects deep assets: the
+  // weighted median prefers the deepest path, so a dust pool can only ever price
+  // an asset that has no deeper venue — for which its actual on-chain marginal
+  // price is the best available truth.
   GRAPH_MIN_PATH_LIQUIDITY_USD: integerFromEnvironment('GRAPH_MIN_PATH_LIQUIDITY_USD', 0, { min: 0 }),
 }

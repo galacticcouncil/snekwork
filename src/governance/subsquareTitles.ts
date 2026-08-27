@@ -54,7 +54,7 @@ function decodeEntities(text: string): string {
 // SubSquare answers 200 with its generic site title for a referendum that does not
 // exist (verified: /referenda/9999 returns "SubSquare | hydradx governance
 // platform"), so a naive parse would store that junk as ref 9999's name — the same
-// absent-value-looks-real trap that made a missing DCA order read as HDX->HDX.
+// absent-value-looks-real trap that made a missing order read as HDX->HDX.
 // Anything that is only the site's own branding is therefore not a title.
 const GENERIC_TITLE = /^\s*subsquare\b|governance\s+platform\s*$/i
 

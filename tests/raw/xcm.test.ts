@@ -33,7 +33,7 @@ describe('raw XCM, bridge, and operation trace extraction', () => {
         block: { height: 10 },
         args: {
           who: '0x45544800f34e845538cc8a498edd97d7cde16fdfef3d4d990000000000000000',
-          operationStack: ['omnipool', 'xyk'],
+          operationStack: ['xyk', 'lbp'],
           amountIn: '1',
         },
       },
@@ -142,9 +142,9 @@ describe('call source identity', () => {
 
   it('keeps operation traces of same-named root calls distinct', () => {
     const calls = [
-      rootCall(2, 'Router.sell', { route: [{ pool: 'Omnipool' }], amountIn: '1' }),
-      rootCall(4, 'Router.sell', { route: [{ pool: 'Omnipool' }], amountIn: '2' }),
-      rootCall(6, 'Router.sell', { route: [{ pool: 'Omnipool' }], amountIn: '3' }),
+      rootCall(2, 'Router.sell', { route: [{ pool: 'XYK' }], amountIn: '1' }),
+      rootCall(4, 'Router.sell', { route: [{ pool: 'XYK' }], amountIn: '2' }),
+      rootCall(6, 'Router.sell', { route: [{ pool: 'XYK' }], amountIn: '3' }),
     ] as never
 
     const rows = extractXcmBridgeAndOperationRows([], calls, '2026-01-01 00:00:00', 'test')

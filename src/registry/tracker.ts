@@ -1,4 +1,3 @@
-import { base58Encode } from '@polkadot/util-crypto'
 import type { Block } from '../types/support.ts'
 import * as storage from '../types/storage.ts'
 import type { AssetMetadata } from './types.ts'
@@ -75,11 +74,6 @@ function formatAssetType(assetType: { __kind: string; value?: unknown }): string
   return assetType.__kind
 }
 
-/**
- * Extract EVM contract address from an AssetLocation.
- * Matches: { parents: 0, interior: X1(AccountKey20 { key }) }
- * Handles both V3 (X1 = single junction) and V5 (X1 = array of junctions).
- */
 function objectRecord(value: unknown): Record<string, unknown> | null {
   return value != null && typeof value === 'object'
     ? value as Record<string, unknown>
@@ -111,24 +105,9 @@ function normalizedHex(value: unknown, bytes?: number): string | null {
 }
 
 export interface AssetOrigin {
-  ecosystem: 'polkadot' | 'ethereum' | 'solana' | 'sui'
+  ecosystem: 'polkadot' | 'ethereum'
   chainId: string
   assetId: string | null
-}
-
-// Wormhole-bridged assets are registered under a purely local location —
-// `X3(GeneralKey("wh"), GeneralIndex(<wormhole chain id>), GeneralKey(<32-byte token id>))` —
-// so no consensus junction names their chain and only the Wormhole chain id identifies it.
-// The ids here are Wormhole's, not the chains' own: mapping them is what turns
-// `GeneralIndex(30)` into Base rather than a chain that does not exist. Only chains
-// Hydration actually carries are mapped; an unmapped one stays unresolved rather than
-// naming a chain we cannot verify.
-const WORMHOLE_MARKER = '0x7768'
-const WORMHOLE_ORIGIN_CHAINS: Record<string, Pick<AssetOrigin, 'ecosystem' | 'chainId'>> = {
-  '1': { ecosystem: 'solana', chainId: '101' },
-  '2': { ecosystem: 'ethereum', chainId: '1' },
-  '21': { ecosystem: 'sui', chainId: '0x35834a8a' },
-  '30': { ecosystem: 'ethereum', chainId: '8453' },
 }
 
 // A GeneralKey's `data` is a fixed 32-byte field and `length` says how many of those
@@ -145,40 +124,10 @@ function generalKeyData(junction: Record<string, unknown>, bytes?: number): stri
   return bytes == null || key.length === 2 + bytes * 2 ? key : null
 }
 
-// The token id is always 32 bytes; each ecosystem's canonical form is a different
-// projection of the same bytes — an EVM address is the low 20, a Solana mint is
-// base58, and a Sui coin type stays hex.
-function wormholeAssetId(ecosystem: AssetOrigin['ecosystem'], tokenKey: string): string | null {
-  const body = tokenKey.slice(2)
-  if (ecosystem === 'ethereum') {
-    return /^0{24}[0-9a-f]{40}$/.test(body) ? `0x${body.slice(24)}` : null
-  }
-  if (ecosystem === 'solana') return base58Encode(Buffer.from(body, 'hex'))
-  return tokenKey
-}
-
-function extractWormholeOrigin(location: unknown): AssetOrigin | null {
-  if (objectRecord(location)?.parents !== 0) return null
-  const junctions = locationJunctions(location)
-  if (junctions.length !== 3) return null
-  const [marker, chain, token] = junctions
-  if (marker.__kind !== 'GeneralKey' || generalKeyData(marker, 2) !== WORMHOLE_MARKER) return null
-  if (chain.__kind !== 'GeneralIndex' || token.__kind !== 'GeneralKey') return null
-  const originChain = WORMHOLE_ORIGIN_CHAINS[String(chain.value)]
-  const tokenKey = generalKeyData(token, 32)
-  if (originChain == null || tokenKey == null) return null
-  const assetId = wormholeAssetId(originChain.ecosystem, tokenKey)
-  return assetId ? { ...originChain, assetId } : null
-}
-
-// Decode the same generic origin tuple Hydration UI uses for icon lookup:
-// ecosystem + chain + origin-chain asset key. This preserves Ethereum
-// GlobalConsensus/AccountKey20 locations instead of reducing every origin to a
-// nullable parachain id.
+// Decode a generic origin tuple: ecosystem + chain + origin-chain asset key.
+// This preserves Ethereum GlobalConsensus/AccountKey20 locations instead of
+// reducing every origin to a nullable parachain id.
 export function extractAssetOrigin(location: unknown): AssetOrigin | null {
-  const wormhole = extractWormholeOrigin(location)
-  if (wormhole) return wormhole
-
   const junctions = locationJunctions(location)
   const consensus = junctions.find(j => j.__kind === 'GlobalConsensus')
   const network = consensus ? (junctionPayload(consensus) ?? consensus) : null
@@ -206,26 +155,6 @@ export function extractAssetOrigin(location: unknown): AssetOrigin | null {
     assetId = generalKeyData(originJunction)
   }
   return { ecosystem: 'polkadot', chainId: String(parachainId), assetId }
-}
-
-function extractEvmAddress(location: unknown): string | null {
-  const locationRecord = objectRecord(location)
-  if (locationRecord?.parents !== 0) return null
-  const interior = objectRecord(locationRecord.interior)
-  if (interior?.__kind !== 'X1') return null
-
-  // V5: X1 is an array, V3: X1 is a single junction
-  const junction = objectRecord(Array.isArray(interior.value) ? interior.value[0] : interior.value)
-  if (junction?.__kind !== 'AccountKey20') return null
-  const key = junction.key
-  // key may be Uint8Array or hex string
-  if (typeof key === 'string') {
-    const normalized = key.startsWith('0x') ? key.toLowerCase() : `0x${key.toLowerCase()}`
-    return /^0x[0-9a-f]{40}$/.test(normalized) ? normalized : null
-  }
-  if (!(key instanceof Uint8Array)) return null
-  const normalized = `0x${Buffer.from(key).toString('hex').toLowerCase()}`
-  return normalized.length === 42 ? normalized : null
 }
 
 /**
@@ -291,69 +220,6 @@ export function isPlaceholderAssetMetadata(metadata: Pick<AssetMetadata, 'assetI
   return hasGeneratedLabels && (metadata.assetType == null || metadata.assetType === 'External')
 }
 
-type AmbiguityReporter = (assetId: number, symbol: string, candidates: number[]) => void
-
-function idsBySymbol(assets: Iterable<[number, AssetMetadata]>): Map<string, number[]> {
-  const ids = new Map<string, number[]>()
-  for (const [assetId, meta] of assets) {
-    const known = ids.get(meta.symbol)
-    if (known) known.push(assetId)
-    else ids.set(meta.symbol, [assetId])
-  }
-  return ids
-}
-
-// Wrapper → base pairs, which carry the base's price and volume attribution onto
-// the wrapper. Aave's initialized reserves (aToken contract → underlying asset id)
-// decide whenever they know the wrapper. Otherwise the base is matched by symbol
-// (aDOT → DOT), but only when that symbol resolves to exactly one asset: several
-// live symbols do not (four USDC ids, two EURC), and resolving one of those by
-// registry iteration order attributed the wrapper's price and volume to whichever
-// duplicate happened to be cached first — an unpaired wrapper keeps its own.
-export function atokenEquivalencesFor(
-  assets: Iterable<[number, AssetMetadata]>,
-  underlyingByAtokenContract: Map<string, number> = new Map(),
-  onAmbiguous?: AmbiguityReporter,
-): [number, number][] {
-  const entries = [...assets]
-  const known = new Set(entries.map(([assetId]) => assetId))
-  const bySymbol = idsBySymbol(entries)
-
-  const equivalences: [number, number][] = []
-  for (const [assetId, meta] of entries) {
-    if (!meta.symbol.startsWith('a') || meta.symbol.length <= 1) continue
-    const mapped = meta.evmAddress ? underlyingByAtokenContract.get(meta.evmAddress.toLowerCase()) : undefined
-    if (mapped !== undefined) {
-      if (mapped !== assetId && known.has(mapped)) equivalences.push([mapped, assetId])
-      continue
-    }
-    const candidates = bySymbol.get(meta.symbol.slice(1)) ?? []
-    if (candidates.length === 1 && candidates[0] !== assetId) equivalences.push([candidates[0], assetId])
-    else if (candidates.length > 1) onAmbiguous?.(assetId, meta.symbol, candidates)
-  }
-  return equivalences
-}
-
-// Stableswap LP → display token aliases (2-Pool-GDOT → GDOT), with the same
-// duplicate-symbol rule as the aToken pairing.
-export function lpAliasesFor(
-  assets: Iterable<[number, AssetMetadata]>,
-  onAmbiguous?: AmbiguityReporter,
-): [number, number][] {
-  const entries = [...assets]
-  const bySymbol = idsBySymbol(entries)
-
-  const aliases: [number, number][] = []
-  for (const [assetId, meta] of entries) {
-    const match = meta.symbol.match(/^\d+-Pool-(.+)$/)
-    if (!match) continue
-    const candidates = bySymbol.get(match[1]) ?? []
-    if (candidates.length === 1 && candidates[0] !== assetId) aliases.push([assetId, candidates[0]])
-    else if (candidates.length > 1) onAmbiguous?.(assetId, meta.symbol, candidates)
-  }
-  return aliases
-}
-
 export class AssetRegistryTracker {
   private cache: Map<number, AssetMetadata> = new Map()
   // Chain time of the last scan, not the height of it: the scan cadence is a
@@ -363,7 +229,6 @@ export class AssetRegistryTracker {
   private snapshotIntervalMinutes: number
   private seededAssetRows: AssetRow[] = []
   private includeUnresolvedAssets: boolean
-  private ambiguousWrappersLogged = new Set<number>()
 
   constructor(snapshotIntervalMinutes?: number, nativeAssetMetadata?: AssetMetadata, options: TrackerOptions = {}) {
     this.snapshotIntervalMinutes = snapshotIntervalMinutes ?? config.SNAPSHOT_INTERVAL_MINUTES
@@ -516,7 +381,7 @@ export class AssetRegistryTracker {
       console.warn(`[AssetRegistry] No matching storage version at block ${blockHeight}`)
     }
 
-    // Read every location once, then derive ERC-20 contracts and origin parachains.
+    // Read every location once, then derive origin chains and parachain ids.
     const allAssetIds = [...discoveredAssets.keys()]
     if (allAssetIds.length > 0) {
       try {
@@ -524,19 +389,11 @@ export class AssetRegistryTracker {
           const metadata = discoveredAssets.get(assetId)
           if (metadata == null) continue
 
-          if (metadata.assetType === 'Erc20') {
-            metadata.evmAddress = extractEvmAddress(location) ?? undefined
-          }
           metadata.parachainId = extractParachainId(location) ?? undefined
           const origin = extractAssetOrigin(location)
           metadata.originEcosystem = origin?.ecosystem
           metadata.originChainId = origin?.chainId
           metadata.originAssetId = origin?.assetId ?? undefined
-        }
-
-        const resolved = [...discoveredAssets.values()].filter(metadata => metadata.evmAddress != null)
-        if (resolved.length > 0) {
-          console.log(`[AssetRegistry] ERC20 addresses resolved: ${resolved.map(metadata => `${metadata.symbol}(${metadata.assetId})=${metadata.evmAddress!.slice(0, 10)}…`).join(', ')}`)
         }
       } catch (error) {
         console.warn('[AssetRegistry] Failed to read asset locations:', error)
@@ -592,54 +449,6 @@ export class AssetRegistryTracker {
       decimalsMap.set(assetId, metadata.decimals)
     }
     return decimalsMap
-  }
-
-  /**
-   * aToken ↔ base token equivalences (1:1 pairs), which carry the base's price
-   * and volume attribution onto the wrapper.
-   */
-  getAtokenEquivalences(underlyingByAtokenContract: Map<string, number> = new Map()): [number, number][] {
-    return atokenEquivalencesFor(this.cache, underlyingByAtokenContract, (assetId, symbol, candidates) =>
-      this.logAmbiguousWrapper(assetId, symbol, candidates))
-  }
-
-  // An unpaired wrapper keeps its own price and volume rather than borrowing a
-  // duplicate's — surfaced once per wrapper so a missing reserve mapping is
-  // visible instead of silently resolving to an arbitrary asset.
-  private logAmbiguousWrapper(assetId: number, symbol: string, candidates: number[]): void {
-    if (this.ambiguousWrappersLogged.has(assetId)) return
-    this.ambiguousWrappersLogged.add(assetId)
-    console.warn(`[AssetRegistry] ${symbol}(${assetId}) cannot be paired: no reserve mapping and its base symbol is ambiguous (${candidates.join(', ')}); leaving it unpaired`)
-  }
-
-  /**
-   * Get the set of aToken asset IDs (derived from equivalences).
-   * These are wrapper tokens whose prices should not be indexed separately.
-   */
-  getAtokenIds(underlyingByAtokenContract: Map<string, number> = new Map()): Set<number> {
-    return new Set(this.getAtokenEquivalences(underlyingByAtokenContract).map(([, aTokenId]) => aTokenId))
-  }
-
-  /**
-   * Detect stableswap LP → display token aliases via symbol pattern (e.g. 2-Pool-GDOT → GDOT).
-   * Used to seed LP equivalences at startup; Aave EVM events refine at runtime.
-   */
-  getLpAliases(): [number, number][] {
-    return lpAliasesFor(this.cache, (assetId, symbol, candidates) =>
-      this.logAmbiguousWrapper(assetId, symbol, candidates))
-  }
-
-  /**
-   * Get all ERC20 asset ID → contract address mappings.
-   */
-  getErc20Contracts(): Map<number, string> {
-    const contracts = new Map<number, string>()
-    for (const [assetId, meta] of this.cache) {
-      if (meta.assetType === 'Erc20' && meta.evmAddress) {
-        contracts.set(assetId, meta.evmAddress)
-      }
-    }
-    return contracts
   }
 
   getCacheSize(): number {
