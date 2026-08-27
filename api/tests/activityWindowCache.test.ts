@@ -95,17 +95,8 @@ describe('the classified window cache key', () => {
     expect(new Set([...variants, plan(PAGE)!.key]).size).toBe(variants.length + 1)
   })
 
-  it('treats dca as the trade category it is filed under, not a window of its own', () => {
-    expect(plan(PAGE, { type: 'dca' })?.key).toBe(plan(PAGE, { type: 'trade' })?.key)
-  })
-
   it('has no shared window where the offset is applied in SQL', () => {
-    for (const shape of [
-      { type: 'vote' }, { type: 'stake' }, { type: 'otc' },
-      { type: 'trade', action: 'dca-failed' }, { type: 'trade', action: 'otc-fill' },
-    ]) {
-      expect(plan(PAGE, shape), JSON.stringify(shape)).toBeNull()
-    }
+    expect(plan(PAGE, { type: 'vote' }), 'vote').toBeNull()
   })
 })
 
@@ -225,17 +216,13 @@ describe('activityWindowDepth', () => {
 // page at an offset SQL already applied.
 describe('activityPagesInMemory', () => {
   it('agrees with the builder about which pages are slices', () => {
-    const inMemory = ['all', 'trade', 'dca', 'transfer', 'liquidity', 'mm', 'xcm']
-    const sqlPaged = ['vote', 'stake', 'otc']
+    const inMemory = ['all', 'trade', 'transfer', 'liquidity', 'xcm']
+    const sqlPaged = ['vote']
     for (const type of inMemory) expect(activityPagesInMemory(type), type).toBe(true)
     for (const type of sqlPaged) expect(activityPagesInMemory(type), type).toBe(false)
     // An action filter is decided on built rows, so it puts any category on the
-    // in-memory path — except the exact event families that page themselves.
-    for (const type of [...inMemory, ...sqlPaged]) expect(activityPagesInMemory(type, 'Supply'), type).toBe(true)
-    expect(activityPagesInMemory('trade', 'dca-failed')).toBe(false)
-    expect(activityPagesInMemory('trade', 'otc-fill')).toBe(false)
-    expect(activityPagesInMemory('trade', 'dca')).toBe(true)
-    expect(activityPagesInMemory('mm', 'dca-failed')).toBe(true)
+    // in-memory path.
+    for (const type of [...inMemory, ...sqlPaged]) expect(activityPagesInMemory(type, 'Add'), type).toBe(true)
   })
 
   it('leaves the builder exactly one decision about where its page starts', () => {

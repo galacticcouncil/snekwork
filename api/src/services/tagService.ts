@@ -314,45 +314,6 @@ export function economicModuleAccounts(tags: Tag[]): string[] {
     .filter(m => m.startsWith('0x6d6f646c'))
 }
 
-// The money-market protocol accounts (aToken/vDebt/pool contracts) grouped
-// under one label. Unlike DEFAULT_TAGS this set is DERIVED: members come from
-// the indexed reserve map, so a newly listed reserve joins on the next sync —
-// no code change needed.
-export const MM_TAG = { tagId: 'money-market', name: 'Lend & Borrow', color: '#6aa5f8', note: 'Money-market reserve contracts (aTokens, debt tokens, pools) — inflows are lends/repayments, outflows are withdrawals/borrows', icon: '🏦' }
-
-// Every distinct money-market contract H160 from the reserve map, in the
-// truncated-account form its on-chain activity is indexed under.
-export function mmContractAccountIds(reserves: { atoken: string; vdebt: string; pool_proxy: string }[]): Set<string> {
-  const ids = new Set<string>()
-  for (const r of reserves) {
-    for (const h160 of [r.atoken, r.vdebt, r.pool_proxy]) {
-      if (/^0x[0-9a-fA-F]{40}$/.test(h160)) ids.add('0x45544800' + h160.slice(2).toLowerCase() + '0000000000000000')
-    }
-  }
-  return ids
-}
-
-// Membership rows for the MM tag: every distinct contract H160 from the reserve map.
-export function mmTagMemberRows(reserves: { atoken: string; vdebt: string; pool_proxy: string }[], existing: Set<string>): Record<string, unknown>[] {
-  return [...mmContractAccountIds(reserves)].filter(id => !existing.has(id)).map(account_id => ({
-    label_id: MM_TAG.tagId, label_name: MM_TAG.name, color: MM_TAG.color, note: MM_TAG.note, icon: MM_TAG.icon, account_id, deleted: 0,
-  }))
-}
-
-export async function syncMoneyMarketTag(): Promise<void> {
-  const res = await client.query({
-    query: `SELECT DISTINCT atoken, vdebt, pool_proxy FROM price_data.atoken_reserve_map`,
-    format: 'JSONEachRow',
-  })
-  const reserves = await res.json<{ atoken: string; vdebt: string; pool_proxy: string }>()
-  const existing = new Set(byTag.get(MM_TAG.tagId)?.members ?? [])
-  const rows = mmTagMemberRows(reserves, existing)
-  if (!rows.length) return
-  await client.insert({ table: 'price_data.account_tags', values: rows, format: 'JSONEachRow' })
-  await loadTags()
-  console.log(`[tags] synced ${rows.length} money-market reserve account(s) into "${MM_TAG.name}"`)
-}
-
 // Structural system-account families, derived from indexed data so they are
 // recreated automatically after a from-scratch reindex and pick up new members
 // (pools, farms, HRMP channels) on every sync:
@@ -429,15 +390,6 @@ export function startStructuralTagRefresh(): void {
   structuralTagRefreshTimer.unref()
 }
 
-let mmTagRefreshTimer: ReturnType<typeof setInterval> | null = null
-export function startMoneyMarketTagRefresh(): void {
-  if (mmTagRefreshTimer) return
-  // New reserves are rare; an hourly re-sync picks them up well before anyone
-  // notices an unlabeled contract.
-  mmTagRefreshTimer = setInterval(() => { void syncMoneyMarketTag().catch(() => {}) }, 60 * 60_000)
-  mmTagRefreshTimer.unref()
-}
-
 export async function seedDefaultTags(): Promise<void> {
   const rows: Record<string, unknown>[] = []
   for (const def of DEFAULT_TAGS) {
@@ -468,8 +420,8 @@ export async function seedDefaultTags(): Promise<void> {
 }
 
 // A tag's presentation — name, color, note, icon — is canonical in code
-// (DEFAULT_TAGS / STRUCTURAL_TAGS / MM_TAG); there is no edit API. But membership
-// rows are only ever INSERTED (seed and the structural/MM syncs skip accounts that
+// (DEFAULT_TAGS / STRUCTURAL_TAGS); there is no edit API. But membership
+// rows are only ever INSERTED (seed and the structural sync skip accounts that
 // already exist), so editing any of those in code would otherwise never reach an
 // already-seeded database: loadTags() reads them from the table, and the
 // Accounts/Holders aggregates read color and name straight from SQL. Renaming a
@@ -484,7 +436,6 @@ export async function seedDefaultTags(): Promise<void> {
 // deleted = 0 guard makes it a no-op once the table matches.
 export async function retireUnknownTagMemberships(): Promise<void> {
   const known = new Set<string>([...DEFAULT_TAGS, ...STRUCTURAL_TAGS].map(d => d.tagId))
-  known.add(MM_TAG.tagId)
   const stale = [...byTag.keys()].filter(tagId => !known.has(tagId))
   if (!stale.length) return
   await client.command({
@@ -500,7 +451,6 @@ export async function reconcileTagPresentation(): Promise<void> {
   type Presentation = { name: string; color: string; note: string; icon: string }
   const want = new Map<string, Presentation>()
   for (const d of [...DEFAULT_TAGS, ...STRUCTURAL_TAGS]) want.set(d.tagId, { name: d.name, color: d.color, note: d.note, icon: d.icon })
-  want.set(MM_TAG.tagId, { name: MM_TAG.name, color: MM_TAG.color, note: MM_TAG.note, icon: MM_TAG.icon })
   let changed = 0
   for (const [tagId, p] of want) {
     const tag = byTag.get(tagId)

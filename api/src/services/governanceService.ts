@@ -6,7 +6,7 @@ import { convictionName, decodeVoteByte, weightedVotePower } from './convictionW
 import { assetDescriptor } from './explorerAssets.ts'
 import { accountRef, ensurePrices, nestedRemovalRefs, nestedVoteInfos, removalRefsFromPermitData, voteFromPermitData, type AccountRef, type AssetRef } from './explorerService.ts'
 import { referendumTitles } from './referendumTitleService.ts'
-import { pendingNodeApi } from './pendingHeadService.ts'
+import { nodeApi } from './nodeApi.ts'
 import { curveCrossingX, curveThresholdPerbill, PERBILL, perbillOfRational, trackById, undecidingTimeoutBlocks, type TrackDef } from './referendaTracks.ts'
 
 // Governance referendum detail.
@@ -494,11 +494,11 @@ export function opengovPhase(rows: Pick<LifecycleRow, 'event_name' | 'block_heig
 // held for the same window as the running-referendum detail cache and requested
 // only for referenda with no concluding event — at most the few a track-capped
 // chain can have deciding at once, so this stays a bounded point read, not
-// request-time RPC fan-out. Null (never a guess) when the pending layer is
+// request-time RPC fan-out. Null (never a guess) when the node connection is
 // down, the referendum is not Ongoing on chain, or the shape surprises.
 async function liveReferendumState(index: number): Promise<LiveReferendumTally | null> {
   return cached(`explorer:referendum:live:${index}`, RUNNING_TTL_MS, async () => {
-    const api = pendingNodeApi()
+    const api = nodeApi()
     if (!api) return null
     try {
       const info = (await api.query.referenda.referendumInfoFor(index)).toJSON() as

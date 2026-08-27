@@ -9,7 +9,21 @@
 //   - The deposit persists until DepositDestroyed / 5389 burn (SharesWithdrawn from one yield
 //     farm is not a boundary), so those end the interval.
 
-import type { OrderPoint, OwnerIntervalBound } from './omnipoolOwnerIntervals.ts'
+// Where an interval opens: the exact event position plus its wall-clock time.
+export interface OrderPoint {
+  block: number
+  extrinsic: number | null
+  event: number
+  ts: number
+}
+
+// Where an interval closes. No timestamp: the bound is the position the
+// successor interval opens at, and that interval carries the time.
+export interface OwnerIntervalBound {
+  block: number
+  extrinsic: number | null
+  event: number
+}
 
 export type XykFarmLifecycleKind =
   | 'nft_issue'

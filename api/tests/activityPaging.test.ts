@@ -42,7 +42,7 @@ describe('activity paging bounds', () => {
   // publishes has to be the same one the feed enforces — otherwise the last offered
   // page is a 400.
   it('publishes the same bound the feed enforces, per category', async () => {
-    for (const [type, maxOffset] of [['all', 2500], ['transfer', 2500], ['vote', 250_000], ['stake', 250_000]] as const) {
+    for (const [type, maxOffset] of [['all', 2500], ['transfer', 2500], ['vote', 250_000]] as const) {
       const count = await app.inject(`/explorer/activity/count?type=${type}`)
       const lastPage = await app.inject(`/explorer/activity?type=${type}&offset=${maxOffset}`)
       const pastEnd = await app.inject(`/explorer/activity?type=${type}&offset=${maxOffset + 1}`)
@@ -59,7 +59,7 @@ describe('activity paging bounds', () => {
   // single-source SQL-paged feeds can do that, so the rest say so rather than
   // publishing a number the pages would not match.
   it('reports no total for the categories it cannot count', async () => {
-    for (const type of ['all', 'trade', 'transfer', 'liquidity', 'mm', 'xcm', 'stake', 'otc']) {
+    for (const type of ['all', 'trade', 'transfer', 'liquidity', 'xcm']) {
       const response = await app.inject(`/explorer/activity/count?type=${type}`)
 
       expect(response.json(), type).toMatchObject({ total: null, complete: false })
@@ -78,13 +78,6 @@ describe('activity paging bounds', () => {
       const response = await app.inject(`/explorer/activity?offset=${offset}&type=vote`)
 
       expect(response.statusCode, `vote offset ${offset}`).not.toBe(400)
-    }
-    for (const type of ['stake', 'otc']) {
-      for (const offset of [10001, 250_000]) {
-        const response = await app.inject(`/explorer/activity?offset=${offset}&type=${type}`)
-
-        expect(response.statusCode, `${type} offset ${offset}`).not.toBe(400)
-      }
     }
   })
 

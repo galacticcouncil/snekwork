@@ -48,7 +48,7 @@ async function loadExplorerAssetsUncached(client: ClickHouseClient): Promise<voi
     const name = NAME_OVERRIDES[r.asset_id] ?? (r.asset_id === H2O_ASSET_ID ? 'H2O' : r.name)
     cache.set(r.asset_id, {
       assetId: r.asset_id,
-      iconAssetId: iconAssetIdFor(r.asset_id),
+      iconAssetId: r.asset_id,
       symbol,
       name: name === symbol ? null : name,
       decimals: r.decimals,
@@ -58,7 +58,6 @@ async function loadExplorerAssetsUncached(client: ClickHouseClient): Promise<voi
         : null,
     })
   }
-  inheritATokenOrigins()
   await injectBonds(client)
   if (!refreshTimer) {
     refreshTimer = setInterval(() => {
@@ -92,7 +91,7 @@ export function allExplorerAssets(): ExplorerAsset[] {
 export function assetDescriptor(assetId: number): ExplorerAsset {
   return cache.get(assetId) ?? {
     assetId,
-    iconAssetId: iconAssetIdFor(assetId),
+    iconAssetId: assetId,
     symbol: `#${assetId}`,
     name: null,
     decimals: 12,
@@ -101,83 +100,9 @@ export function assetDescriptor(assetId: number): ExplorerAsset {
   }
 }
 
-// Parse an env-supplied id→id map (JSON object of numeric-string keys/values),
-// used to extend hardcoded asset aliases without a deploy. Invalid entries are
-// ignored rather than poisoning the whole registry.
-function envIdMap(name: string): Record<number, number> {
-  const raw = process.env[name]?.trim()
-  if (!raw) return {}
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>
-    const out: Record<number, number> = {}
-    for (const [k, v] of Object.entries(parsed)) {
-      const key = Number(k)
-      const val = Number(v)
-      if (Number.isInteger(key) && Number.isInteger(val)) out[key] = val
-    }
-    return out
-  } catch {
-    console.error(`[ExplorerAssets] ${name} is not valid JSON; ignoring`)
-    return {}
-  }
-}
-
 // Curated display names for registry entries whose on-chain name is empty or
 // unhelpful. Applied at registry load; extend as new unnamed assets surface.
-export const NAME_OVERRIDES: Record<number, string> = {
-  67: 'Giga HDX',
-  670: 'Staked HDX',
-}
-
-// Money-market aTokens are 1:1 with their reserve asset. This is the single
-// source for price aliases, display metadata, holder reconstruction, and reverse
-// reserve lookup. Extend it for future registered aTokens through the environment.
-export const ATOKEN_UNDERLYING_ID: Record<number, number> = {
-  1001: 5,        // aDOT   → DOT
-  1002: 10,       // aUSDT  → USDT
-  1003: 22,       // aUSDC  → USDC
-  1004: 19,       // aWBTC  → WBTC
-  1005: 15,       // avDOT  → vDOT
-  1006: 1000765,  // atBTC  → tBTC
-  1007: 34,       // aETH   → ETH
-  1008: 103,      // a3-Pool→ 3-Pool
-  1009: 1000752,  // aSOL   → SOL
-  1039: 39,       // aPAXG  → PAXG
-  1043: 43,       // aPRIME → PRIME
-  1044: 44,       // aEURC  → EURC
-  1046: 46,       // aapyUSD→ apyUSD
-  1816: 816,      // aSIGIL → SIGIL (no price feed yet, included for completeness)
-  67: 670,        // GIGAHDX→ stHDX (the gigahdx market's aToken — HDX staking receipt)
-  55: 550,        // BIL    → uBIL (the bil market's aToken — Brazilian invoice receivables)
-  ...envIdMap('EXPLORER_EXTRA_ATOKEN_UNDERLYING'),
-}
-
-// aTokens normally borrow their reserve asset's artwork (aDOT → DOT). Branded
-// product tokens are the exception: they ship their own CDN icon, so they must NOT
-// alias to the underlying's — GIGAHDX's underlying stHDX has no icon at all, which
-// is why the alias left GIGAHDX iconless, and BIL's own art is the listed brand
-// while uBIL's marks the wrapped receivable. Price aliasing (priceAssetId) is
-// unaffected.
-const OWN_ICON_ASSET_IDS = new Set<number>([67, 55]) // GIGAHDX, BIL
-export function iconAssetIdFor(assetId: number): number {
-  return OWN_ICON_ASSET_IDS.has(assetId) ? assetId : (ATOKEN_UNDERLYING_ID[assetId] ?? assetId)
-}
-
-// An aToken uses its reserve asset's artwork, so its origin badge must describe
-// that same reserve too. Keep explicit aToken metadata authoritative if the
-// registry gains it later, and only fill fields that are currently absent.
-function inheritATokenOrigins(): void {
-  for (const [aTokenId, underlyingId] of Object.entries(ATOKEN_UNDERLYING_ID)) {
-    const aToken = cache.get(Number(aTokenId))
-    const underlying = cache.get(underlyingId)
-    if (!aToken || !underlying) continue
-
-    const parachainId = aToken.parachainId ?? underlying.parachainId
-    const origin = aToken.origin ?? underlying.origin
-    if (parachainId === aToken.parachainId && origin === aToken.origin) continue
-    cache.set(aToken.assetId, { ...aToken, parachainId, origin })
-  }
-}
+export const NAME_OVERRIDES: Record<number, string> = {}
 
 // Bond tokens (Bonds pallet) aren't published to the asset registry the way ordinary
 // assets are, so they otherwise reach the explorer as a bare `#id` with no name,
@@ -243,31 +168,15 @@ export const SHARE_TOKEN_UNDERLYING_ID: Record<number, number> = {
 // Duplicate/wrapped registry entries whose economic price should follow the
 // canonical listed asset. They keep their own balances/holders; only price and
 // price history are aliased.
-const DUPLICATE_PRICE_ALIAS_ID: Record<number, number> = {
-  42: 44,        // EURC          → EURC (Moonbeam Wormhole)
-  1000746: 44,   // EURC.s        → EURC (Moonbeam Wormhole)
-  // stHDX is staked HDX (pallet-gigahdx): the HDX↔stHDX rate is floored at
-  // 1:1 and drifts up only as staking yield accrues, so the HDX price is a
-  // tight floor for it (and transitively for GIGAHDX, its aToken).
-  670: 0,        // stHDX         → HDX
-  // BIL inverts the usual aToken direction: the aToken IS the liquid traded leg
-  // (HSM/router trades quote BIL directly) while its underlying uBIL never
-  // trades. The self-entry overrides the ATOKEN_UNDERLYING_ID spread so BIL
-  // keeps its own feed, and uBIL — an Aave underlying, always 1:1 with its
-  // rebasing aToken — values through it. Without the self-entry the pair would
-  // alias in both directions and priceAssetId's hop bound would leave uBIL
-  // resolving to itself, unpriced.
-  55: 55,        // BIL           → itself (own feed)
-  550: 55,       // uBIL          → BIL
-}
-// Every asset that should be priced via another asset (aTokens + pool shares).
-export const PRICE_ALIAS_ID: Record<number, number> = { ...ATOKEN_UNDERLYING_ID, ...SHARE_TOKEN_UNDERLYING_ID, ...DUPLICATE_PRICE_ALIAS_ID }
+const DUPLICATE_PRICE_ALIAS_ID: Record<number, number> = {}
+// Every asset that should be priced via another asset (pool shares, bonds).
+export const PRICE_ALIAS_ID: Record<number, number> = { ...SHARE_TOKEN_UNDERLYING_ID, ...DUPLICATE_PRICE_ALIAS_ID }
 
 // The asset id whose price/value should be used for `assetId`: itself, unless it
-// is an aToken or pool-share token, in which case its priced underlying.
+// is a pool-share token, in which case its priced underlying.
 export function priceAssetId(assetId: number): number {
-  // Aliases can chain (GIGAHDX → stHDX → HDX); resolve transitively with a
-  // small bound so a (mis)configured cycle can't loop forever.
+  // Aliases can chain, so resolve transitively with a small bound so a
+  // (mis)configured cycle can't loop forever.
   let id = assetId
   for (let hop = 0; hop < 4; hop++) {
     const next = PRICE_ALIAS_ID[id]
@@ -278,23 +187,13 @@ export function priceAssetId(assetId: number): number {
 }
 
 // The asset id under which `assetId` should be DISPLAYED in per-account holdings:
-// a held Stableswap pool-share token (2-Pool-GDOT, …) is shown as its underlying
-// main asset (GDOT), mirroring preis-ui which hides "-Pool" tokens. Unlike
-// priceAssetId this folds ONLY share tokens, never aTokens (aToken / money-market
-// collateral is folded separately via the MM path). Aggregate holder/supply views
-// may fold these only when the hidden share id is removed from presentation and a
-// money-market custody balance is replaced—not added to—its beneficial aToken
-// holders; otherwise the vault would be double-counted.
+// a held pool-share token is shown as its underlying main asset, mirroring the
+// wallet UIs that hide "-Pool" tokens. Aggregate holder/supply views may fold
+// these only when the hidden share id is removed from presentation, never added
+// alongside it; otherwise the pool would be double-counted.
 export function displayAssetId(assetId: number): number {
   return SHARE_TOKEN_UNDERLYING_ID[assetId] ?? assetId
 }
-
-// Reverse of ATOKEN_UNDERLYING_ID: underlying reserve asset id → its aToken id.
-// Used to label money-market collateral with the aToken the user actually holds
-// (e.g. a DOT supply shows as aDOT, matching the Hydration wallet/borrow UI).
-export const UNDERLYING_TO_ATOKEN_ID: Record<number, number> = Object.fromEntries(
-  Object.entries(ATOKEN_UNDERLYING_ID).map(([aToken, underlying]) => [underlying, Number(aToken)]),
-)
 
 // Reverse of SHARE_TOKEN_UNDERLYING_ID: main asset id → the pool-share token ids
 // that display as it. The share token can be what a protocol actually holds while

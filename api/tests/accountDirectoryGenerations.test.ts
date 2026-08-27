@@ -175,22 +175,19 @@ describe('the directory wiring keeps the generation out of its keys', () => {
     .map(match => match[1])
 
   it('leaves the generation only in the keys that want invalidation', () => {
-    // Eight keys once carried it. The two whole-directory pages that are SERVED —
-    // `explorer:accounts` — dropped it, because they want the previous generation
-    // served while the next computes. `explorer:accounts-total` keeps it: it is
-    // embedded in a page payload rather than served on its own, and it is only ever
-    // computed inside a rebuild that is already running in the background.
-    // `explorer:account-history` dropped it too (accountHistoryShared.test.ts owns
-    // that): the reconstruction is valued at closed historical candles and never
-    // reads the pinned price map, so the generation invalidated work it could not
-    // change. The five that remain are 8-15s detail reads whose whole payload IS
-    // valued at the pinned map.
+    // The whole-directory pages that are SERVED — `explorer:accounts` — do not
+    // carry it, because they want the previous generation served while the next
+    // computes. `explorer:accounts-total` keeps it: it is embedded in a page
+    // payload rather than served on its own, and it is only ever computed inside
+    // a rebuild that is already running in the background.
+    // `explorer:account-history` does not carry it either (accountHistoryShared
+    // .test.ts owns that): the reconstruction is valued at closed historical
+    // candles and never reads the pinned price map, so the generation would
+    // invalidate work it could not change. The rest are 8-15s detail reads whose
+    // whole payload IS valued at the pinned map.
     expect(generationKeys).toEqual([
       'explorer:address:${accountValueGenerationEpoch}:${norm.accountId}${summary ? \':summary\' : \'\'}',
-      'explorer:mm-positions:${accountValueGenerationEpoch}:${h160.toLowerCase()}',
-      'explorer:mm-reserves:${accountValueGenerationEpoch}:${h160.toLowerCase()}',
-      'explorer:lp-recon:${accountValueGenerationEpoch}:${accs.sort().join(\',\')}',
-      'explorer:accounts-total:${accountValueGenerationEpoch}:${modelVersion}',
+      'explorer:accounts-total:${accountValueGenerationEpoch}',
       'explorer:tag:${accountValueGenerationEpoch}:${tagId}${summary ? \':summary\' : refresh ? \':refresh\' : \'\'}',
     ])
     expect(generationKeys.filter(key => key.startsWith('explorer:accounts:'))).toHaveLength(0)
@@ -198,7 +195,7 @@ describe('the directory wiring keeps the generation out of its keys', () => {
 
   it('builds the directory cache key in exactly one place, without the generation', () => {
     const sites = [...explorerService.matchAll(/`explorer:accounts:[^`]*`/g)].map(match => match[0])
-    expect(sites).toEqual(['`explorer:accounts:${modelVersion}:${sort}:${offset}:${limit}`'])
+    expect(sites).toEqual(['`explorer:accounts:${sort}:${offset}:${limit}`'])
   })
 
   it('passes the generation to the cache instead, on both the read and the refresh', () => {
@@ -230,29 +227,24 @@ describe('the directory wiring keeps the generation out of its keys', () => {
   })
 })
 
-// Freshness of the persisted page is the declared tolerance plus the model version in
-// its key — not "at least as new as the newest published generation", which rejects a
-// perfectly serveable page at exactly the moment a request needs one.
-describe('the persisted snapshot reads separate serving from refreshing', () => {
-  it('asks for the current generation only when refreshing', () => {
+// Freshness of the persisted page is the declared tolerance alone — not "at least as
+// new as the newest published generation", which rejects a perfectly serveable page at
+// exactly the moment a request needs one.
+describe('the persisted snapshot serves inside its declared tolerance', () => {
+  it('accepts any page inside the age bound', () => {
     const at = explorerService.indexOf('async function loadAccountDirectorySnapshot')
     expect(at).toBeGreaterThan(-1)
     const body = explorerService.slice(at, explorerService.indexOf('\n}\n', at))
 
-    expect(body).toContain('const coversCurrentGeneration = currentGenerationOnly')
     expect(body).toContain(`ACCOUNT_DIRECTORY_SNAPSHOT_MAX_AGE_SECONDS`)
 
-    const calls = [...explorerService.matchAll(/loadAccountDirectorySnapshot\(snapshotKey, (true|false)\)/g)]
-      .map(match => match[1])
-    // Exactly two callers: the rebuild (current generation only) and the stale seed.
-    expect(calls).toEqual(['true', 'false'])
+    // Exactly two callers: the rebuild and the stale seed.
+    expect([...explorerService.matchAll(/loadAccountDirectorySnapshot\(snapshotKey\)/g)]).toHaveLength(2)
   })
 
-  // The tag snapshot has no model version in its key, so the model belongs in the
-  // identity the loader already compares — not in a freshness clause. See
-  // tagDetailPrewarm.test.ts for the shared derivation the prewarm relies on.
-  it('identifies a tag payload by its model as well as its members', () => {
-    expect(explorerService).toContain('return `${accountDirectoryModelVersion()}|${tagMembershipList(members)}`')
+  // A tag payload is identified by the members it covers.
+  it('identifies a tag payload by its members', () => {
+    expect(explorerService).toContain('return tagMembershipList(members)')
     const at = explorerService.indexOf('export async function getTag(')
     expect(at).toBeGreaterThan(-1)
     const body = explorerService.slice(at, at + 1600)

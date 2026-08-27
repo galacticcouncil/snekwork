@@ -91,16 +91,9 @@ describe('compareActivityRowsNewestFirst', () => {
     expect(Math.sign(compareActivityRowsNewestFirst(a, b))).toBe(-Math.sign(compareActivityRowsNewestFirst(b, a)))
   })
 
-  it('separates two DCA executions that resolved to the same leg', () => {
-    const a = row({ blockHeight: 7, eventIndex: 4, dca: true, dcaScheduleId: 31106 })
-    const b = row({ blockHeight: 7, eventIndex: 4, dca: true, dcaScheduleId: 31109 })
-    expect(compareActivityRowsNewestFirst(a, b)).not.toBe(0)
-  })
-
   it('is a total order over a feed of distinct rows', () => {
     const rows = [
-      row({ blockHeight: 7, eventIndex: 4, type: 'trade', dcaScheduleId: 1 }),
-      row({ blockHeight: 7, eventIndex: 4, type: 'trade', dcaScheduleId: 2 }),
+      row({ blockHeight: 7, eventIndex: 4, type: 'trade' }),
       row({ blockHeight: 7, eventIndex: 4, type: 'transfer' }),
       row({ blockHeight: 7, eventIndex: null, type: 'trade' }),
       row({ blockHeight: 7, eventIndex: 4, extrinsicIndex: 2, type: 'trade' }),
@@ -115,12 +108,12 @@ describe('compareActivityRowsNewestFirst', () => {
 
   it('sorts identically regardless of the order the feed was assembled in', () => {
     const rows = [
-      row({ blockHeight: 7, eventIndex: 4, dca: true, dcaScheduleId: 31109 }),
-      row({ blockHeight: 7, eventIndex: 4, dca: true, dcaScheduleId: 31106 }),
+      row({ blockHeight: 7, eventIndex: 4, type: 'trade' }),
+      row({ blockHeight: 7, eventIndex: 4, type: 'liquidity' }),
       row({ blockHeight: 9, eventIndex: 1 }),
       row({ blockHeight: 7, eventIndex: 12, type: 'transfer' }),
     ]
-    const key = (r: ActivityRow) => `${r.blockHeight}:${r.eventIndex}:${r.type}:${r.dcaScheduleId ?? ''}`
+    const key = (r: ActivityRow) => `${r.blockHeight}:${r.eventIndex}:${r.type}`
     const forward = [...rows].sort(compareActivityRowsNewestFirst).map(key)
     const reversed = [...rows].reverse().sort(compareActivityRowsNewestFirst).map(key)
     expect(forward).toEqual(reversed)

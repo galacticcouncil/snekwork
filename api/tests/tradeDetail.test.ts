@@ -29,12 +29,6 @@ describe('parseTradeLimit', () => {
     expect(parseTradeLimit('Router.buy', { assetIn: 10, assetOut: 5, maxAmountIn: '77' }))
       .toEqual({ kind: 'maxPaid', amount: '77', assetId: 10 })
   })
-  it('Omnipool/Stableswap sell & buy limits', () => {
-    expect(parseTradeLimit('Omnipool.sell', { assetIn: 9, assetOut: 5, minBuyAmount: '3' })).toEqual({ kind: 'minReceived', amount: '3', assetId: 5 })
-    expect(parseTradeLimit('Omnipool.buy', { assetIn: 0, assetOut: 5, maxSellAmount: '4' })).toEqual({ kind: 'maxPaid', amount: '4', assetId: 0 })
-    expect(parseTradeLimit('Stableswap.sell', { assetIn: 222, assetOut: 10, minBuyAmount: '5' })).toEqual({ kind: 'minReceived', amount: '5', assetId: 10 })
-    expect(parseTradeLimit('Stableswap.buy', { assetIn: 10, assetOut: 22, maxSellAmount: '6' })).toEqual({ kind: 'maxPaid', amount: '6', assetId: 10 })
-  })
   it('XYK maxLimit is min-received on sell, max-paid on buy', () => {
     expect(parseTradeLimit('XYK.sell', { assetIn: 1, assetOut: 2, maxLimit: '9' })).toEqual({ kind: 'minReceived', amount: '9', assetId: 2 })
     expect(parseTradeLimit('XYK.buy', { assetIn: 1, assetOut: 2, maxLimit: '8' })).toEqual({ kind: 'maxPaid', amount: '8', assetId: 1 })

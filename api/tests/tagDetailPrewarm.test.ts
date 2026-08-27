@@ -19,16 +19,8 @@ const members = [
 ]
 
 describe('tag membership keys', () => {
-  it('derives the detail key as the model version over the shared member list', () => {
-    const list = tagMembershipList(members)
-    const key = tagDetailMembershipKey(members)
-    // The two forms differ only by the prefix: tag_activity_counts keys on the
-    // bare list, tag_detail_snapshots on the same list behind the account-value
-    // model version. Reusing the counts form for the detail table is the failure
-    // this pins.
-    expect(key.endsWith(`|${list}`)).toBe(true)
-    expect(key.slice(0, key.indexOf('|'))).toMatch(/^v[123]$/)
-    expect(key).not.toBe(list)
+  it('derives the detail key from the shared member list', () => {
+    expect(tagDetailMembershipKey(members)).toBe(tagMembershipList(members))
   })
 
   it('is stable under member order and case', () => {
@@ -43,14 +35,12 @@ describe('tag membership keys', () => {
   })
 
   // getTag persists this key and the prewarm compares against it. Both call the
-  // one function above, so agreement reduces to the function being pure — and
-  // the mistake it forecloses is using the counts form, which never matches.
+  // one function above, so agreement reduces to the function being pure.
   it('gives the persisting and comparing sites byte-identical keys', () => {
     const persisted = tagDetailMembershipKey(members)
     const compared = tagDetailMembershipKey(members)
     expect(compared).toBe(persisted)
     expect([...compared]).toEqual([...persisted])
-    expect(tagMembershipList(members)).not.toBe(persisted)
   })
 })
 

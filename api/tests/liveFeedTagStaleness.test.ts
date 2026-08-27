@@ -40,16 +40,15 @@ describe('a dated feed window that reaches today', () => {
   })
 })
 
-// Both tag helpers collapse a time-windowed read onto the same head-less tag, so the
-// staleness is not specific to the activity feed: the events and extrinsics feeds
-// share `liveFeedTag`, and fourteen more dated feeds (transfers, trades, liquidity,
-// the XCM/NTT lanes, money-market, staking, OTC, votes) share `liveHeadTag`. Fixing
-// one and leaving the rest would just move the bug.
+// The tag helper collapses a time-windowed read onto a head-less tag, so the
+// staleness is not specific to the activity feed: every dated feed (events,
+// extrinsics, transfers, trades, liquidity, the XCM lanes, votes) shares
+// `liveHeadTag`. Fixing one and leaving the rest would just move the bug.
 describe('every dated feed cache', () => {
   it('tells its tag helper which window it is caching, so today-touching reads stay head-keyed', () => {
     const dated = [...explorerService.matchAll(/live(?:Feed|Head)Tag\(Boolean\(tw\)[^)]*\)/g)].map(m => m[0])
 
-    expect(dated.length).toBe(17)
+    expect(dated.length).toBe(12)
     for (const call of dated) {
       expect(call).toMatch(/datedWindowIsClosed\(/)
     }

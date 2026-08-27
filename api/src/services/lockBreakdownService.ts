@@ -5,19 +5,18 @@ import type { ClickHouseClient } from '../db/client.ts'
 import { canSkipRepublish } from './snapshotRepublish.ts'
 import { substrateStorageBatch, substrateAllKeys } from './substrateRpc.ts'
 import { decodeCompact } from './proxyMultisigService.ts'
-import { NOMINAL_RELAY_BLOCK_MS } from './blockTime.ts'
-import { runtimeGigaCooldownBlocks } from './runtimeConstants.ts'
+import { NOMINAL_RELAY_BLOCK_MS, paraBlockMs } from './blockTime.ts'
 
 // Per-account lock/reserve/hold breakdown snapshots.
 //
-// The HDX dashboard refresh (hdxService) already enumerates Balances.Locks and
-// Vesting.VestingSchedules chain-wide every 15 minutes. This module extends the
-// same refresh with the remaining lock-shaped storages — named reserves, holds,
-// orml token locks/reserves, and the deposit-taking pallets that explain the
-// otherwise opaque "reserved" figure (identity, proxy, multisig, referenda,
-// legacy preimages) — and persists one per-account, per-asset component row set
-// to ClickHouse. The account and tag balance endpoints read that bounded
-// background snapshot; the request path never enumerates chain state.
+// A background pass (registered on backgroundRefresh) enumerates every
+// lock-shaped storage chain-wide — Balances.Locks, Vesting.VestingSchedules,
+// ConvictionVoting.VotingFor, named reserves, holds, orml token locks/reserves,
+// and the deposit-taking pallets that explain the otherwise opaque "reserved"
+// figure (identity, proxy, multisig, referenda, legacy preimages) — and
+// persists one per-account, per-asset component row set to ClickHouse. The
+// account and tag balance endpoints read that bounded background snapshot; the
+// request path never enumerates chain state.
 //
 // Semantics worth keeping straight everywhere downstream:
 //  - Locks OVERLAP: each lock freezes free balance independently, so the
@@ -28,45 +27,6 @@ import { runtimeGigaCooldownBlocks } from './runtimeConstants.ts'
 //    that no one claimed yet — locked on-chain, releasable with vesting.claim.
 
 export type BreakdownKind = 'lock' | 'reserve' | 'hold' | 'deposit'
-
-// GigaHdx unstakes mature after `gigaHdx.cooldownPeriod` parachain blocks —
-// 403,200, i.e. 28 days at today's 6s slot time (verified against the live
-// runtime, spec 435).
-//
-// Unlike the deposit fuse's period this one IS published in metadata, so it is
-// READ rather than pinned (runtimeConstants.ts, an in-memory property access on
-// the pending layer's connection). The runtime is expected to rescale it at the
-// 2s upgrade so the cooldown stays 28 days — 1,209,600 blocks — and reading it
-// makes that self-correcting.
-//
-// Resolution order, most explicit first:
-//   1. GIGA_UNBONDING_BLOCKS  an operator override; wins over everything, so a
-//      wrong or unavailable chain read is always escapable without a redeploy.
-//   2. runtime metadata       authoritative whenever the node is reachable.
-//   3. the pin below          the last resort, and the value a stale process
-//      falls back to if the node is unreachable at the moment it asks.
-//
-// A stale value misdates every FUTURE unstake derived here (hdxService's
-// pendingUnstakes expiry, the conditional 28-day GIGAHDX step in the binding
-// timeline); the expiry blocks of unstakes already on chain are absolute block
-// numbers and stay correct either way.
-const DEFAULT_GIGA_UNBONDING_BLOCKS = 403_200
-// null when unset or unusable — the caller falls through to the next source.
-export function parseGigaUnbondingBlocks(raw: string | undefined): number | null {
-  const value = raw?.trim()
-  if (!value) return null
-  const n = Number(value)
-  if (!Number.isSafeInteger(n) || n <= 0) {
-    console.error(`[locks] GIGA_UNBONDING_BLOCKS must be a positive integer, received ${JSON.stringify(raw)}; ignoring it`)
-    return null
-  }
-  return n
-}
-export function gigaUnbondingBlocks(): number {
-  return parseGigaUnbondingBlocks(process.env.GIGA_UNBONDING_BLOCKS)
-    ?? runtimeGigaCooldownBlocks()
-    ?? DEFAULT_GIGA_UNBONDING_BLOCKS
-}
 
 // Grid every projected unlock instant is snapped to. Finer than the coarsest
 // thing the UI renders from these dates (hours below 1.5 days, days above),
@@ -102,7 +62,7 @@ export function relayBlockProjector(headTsMs: number, anchorRelayBlock: number):
   return projector(headTsMs, anchorRelayBlock, NOMINAL_RELAY_BLOCK_MS)
 }
 
-// PARACHAIN heights (GIGAHDX unstakes, conviction priors). `msPerBlock` is the
+// PARACHAIN heights (conviction priors). `msPerBlock` is the
 // resolved parachain slot time — 6000 today, 2000 after the planned upgrade —
 // supplied by the caller so this stays a pure function of its inputs.
 export function paraBlockProjector(headTsMs: number, anchorBlock: number, msPerBlock: number): (block: number) => number {
@@ -128,12 +88,11 @@ export interface LockTranche { state: 'releasable' | 'scheduled' | 'active'; amo
 
 // One slice of the account-level BINDING unlock timeline. Locks overlap, so a
 // single lock's own schedule can mislead — e.g. a vote lock that is "unlockable
-// now" frees nothing while a GIGAHDX lock still binds the same tokens. The
-// timeline decomposes frozen (= max lock) across ALL lock sources under
-// act-now semantics (staking exits instantly, GIGAHDX staked exits after the
-// 28-day unbond): each slice says when that much balance can be transferable
-// at the earliest and which lock binds it ('cause'; ties join with '+').
-// `conditional` marks act-now durations (only real if the owner unstakes now).
+// now" frees nothing while a vesting lock still binds the same tokens. The
+// timeline decomposes frozen (= max lock) across ALL lock sources: each slice
+// says when that much balance can be transferable at the earliest and which
+// lock binds it ('cause'; ties join with '+'). `conditional` marks act-now
+// durations (only real if the owner acts now).
 // Open-ended floors (active votes/delegations) surface only with the amount
 // EXCEEDING every other lock's coverage — the envelope residual. When dated
 // locks (e.g. 5x/6x conviction priors) hold the same balance underneath an
@@ -162,14 +121,12 @@ const PREIMAGE_STATUS_PREFIX = prefix('Preimage', 'StatusFor')
 // ED cover collected for insufficient-asset accounts.
 export const LOCK_ID_SOURCES: Record<string, string> = {
   ormlvest: 'vesting',
-  stk_stks: 'staking',
   pyconvot: 'vote',
-  ghdxlock: 'gigahdx',
   democrac: 'democracy',
   phrelect: 'elections',
   insuffED: 'sufficiency',
 }
-export const RESERVE_ID_SOURCES: Record<string, string> = { dcaorder: 'dca', otcorder: 'otc' }
+export const RESERVE_ID_SOURCES: Record<string, string> = {}
 // RuntimeHoldReason is (pallet index, variant index); Preimage is pallet 15.
 const HOLD_PALLET_SOURCES: Record<number, string> = { 15: 'preimage' }
 
@@ -331,30 +288,6 @@ export function voteLockTranches(lockAmount: bigint, classes: VoteClassState[], 
     if (prev > after) { out.push({ state: 'scheduled', amount: prev - after, untilBlock: block }); prev = after }
   }
   if (prev > 0n) out.push({ state: 'active', amount: prev })
-  return out
-}
-
-// GIGAHDX lock tranches: matured unstakes are releasable, pending ones release
-// at their expiry block, and the rest is staked (open-ended until unstaked —
-// then a 28-day unbond).
-export function gigaUnstakeTranches(lockAmount: bigint, unstakes: { expiryBlock: number; payoutRaw: bigint }[], headBlock: number): LockTranche[] {
-  if (lockAmount <= 0n) return []
-  let releasable = 0n
-  const byBlock = new Map<number, bigint>()
-  for (const u of unstakes) {
-    if (u.expiryBlock <= headBlock) releasable += u.payoutRaw
-    else byBlock.set(u.expiryBlock, (byBlock.get(u.expiryBlock) ?? 0n) + u.payoutRaw)
-  }
-  const out: LockTranche[] = []
-  let remaining = lockAmount
-  const take = (amount: bigint) => { const a = amount < remaining ? amount : remaining; remaining -= a; return a }
-  const now = take(releasable)
-  if (now > 0n) out.push({ state: 'releasable', amount: now })
-  for (const [block, amount] of [...byBlock.entries()].sort((x, y) => x[0] - y[0])) {
-    if (remaining <= 0n) break
-    out.push({ state: 'scheduled', amount: take(amount), untilBlock: block })
-  }
-  if (remaining > 0n) out.push({ state: 'active', amount: remaining })
   return out
 }
 
@@ -537,7 +470,6 @@ export interface CollectLockBreakdownInput {
   vestingSchedules: VestingScheduleRaw[]
   relayHeight: number
   voteStates: Map<string, VoteClassState[]>
-  pendingUnstakes: { accountId: string; expiryBlock: number; payoutRaw: bigint }[]
   headBlock: number
   headTsMs: number
   // The parachain slot time to project para heights at (blockTime.ts's
@@ -546,8 +478,7 @@ export interface CollectLockBreakdownInput {
   paraBlockMs: number
 }
 
-// Assemble the full per-account component set: the shared hdxService data plus
-// this module's own (small) storage enumerations.
+// Assemble the full per-account component set from the enumerated storages.
 export async function collectLockBreakdownRows(input: CollectLockBreakdownInput): Promise<BreakdownRow[]> {
   const [reserves, holds, tokenLocks, tokenReserves, identities, subs, proxies, announcements, multisigs, referenda, preimages] = await Promise.all([
     loadEntries(RESERVES_PREFIX),
@@ -578,8 +509,6 @@ export async function collectLockBreakdownRows(input: CollectLockBreakdownInput)
   // publishes must hold still while the underlying lock does, or no generation
   // is ever recognisably unchanged.
   const paraMs = input.paraBlockMs
-  // Resolved once per generation, so every dated row in it shares one answer.
-  const unbondingBlocks = gigaUnbondingBlocks()
   const paraToMs = paraBlockProjector(input.headTsMs, input.headBlock, paraMs)
   const relayToMs = relayBlockProjector(input.headTsMs, input.relayHeight)
   const nowMs = paraToMs(input.headBlock)
@@ -588,12 +517,6 @@ export async function collectLockBreakdownRows(input: CollectLockBreakdownInput)
   for (const s of input.vestingSchedules) {
     const end = s.start + s.period * s.periodCount
     if (end > (vestingEnd.get(s.accountId) ?? 0)) vestingEnd.set(s.accountId, end)
-  }
-  const unstakesByAccount = new Map<string, { expiryBlock: number; payoutRaw: bigint }[]>()
-  for (const u of input.pendingUnstakes) {
-    const list = unstakesByAccount.get(u.accountId)
-    if (list) list.push(u)
-    else unstakesByAccount.set(u.accountId, [u])
   }
   const locksByAccount = new Map<string, LockRow[]>()
   for (const row of input.nativeLockRows) {
@@ -645,30 +568,6 @@ export async function collectLockBreakdownRows(input: CollectLockBreakdownInput)
             return prior > m ? prior : m
           }, 0n),
         })
-      } else if (row.id === 'ghdxlock') {
-        const unstakes = unstakesByAccount.get(accountId) ?? []
-        detail = serializeTranches(gigaUnstakeTranches(row.amount, unstakes, input.headBlock), paraToMs)
-        const pending = unstakes.map(u => ({ atMs: paraToMs(u.expiryBlock), payout: u.payoutRaw }))
-        const pendingTotal = pending.reduce((s, p) => s + p.payout, 0n)
-        const staked = row.amount > pendingTotal ? row.amount - pendingTotal : 0n
-        // Act-now semantics: the staked part could be liquid after one unbond
-        // period if the owner unstaked right now — a conditional 28d step, not
-        // an open-ended floor. "28 days from now" has no fixed block behind it,
-        // so it only holds still if the `now` it extends from is on the grid too.
-        const unbondMs = snapProjection(nowMs) + unbondingBlocks * paraMs
-        sources.push({
-          source, onchain: row.amount, open: 0n,
-          steps: [
-            ...pending.filter(p => p.atMs > nowMs).map(p => ({ atMs: p.atMs })),
-            ...(staked > 0n ? [{ atMs: unbondMs, conditional: true }] : []),
-          ],
-          env: t => (t < unbondMs ? staked : 0n) + pending.reduce((s, p) => s + (p.atMs > t ? p.payout : 0n), 0n),
-        })
-      } else if (row.id === 'stk_stks') {
-        // Hydration staking exits instantly — under act-now semantics it binds
-        // nothing beyond the snapshot instant, so it lands in the "anytime"
-        // (releasable) slice rather than an open-ended floor.
-        sources.push({ source, onchain: row.amount, open: 0n, steps: [], env: () => 0n })
       } else {
         // Genuinely open-ended locks: democracy delegations (undelegate then a
         // conviction-length prior), orphaned elections, sufficiency, unknown ids.
@@ -748,9 +647,8 @@ export const lockRowChecksumFields = (r: BreakdownRow): string =>
   `${r.accountId}|${r.assetId}|${r.kind}|${r.source}|${r.amount}|${r.claimable}|${r.detail}\n`
 
 // Publish one snapshot generation: insert under a fresh partition, verify the
-// row count round-trips, flip the state pointer, then drop older partitions —
-// the same shape as the money-market account-value snapshots. A generation
-// identical to the published one is not rewritten (see snapshotRepublish): the
+// row count round-trips, flip the state pointer, then drop older partitions. A
+// generation identical to the published one is not rewritten (see snapshotRepublish): the
 // account and tag balance pages keep reading the pointer they already read, and
 // the pointer's `computed_at` stays where it is.
 export async function persistLockSnapshot(
@@ -827,7 +725,7 @@ export interface BalanceLockTranche { state: 'releasable' | 'scheduled' | 'activ
 export interface BalanceLockComponent { kind: BreakdownKind; source: string; amount: string; claimable?: string; tranches?: BalanceLockTranche[] }
 // The account-set binding unlock timeline (see TimelineSlice): when how much of
 // the frozen balance actually unlocks, and which lock causes it. `conditional`
-// marks act-now durations (GIGAHDX staked → liquid 28d after unstaking now).
+// marks act-now durations (only real if the owner acts now).
 export interface BalanceUnlockSlice { state: 'releasable' | 'scheduled' | 'active'; cause: string; amount: string; until?: string; linear?: boolean; conditional?: boolean }
 export interface AssetLockBreakdown { assetId: number; frozen: string; components: BalanceLockComponent[]; timeline?: BalanceUnlockSlice[] }
 
@@ -1005,4 +903,201 @@ export async function queryLockBreakdowns(client: ClickHouseClient, accountListS
     if (timeline.length) e.timeline = timeline
   }
   return out
+}
+
+// ── The background refresh ────────────────────────────────────────────────────
+//
+// One pass enumerates every lock-shaped storage this module decodes, assembles
+// the per-account rows and publishes them as a snapshot generation. Registered
+// on the coordinated node-full scheduler (backgroundRefresh) so it never runs
+// alongside the other chain-state enumerations.
+
+const LOCKS_PREFIX = prefix('Balances', 'Locks')
+const VESTING_PREFIX = prefix('Vesting', 'VestingSchedules')
+const VOTING_FOR_PREFIX = prefix('ConvictionVoting', 'VotingFor')
+const RELAY_HEIGHT_KEY = prefix('ParachainSystem', 'LastRelayChainBlockNumber')
+
+let refreshClient: ClickHouseClient
+export function initLockBreakdownService(c: ClickHouseClient): void { refreshClient = c }
+
+// Full SCALE compact<u128> (a vesting perPeriod can exceed the 4-byte form).
+export function decodeCompactBig(b: Uint8Array, off: number): [bigint, number] {
+  if (!Number.isInteger(off) || off < 0 || off >= b.length) {
+    throw new RangeError('truncated SCALE compact integer')
+  }
+  const mode = b[off] & 3
+  if (mode === 0) return [BigInt(b[off] >> 2), off + 1]
+  if (mode === 1) {
+    if (off + 2 > b.length) throw new RangeError('truncated SCALE compact integer')
+    return [BigInt((b[off] | (b[off + 1] << 8)) >>> 2), off + 2]
+  }
+  if (mode === 2) {
+    if (off + 4 > b.length) throw new RangeError('truncated SCALE compact integer')
+    return [BigInt((b[off] | (b[off + 1] << 8) | (b[off + 2] << 16) | (b[off + 3] << 24)) >>> 2), off + 4]
+  }
+  const len = (b[off] >> 2) + 4
+  if (off + 1 + len > b.length) throw new RangeError('truncated SCALE compact integer')
+  let n = 0n
+  for (let i = len - 1; i >= 0; i--) n = (n << 8n) | BigInt(b[off + 1 + i])
+  return [n, off + 1 + len]
+}
+
+// Balances.Locks value: Vec<{id: [u8;8], amount: u128, reasons: u8}>.
+async function loadNativeLocks(): Promise<LockRow[] | null> {
+  const keys = await substrateAllKeys(LOCKS_PREFIX)
+  if (!keys.length) return null
+  const values = await substrateStorageBatch(keys)
+  if (!values.some(Boolean)) return null
+  const rows: LockRow[] = []
+  for (let ki = 0; ki < keys.length; ki++) {
+    const raw = values[ki]
+    if (!raw) continue
+    const accountId = '0x' + keys[ki].slice(-64) // Blake2_128Concat tail
+    const b = hexToU8a(raw)
+    try {
+      const [len, start] = decodeCompact(b, 0)
+      let off = start
+      for (let i = 0; i < len && off + 25 <= b.length; i++) {
+        rows.push({ accountId, id: asciiId(b, off), amount: u128At(b, off + 8) })
+        off += 25
+      }
+    } catch { /* skip malformed */ }
+  }
+  return rows
+}
+
+// Vesting.VestingSchedules: Vec<{start u32, period u32, periodCount u32,
+// perPeriod Compact<u128>}> (orml-vesting). start/period count RELAY CHAIN
+// blocks, not parachain blocks: the pallet is configured with the relay block
+// provider, so schedule progress must use the indexed relay height.
+async function loadVestingSchedules(): Promise<VestingScheduleRaw[] | null> {
+  const keys = await substrateAllKeys(VESTING_PREFIX)
+  if (!keys.length) return []
+  const values = await substrateStorageBatch(keys)
+  if (!values.some(Boolean)) return null
+  const schedules: VestingScheduleRaw[] = []
+  for (let ki = 0; ki < keys.length; ki++) {
+    const raw = values[ki]
+    if (!raw) continue
+    const accountId = '0x' + keys[ki].slice(-64)
+    const b = hexToU8a(raw)
+    try {
+      const [n, start] = decodeCompact(b, 0)
+      let off = start
+      for (let i = 0; i < n; i++) {
+        const s = u32At(b, off)
+        const period = u32At(b, off + 4)
+        const periodCount = u32At(b, off + 8)
+        const [perPeriod, next] = decodeCompactBig(b, off + 12)
+        off = next
+        if (period > 0 && periodCount > 0 && perPeriod > 0n) schedules.push({ accountId, start: s, period, periodCount, perPeriod })
+      }
+    } catch { /* skip malformed */ }
+  }
+  return schedules
+}
+
+// ConvictionVoting.VotingFor: per (account, class) casting/delegating state.
+// The class lock covers the largest single vote (locks overlap within a class);
+// prior locks are dated and survive the vote itself.
+async function loadVoteStates(): Promise<Map<string, VoteClassState[]> | null> {
+  const keys = await substrateAllKeys(VOTING_FOR_PREFIX)
+  if (!keys.length) return new Map()
+  const values = await substrateStorageBatch(keys)
+  if (!values.some(Boolean)) return null
+  const byAccount = new Map<string, VoteClassState[]>()
+  for (let ki = 0; ki < keys.length; ki++) {
+    const raw = values[ki]
+    if (!raw) continue
+    // Key tail: twox64(8B) + account(32B) + twox64(8B) + class(u16) — account at [8..40).
+    const tail = hexToU8a('0x' + keys[ki].slice(66))
+    if (tail.length < 40) continue
+    const accountId = u8aToHex(tail.slice(8, 40))
+    const b = hexToU8a(raw)
+    const state: VoteClassState = { activeAmount: 0n, hasActiveVotes: false, priorUnlock: 0, priorBalance: 0n }
+    try {
+      if (b[0] === 0) { // Casting
+        const [n, start] = decodeCompact(b, 1)
+        let off = start
+        if (n > 0) state.hasActiveVotes = true
+        for (let i = 0; i < n; i++) {
+          off += 4 // poll index
+          const kind = b[off]; off += 1
+          // Split/SplitAbstain lock the sum of their parts.
+          const amount = kind === 0 ? u128At(b, off + 1)
+            : kind === 1 ? u128At(b, off) + u128At(b, off + 16)
+            : u128At(b, off) + u128At(b, off + 16) + u128At(b, off + 32)
+          if (amount > state.activeAmount) state.activeAmount = amount
+          off += kind === 0 ? 17 : kind === 1 ? 32 : 48
+        }
+        off += 32 // delegations (votes, capital)
+        if (u128At(b, off + 4) > 0n) { state.priorUnlock = u32At(b, off); state.priorBalance = u128At(b, off + 4) }
+      } else if (b[0] === 1) { // Delegating
+        const balance = u128At(b, 1)
+        if (balance > 0n) { state.hasActiveVotes = true; state.activeAmount = balance }
+        const off = 1 + 16 + 32 + 1 + 32
+        if (u128At(b, off + 4) > 0n) { state.priorUnlock = u32At(b, off); state.priorBalance = u128At(b, off + 4) }
+      } else continue
+    } catch { continue }
+    const list = byAccount.get(accountId)
+    if (list) list.push(state)
+    else byAccount.set(accountId, [state])
+  }
+  return byAccount
+}
+
+// ParachainSystem.LastRelayChainBlockNumber: plain u32 — the relay block the
+// current parachain head was built against.
+async function loadRelayHeight(): Promise<number | null> {
+  const [raw] = await substrateStorageBatch([RELAY_HEIGHT_KEY])
+  if (!raw) return null
+  return u32At(hexToU8a(raw), 0)
+}
+
+async function loadHead(): Promise<{ height: number; ts: number }> {
+  const res = await refreshClient.query({
+    query: `SELECT max(block_height) AS h, toUnixTimestamp(max(block_timestamp)) AS t FROM price_data.blocks`,
+    format: 'JSONEachRow',
+  })
+  const row = (await res.json<{ h: number; t: number }>())[0]
+  return { height: row?.h ?? 0, ts: (row?.t ?? 0) * 1000 }
+}
+
+let refreshInflight: Promise<void> | null = null
+
+async function refresh(): Promise<void> {
+  if (!refreshClient) return
+  const [locks, vesting, votes, relayHeight] = await Promise.all([
+    loadNativeLocks(), loadVestingSchedules(), loadVoteStates(), loadRelayHeight(),
+  ])
+  // An incomplete enumeration keeps the last published generation rather than
+  // replacing it with a partial one.
+  if (!locks || !vesting || !votes || relayHeight == null) {
+    console.error('[locks] chain enumeration incomplete, keeping previous snapshot')
+    return
+  }
+  const [head, paraMs] = await Promise.all([loadHead(), paraBlockMs(refreshClient)])
+  const rows = await collectLockBreakdownRows({
+    nativeLockRows: locks,
+    vestingSchedules: vesting,
+    relayHeight,
+    voteStates: votes,
+    headBlock: head.height,
+    headTsMs: head.ts,
+    paraBlockMs: paraMs,
+  })
+  const outcome = await persistLockSnapshot(refreshClient, rows, { blockHeight: head.height, relayHeight })
+  console.info('[locks] lock breakdown', { rows: rows.length, outcome })
+}
+
+// The coordinated background scheduler (backgroundRefresh.ts) owns the cadence
+// and serializes this against the other node-full refreshers; here we only keep
+// the single-flight guard so a re-entrant call collapses onto the in-flight run.
+export function refreshLockBreakdowns(): Promise<void> {
+  if (refreshInflight) return refreshInflight
+  const request = refresh()
+    .catch(err => console.error('[locks] refresh failed', err))
+    .finally(() => { if (refreshInflight === request) refreshInflight = null })
+  refreshInflight = request
+  return request
 }

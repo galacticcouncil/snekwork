@@ -6,9 +6,7 @@ import {
   lockRowChecksumFields, paraBlockProjector, persistLockSnapshot, relayBlockProjector, snapProjection,
   PROJECTION_GRID_MS, type BreakdownRow,
 } from '../src/services/lockBreakdownService.ts'
-import {
-  moneyMarketClaimChecksumFields, omnipoolClaimChecksumFields, samePriceGeneration,
-} from '../src/services/explorerService.ts'
+import { samePriceGeneration } from '../src/services/explorerService.ts'
 
 // The account-value snapshot generations are republished only when they
 // changed. Everything below pins the properties that makes that safe: the
@@ -177,35 +175,17 @@ const coverage: CoverageCase[] = [
     table: 'account_lock_snapshots', file: 'lockBreakdownService.ts', checksum: lockRowChecksumFields,
     identity: ['snapshot_id', 'computed_at'], derived: {},
   },
-  {
-    table: 'omnipool_account_claim_snapshots', file: 'explorerService.ts', checksum: omnipoolClaimChecksumFields,
-    identity: ['snapshot_id', 'computed_at'], derived: {},
-  },
-  {
-    table: 'money_market_account_value_snapshots', file: 'explorerService.ts', checksum: moneyMarketClaimChecksumFields,
-    identity: ['snapshot_id', 'computed_at'],
-    derived: {
-      holder: 'the H160 whose account id account_id is',
-      market_key: 'the configured market of pool_address',
-    },
-  },
 ]
 
 describe('snapshot checksums cover every stored column', () => {
-  it('pins the three checksummed snapshot tables', () => {
-    expect(coverage.map(c => c.table)).toEqual([
-      'account_lock_snapshots',
-      'omnipool_account_claim_snapshots',
-      'money_market_account_value_snapshots',
-    ])
+  it('pins the checksummed snapshot tables', () => {
+    expect(coverage.map(c => c.table)).toEqual(['account_lock_snapshots'])
   })
 
   // Column counts are pinned so a table that grows a column cannot quietly
   // shrink these assertions to nothing.
   const expectedCovered: Record<string, number> = {
     account_lock_snapshots: 7,
-    omnipool_account_claim_snapshots: 6,
-    money_market_account_value_snapshots: 14,
   }
 
   for (const c of coverage) {

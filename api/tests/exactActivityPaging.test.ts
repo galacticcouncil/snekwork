@@ -18,7 +18,7 @@ const routes = readFileSync(new URL('../src/routes/explorer.ts', import.meta.url
 // is served, and reconciled per block: the failure worth guarding against is a read
 // that returns the right NUMBER of rows for the wrong blocks, which leaves every
 // total intact. (The ANY-join analyzer bug did exactly that — right count, wrong
-// blocks — and so did counting DCA failures in both an arm and an enumerated source.)
+// blocks.)
 describe('exactActivityMismatch', () => {
   it('accepts a page whose blocks each hold the counted number of rows', () => {
     expect(exactActivityMismatch([7, 7, 9], new Map([[7, 2], [9, 1]]))).toBeNull()
@@ -47,12 +47,11 @@ describe('exactActivityMismatch', () => {
 })
 
 // Which requests page by locating their ranks decides the route's offset bound, so the
-// two must agree on the vocabulary — including that `dca` is a kind of trade, and that
-// a filter no count arm states puts the request back on the candidate window however
-// countable its category is.
+// two must agree on the vocabulary — and a filter no count arm states puts the request
+// back on the candidate window however countable its category is.
 describe('isLocatedActivityRequest', () => {
-  it('covers every category, under either spelling of DCA', () => {
-    for (const type of ['all', 'transfer', 'trade', 'dca', 'liquidity', 'mm', 'xcm', 'vote', 'staking', 'otc']) {
+  it('covers every category', () => {
+    for (const type of ['all', 'transfer', 'trade', 'liquidity', 'xcm', 'vote']) {
       expect(isLocatedActivityRequest(type), type).toBe(true)
     }
   })
@@ -103,8 +102,8 @@ describe('action filters invert their labelling exactly', () => {
     expect(liquidityActionEventNames('ClaimRewards')).toEqual([])
   })
 
-  // A liquidity row's label is liqActionFor(event_name); a money-market row's IS the
-  // event name. Both inverses have to round-trip for every event in the list.
+  // A liquidity row's label is liqActionFor(event_name); the inverse has to
+  // round-trip for every event in the list.
   it('round-trips every liquidity event through its own label', () => {
     const all = liquidityActionEventNames()
     for (const name of all) {
@@ -121,27 +120,10 @@ describe('per-action selections partition their category', () => {
   const row = (fields: Partial<ActivityRow> & Pick<ActivityRow, 'type'>): ActivityRow => fields as ActivityRow
   // Every action the UI offers, next to the rows that category can produce.
   const categories: { actions: string[]; rows: ActivityRow[] }[] = [
-    {
-      // `dca-failed` is deliberately a SUBSET of `dca`, so the partition is the other
-      // five values; the subset is checked separately below.
-      actions: ['swap', 'dca', 'otc-place', 'otc-pull', 'otc-fill'],
-      rows: [
-        row({ type: 'trade' }),
-        row({ type: 'trade', dca: true }),
-        row({ type: 'trade', dca: true, dcaStatus: 'failed' }),
-        row({ type: 'otc', otcAction: 'Place' }),
-        row({ type: 'otc', otcAction: 'Pull' }),
-        row({ type: 'otc', otcAction: 'Fill' }),
-      ],
-    },
+    { actions: ['swap'], rows: [row({ type: 'trade' })] },
     {
       actions: ['Add', 'Remove', 'Create', 'Claim', 'Destroy'],
       rows: liquidityActionEventNames().map(name => row({ type: 'liquidity', liqAction: liqActionFor(name) })),
-    },
-    {
-      actions: ['Supply', 'Withdraw', 'Borrow', 'Repay', 'LiquidationCall', 'ClaimRewards'],
-      rows: ['Supply', 'Withdraw', 'Borrow', 'Repay', 'LiquidationCall', 'ClaimRewards']
-        .map(mmAction => row({ type: 'mm', mmAction })),
     },
     { actions: ['out', 'in'], rows: [row({ type: 'xcm', xcmDir: 'out' }), row({ type: 'xcm', xcmDir: 'in' })] },
     { actions: ['Aye', 'Nay'], rows: [row({ type: 'vote', voteSide: 'Aye' }), row({ type: 'vote', voteSide: 'Nay' })] },
@@ -158,18 +140,11 @@ describe('per-action selections partition their category', () => {
     }
     // Pinned so a category dropped from the table above fails here rather than silently
     // shrinking the check to nothing.
-    expect(checked).toBe(27)
-  })
-
-  it('treats a failed DCA attempt as a subset of DCA, never a seventh bucket', () => {
-    const failed = row({ type: 'trade', dca: true, dcaStatus: 'failed' })
-    expect(activityRowMatchesAction(failed, 'dca-failed')).toBe(true)
-    expect(activityRowMatchesAction(failed, 'dca')).toBe(true)
-    expect(activityRowMatchesAction(row({ type: 'trade', dca: true }), 'dca-failed')).toBe(false)
+    expect(checked).toBe(16)
   })
 
   it('keeps every transfer under every action, which is why no transfer arm filters', () => {
-    for (const action of ['swap', 'Add', 'Supply', 'in', 'Aye']) {
+    for (const action of ['swap', 'Add', 'in', 'Aye']) {
       expect(activityRowMatchesAction(row({ type: 'transfer' }), action), action).toBe(true)
     }
   })
@@ -197,26 +172,17 @@ describe('the token filter reaches candidates only', () => {
     }
   })
 
-  it('applies it in each of the five counted arms and nowhere else in them', () => {
+  it('applies it in each of the counted arms and nowhere else in them', () => {
     const armed: Record<string, RegExp> = {
       accountSwapTradeArm: /rep_in IN \(\$\{ids\}\) OR rep_out IN \(\$\{ids\}\)/,
       accountLiquidityArm: /hasAny\(asset_refs, \[\$\{ids\}\]\)/,
-      accountMoneyMarketArm: /mmAssetIdSql\('asset_address'\)\} IN \(\$\{ids\}\)/,
       accountTransferArm: /potFilters, tokenFilter\)/,
     }
     for (const [name, predicate] of Object.entries(armed)) {
       expect(body(name), name).toMatch(predicate)
     }
-    // The DCA arm states it over the swap LEG rather than the schedule (20.6% of
-    // executions belong to a schedule whose event carried no order), so it is the one
-    // arm whose predicate is not an armTokenFilter call.
-    expect(body('accountDcaTradeArm')).toContain('leg_in IN (${ids}) OR leg_out IN (${ids})')
-    expect(body('accountDcaTradeArm')).not.toContain('dcaScheduleJoinSql')
-    // Counted once per arm. The money-market arm passes the requested tokens widened
-    // to the reserves they are held through (mmTokenMatchIds), so it admits exactly the
-    // rows the page's assetRefs test keeps — hence the id list, not the bare tokenIds.
-    expect((explorerService.match(/armTokenFilter\(tokenIds(?: &&[^,]+)?, /g) ?? []).length).toBe(4)
-    expect(body('accountMoneyMarketArm')).toContain('armTokenFilter(tokenIds && mmTokenMatchIds(tokenIds)')
+    // Counted once per arm.
+    expect((explorerService.match(/armTokenFilter\(tokenIds(?: &&[^,]+)?, /g) ?? []).length).toBe(3)
   })
 
   // Only the candidate read inside the transfer arm is narrowed, and it is narrowed in
@@ -230,7 +196,6 @@ describe('the token filter reaches candidates only', () => {
   // there is no LIMIT for the unfiltered context rows to crowd a rare match out of.
   it('drops the page read’s push-downs under an exact plan', () => {
     expect((explorerService.match(/const tokenIds = exact \? undefined : assetIdsForToken\(filters\.token\)/g) ?? []).length).toBe(1)
-    expect((explorerService.match(/const mmEventNames = exact \? MONEY_MARKET_EVENT_NAMES : /g) ?? []).length).toBe(1)
   })
 
   // `!A && A` is false for every A, so this guard never once produced a filter — and the
@@ -281,9 +246,7 @@ describe('POOL_LIFECYCLE_EVENTS confines the pool_account admission arm', () => 
   // count arm's suppression context), and collectAccountActivity's liquidity page read
   // must all call the one shared builder — not three copies that can drift apart.
   it('is shared verbatim by all three liquidity_activity reads that admit a pool account', () => {
-    // 5 = the three reads' own WHERE arms plus the two candidate scopes the
-    // account arms hand routerHopLiquiditySql — the same shared builder either way.
-    expect((explorerService.match(/liquidityWhoOrPoolSql\(list\)/g) ?? []).length).toBe(5)
+    expect((explorerService.match(/liquidityWhoOrPoolSql\(list\)/g) ?? []).length).toBe(3)
     for (const name of ['accountLiquidityArm', 'semanticExtrinsicSql']) {
       const at = explorerService.indexOf(`function ${name}`)
       expect(at, name).toBeGreaterThan(-1)
@@ -292,79 +255,15 @@ describe('POOL_LIFECYCLE_EVENTS confines the pool_account admission arm', () => 
     }
     // The page read is a closure inside collectAccountActivity, not a top-level
     // function `body()` can extract by name — assert its call site directly.
-    expect(explorerService).toContain('AND ${liquidityWhoOrPoolSql(list)}\n                ${routerHopLiquiditySql(pageBound, liquidityAssetExpr).predicateSql}\n                ${liquidityTokenFilter}')
+    expect(explorerService).toContain('AND ${liquidityWhoOrPoolSql(list)}\n                ${liquidityTokenFilter}')
   })
 })
 
-// A row counted by an arm AND by an enumerated source is counted twice, which shifts
-// every page past it. Failed DCA attempts are the case that actually happened: they
-// are trade rows of the same feed, but `getRecentDcaFailures` is one of the sources
-// read in full, so the executions arm must not count them.
-describe('activity count arms count each row once', () => {
-  it('counts DCA executions in the arm and failures only in the enumerated source', () => {
-    const at = explorerService.indexOf('function accountDcaTradeArm')
-    expect(at).toBeGreaterThan(-1)
-    const arm = explorerService.slice(at, explorerService.indexOf('\n}', at))
-
-    expect(arm).toContain(`e.event_name = 'DCA.TradeExecuted'`)
-    expect(arm).not.toContain('DCA.TradeFailed')
-    expect(explorerService).toContain('getRecentDcaFailures(depth,')
-  })
-
-  // The arm and the page read must select the same rows, so they read one event list
-  // rather than two copies of it.
-  it('counts the liquidity events the page read builds rows from', () => {
-    expect((explorerService.match(/event_name IN \(\$\{sqlEventNameList\(LIQUIDITY_EVENTS\)\}\)/g) ?? []).length).toBe(9)
-    expect((explorerService.match(/LIQUIDITY_EVENTS\.includes\(/g) ?? []).length).toBe(1)
-  })
-
-  // Every selection of liquidity events must name the shared list, because an inline
-  // copy is what lets an arm and a page read drift apart. The signature of a copy is
-  // a line naming two of the event STRINGS at once, which is matched per line rather
-  // than as one literal: the previous form of this guard spelled the pair without the
-  // space the source uses, so it passed while an inline copy of all nine names sat in
-  // getExtrinsicActivity. Both surviving lines are declarations, and the assertion
-  // names them, so a third one fails here with its own line quoted.
-  it('leaves exactly two declared liquidity event lists and no inline copy', () => {
-    const listing = explorerService.split('\n')
-      .map((line, i) => ({ line: i + 1, text: line.trim() }))
-      .filter(({ text }) => text.includes(`'Omnipool.LiquidityAdded'`) && text.includes(`'Omnipool.LiquidityRemoved'`))
-
-    expect(listing.map(({ text }) => text)).toHaveLength(2)
-    expect(listing.filter(({ text }) => text.startsWith('const LIQUIDITY_EVENTS = ['))).toHaveLength(1)
-    // The other is VALUE_EVENT_LIQUIDITY_NAMES, whose first line opens the array; its
-    // declaration sits on the line above, so anchor it there.
-    const valueList = listing.find(({ text }) => !text.startsWith('const LIQUIDITY_EVENTS = ['))!
-    expect(explorerService.split('\n')[valueList.line - 2]).toContain('const VALUE_EVENT_LIQUIDITY_NAMES = [')
-  })
-
-  // The two lists are deliberately different, so this is NOT a duplication to collapse:
-  // value-chart markers price a flow, and the four events that carry no priceable flow
-  // of their own (pool creation, pool destruction, both mining reward claims) have no
-  // marker to draw.
-  it('keeps the value-marker list a strict, smaller subset of the feed list', () => {
-    const names = (decl: string): string[] => {
-      const at = explorerService.indexOf(decl)
-      expect(at, decl).toBeGreaterThan(-1)
-      const body = explorerService.slice(at, explorerService.indexOf(']', at))
-      return [...body.matchAll(/'([A-Za-z]+\.[A-Za-z]+)'/g)].map(m => m[1])
-    }
-    const feed = names('const LIQUIDITY_EVENTS = [')
-    const markers = names('const VALUE_EVENT_LIQUIDITY_NAMES = [')
-
-    expect(feed).toHaveLength(11)
-    expect(markers).toHaveLength(6)
-    expect(markers.filter(name => feed.includes(name))).toHaveLength(6)
-    // PositionCreated joins the non-marker complement: only 40 listing grants
-    // exist chain-wide, not a priceable flow series worth a marker stream.
-    expect(feed.filter(name => !markers.includes(name)))
-      .toEqual(['Omnipool.PositionCreated', 'XYK.PoolCreated', 'XYK.PoolDestroyed', 'OmnipoolLiquidityMining.RewardClaimed', 'XYKLiquidityMining.RewardClaimed'])
-  })
-
-  // Pool-share membership is asset-registry state ClickHouse does not hold. It is
-  // interpolated from the live registry per request precisely so a newly registered
-  // share token cannot leave a baked classification stale.
-  it('derives the share-asset list from the live registry', () => {
+// Pool-share membership is asset-registry state ClickHouse does not hold. It is
+// interpolated from the live registry per request precisely so a newly registered
+// share token cannot leave a baked classification stale.
+describe('the share-asset list', () => {
+  it('is derived from the live registry', () => {
     const at = explorerService.indexOf('function shareAssetIdsSql')
     expect(at).toBeGreaterThan(-1)
     const body = explorerService.slice(at, explorerService.indexOf('\n}', at))

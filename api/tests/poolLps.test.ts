@@ -1,16 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import {
-  foldPoolLpEntries,
-  groupOmnipoolLps,
-  shareFraction,
-  type OmnipoolLpPositionInput,
-} from '../src/services/poolService.ts'
+import { foldPoolLpEntries, shareFraction } from '../src/services/poolService.ts'
 
-// The LP rankings rest on two integer folds whose invariants must hold under
-// replay and races: attributed farm custody REPLACES the pot's balance (the
-// total is conserved, never scaled or double-counted), and the omnipool
-// grouping conserves Σ position shares + protocol_shares = total shares —
-// both verified exact against the live data when this was built.
+// The LP ranking rests on an integer fold whose invariant must hold under
+// replay and races: attributed farm custody REPLACES the pot's balance, so the
+// total is conserved, never scaled or double-counted.
 
 const POT = '0xpot'
 
@@ -102,41 +95,5 @@ describe('shareFraction', () => {
     const sum = parts.reduce((s, p) => s + (shareFraction(p, total) ?? 0), 0)
     expect(sum).toBeLessThanOrEqual(1)
     expect(sum).toBeGreaterThan(0.999999)
-  })
-})
-
-describe('groupOmnipoolLps', () => {
-  const pos = (accountId: string, shares: bigint, farmed = false): OmnipoolLpPositionInput =>
-    ({ accountId, shares, liquidity: shares / 2n, hub: farmed ? 1n : 0n, farmed })
-
-  it('groups an owner across bare and farmed positions and conserves shares', () => {
-    const totalShares = 100n
-    const groups = groupOmnipoolLps(
-      [pos('0xaaa', 10n), pos('0xaaa', 20n, true), pos('0xbbb', 40n)],
-      30n, 1000n, totalShares,
-    )
-    expect(groups.map(g => [g.accountId, g.shares, g.positions, g.farmedPositions])).toEqual([
-      ['0xbbb', 40n, 1, 0],
-      [null, 30n, 0, 0],
-      ['0xaaa', 30n, 2, 1],
-    ])
-    // Σ LP shares + protocol shares = the pool's total (the live gap is 0).
-    expect(groups.reduce((s, g) => s + g.shares, 0n)).toBe(totalShares)
-  })
-
-  it('values the protocol row as the proportional reserve claim with no hub leg', () => {
-    const groups = groupOmnipoolLps([], 25n, 1000n, 100n)
-    expect(groups).toEqual([
-      { accountId: null, positions: 0, farmedPositions: 0, shares: 25n, liquidity: 250n, hub: 0n },
-    ])
-  })
-
-  it('omits the protocol row when there are no protocol shares', () => {
-    expect(groupOmnipoolLps([pos('0xaaa', 1n)], 0n, 1000n, 1n)).toHaveLength(1)
-  })
-
-  it('ties break deterministically with the accountless protocol row first', () => {
-    const groups = groupOmnipoolLps([pos('0xaaa', 5n), pos('0xbbb', 5n)], 5n, 100n, 15n)
-    expect(groups.map(g => g.accountId)).toEqual([null, '0xaaa', '0xbbb'])
   })
 })

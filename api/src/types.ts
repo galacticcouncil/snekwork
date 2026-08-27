@@ -1,85 +1,4 @@
 /**
- * OHLCV candle as returned from ClickHouse query views.
- * All numeric values are Decimal128(12) returned as strings.
- */
-export interface OHLCVCandle {
-  asset_id: number
-  interval_start: string
-  open: string
-  high: string
-  low: string
-  close: string
-  volume_buy: string
-  volume_sell: string
-  volume_total: string
-}
-
-export interface OmniwatchTrader {
-  account: string
-  shortAccount: string
-  emoji: string
-  emojiName?: string
-  emojiUrl?: string
-  volumeBuy: number
-  volumeSell: number
-  volumeTotal: number
-  netVolume: number
-  tradeCount: number
-  // Traded amounts in the base asset's own raw integer units, kept as exact
-  // decimal strings; the client scales by the asset's decimals to display them.
-  nativeVolumeBuy: string
-  nativeVolumeSell: string
-  nativeVolumeTotal: string
-  nativeNetVolume: string
-}
-
-export interface OmniwatchCandleSummary {
-  topTrader: OmniwatchTrader
-  accountCount: number
-  tradeCount: number
-  volumeBuy: number
-  volumeSell: number
-  volumeTotal: number
-  netVolume: number
-  // Candle net in the base asset's raw integer units. Only the net travels with
-  // every candle; the buy/sell split comes with the per-candle volume details.
-  nativeNetVolume: string
-}
-
-/**
- * OHLCV candle formatted for API JSON response.
- * All values converted to JavaScript numbers.
- * Timestamps as Unix seconds (Lightweight Charts native format).
- */
-export interface ApiCandle {
-  intervalStart: number
-  open: number
-  high: number
-  low: number
-  close: number
-  volumeBuy: number
-  volumeSell: number
-  volumeTotal: number
-  omniwatch?: OmniwatchCandleSummary
-}
-
-/**
- * Market statistics for a single asset, returned by GET /market-stats.
- * All prices and changes are in USD terms.
- */
-export interface AssetMarketStats {
-  assetId: number
-  symbol: string
-  price: number | null          // Current USD price
-  change1h: number | null       // Decimal ratio, e.g. 0.0523 = +5.23%
-  change24h: number | null
-  change7d: number | null
-  sparkline: number[]           // ~42 four-hourly close prices over the last 7d
-  hops: number | null           // Hop count from BFS pricing; null if no price data
-  volumeUsd24h: number          // 24h USD volume across both buy + sell sides
-}
-
-/**
  * Asset metadata from price_data.assets table.
  */
 export interface Asset {
@@ -91,6 +10,6 @@ export interface Asset {
   // Whether the asset stands in for USD when it quotes a pair. EURC/HEURC are
   // stablecoins but not dollar-pegged, so they need a computed ratio.
   isUsdPegged: boolean
-  parachainId: number | null  // XCM origin parachain ID, null for native Hydration assets
+  parachainId: number | null  // XCM origin parachain ID, null for native assets
   origin?: { ecosystem: string; chainId: string; assetId: string | null } | null
 }

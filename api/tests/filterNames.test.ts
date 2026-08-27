@@ -6,7 +6,6 @@ import type { ClickHouseClient } from '../src/db/client.ts'
 const explorerService = readFileSync(new URL('../src/services/explorerService.ts', import.meta.url), 'utf8')
 const routes = readFileSync(new URL('../src/routes/explorer.ts', import.meta.url), 'utf8')
 const server = readFileSync(new URL('../src/server.ts', import.meta.url), 'utf8')
-const evaluator = readFileSync(new URL('../src/notifications/evaluator.ts', import.meta.url), 'utf8')
 
 // Every query the call made, so what the endpoint actually asks ClickHouse for is
 // assertable rather than inferred from its answer.
@@ -66,14 +65,10 @@ describe('the call/event name catalogue', () => {
     expect(projection).toContain('.filter(Boolean)')
   })
 
-  // A suggestion the matcher cannot match is worse than no suggestion: the
-  // extrinsic lane windows raw_extrinsics.call_name and the event lane
+  // A suggestion the filter box cannot match is worse than no suggestion: the
+  // extrinsic list filters raw_extrinsics.call_name and the event list
   // raw_events.event_name, so the catalogue must read those exact two columns.
-  it('reads the same columns the notification matchers window over', () => {
-    expect(evaluator).toContain('SELECT block_height, extrinsic_index, call_name')
-    expect(evaluator).toContain('FROM price_data.raw_extrinsics')
-    expect(evaluator).toContain('SELECT block_height, event_index, extrinsic_index, event_name')
-    expect(evaluator).toContain('FROM price_data.raw_events')
+  it('reads the same columns the list filters match on', () => {
     expect(explorerService).toContain("distinctNames('raw_extrinsics', 'call_name')")
     expect(explorerService).toContain("distinctNames('raw_events', 'event_name')")
   })

@@ -1,18 +1,14 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { getAssetLiquidity, getOmnipoolAssetLps, getOmnipoolDetail, getPoolDetail, getPoolLps, getPoolsIndex } from '../services/poolService.ts'
+import { getAssetLiquidity, getPoolDetail, getPoolLps, getPoolsIndex } from '../services/poolService.ts'
 import { getAssetActivity, getPoolSwaps } from '../services/explorerService.ts'
 
-// Liquidity-pool endpoints: the asset Liquidity tab, stableswap/XYK pool detail
-// pages (keyed by the share/LP asset id) and the Omnipool page. All models are
-// SWR-cached in poolService; routes stay thin.
+// Liquidity-pool endpoints: the asset Liquidity tab and the XYK pool detail
+// pages (keyed by the LP share asset id). All models are SWR-cached in
+// poolService; routes stay thin.
 const uint32Schema = z.coerce.number().int().min(0).max(4_294_967_295)
 
 export async function poolsRoutes(fastify: FastifyInstance) {
-  fastify.get('/explorer/omnipool', async () => {
-    return getOmnipoolDetail()
-  })
-
   // Every pool on the chain, largest first — the /liquidity index.
   fastify.get('/explorer/pools', async () => {
     return getPoolsIndex()
@@ -61,17 +57,6 @@ export async function poolsRoutes(fastify: FastifyInstance) {
     const { limit, offset } = pageParams(req.query as Record<string, string | undefined>)
     const lps = await getPoolLps(poolId.data, limit, offset)
     if (!lps) return reply.status(404).send({ error: 'Pool not found' })
-    return lps
-  })
-
-  // One omnipool asset's LP ranking: economic owners of its position NFTs
-  // (bare and farmed), plus the protocol's own accountless shares.
-  fastify.get('/explorer/omnipool/:assetId/lps', async (req, reply) => {
-    const assetId = uint32Schema.safeParse((req.params as { assetId: string }).assetId)
-    if (!assetId.success) return reply.status(400).send({ error: 'Invalid asset id' })
-    const { limit, offset } = pageParams(req.query as Record<string, string | undefined>)
-    const lps = await getOmnipoolAssetLps(assetId.data, limit, offset)
-    if (!lps) return reply.status(404).send({ error: 'Asset not in the Omnipool' })
     return lps
   })
 }

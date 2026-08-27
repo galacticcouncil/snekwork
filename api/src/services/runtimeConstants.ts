@@ -1,29 +1,25 @@
-import { pendingNodeApi } from './pendingHeadService.ts'
+import { nodeApi } from './nodeApi.ts'
 
 // Runtime constants read straight out of the node's METADATA.
 //
-// The pending-head layer already holds a connected ApiPromise for the whole
+// The node connection (nodeApi.ts) holds a connected ApiPromise for the whole
 // process lifetime, and a runtime's `#[pallet::constant]` values are decoded
 // into that object when the metadata loads. Reading one is therefore a property
 // access on an in-memory object — no round trip, nothing to cache, nothing to
 // budget against the archive node. This module is the seam that makes those
 // values available to services that must otherwise PIN them in code.
 //
-// Every reader returns null when the value cannot be had — the pending layer is
-// disabled (the '[pending] disabled — RPC connection failed' path), the pallet
-// is absent, or the constant is not published. Null means "the chain could not
+// Every reader returns null when the value cannot be had — the node connection
+// failed, the pallet is absent, or the constant is not published. Null means "the chain could not
 // be consulted"; it must never be treated as a value, and every caller here
 // falls back to a documented pin.
 //
 // Verified against the live runtime (spec 435, Aug 2026):
 //   aura.slotDuration        = 6000       (MILLISECS_PER_BLOCK)
 //   gigaHdx.cooldownPeriod   = 403200     (28 days of 6s blocks)
-// and, for contrast, pallet_circuit_breaker publishes ONLY its three default
-// limit rationals — its `Period = DAYS` is not a metadata constant at all,
-// which is why securityService still has to pin that one by hand.
 
 function constantBigInt(pallet: string, name: string): bigint | null {
-  const api = pendingNodeApi()
+  const api = nodeApi()
   if (!api) return null
   try {
     const consts = (api.consts as Record<string, Record<string, unknown> | undefined>)[pallet]

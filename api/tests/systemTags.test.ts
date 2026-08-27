@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { modlAccountId, stableswapPoolAccount, economicModuleAccounts, truncatedH160Index, mmContractAccountIds, initTagService, loadTags, retireUnknownTagMemberships, SYSTEM_TAG_IDS, DEFAULT_TAGS, INCENTIVES_REWARD_POT, SOVEREIGN_PREFIXES } from '../src/services/tagService.ts'
+import { modlAccountId, stableswapPoolAccount, economicModuleAccounts, truncatedH160Index, initTagService, loadTags, retireUnknownTagMemberships, SYSTEM_TAG_IDS, DEFAULT_TAGS, INCENTIVES_REWARD_POT, SOVEREIGN_PREFIXES } from '../src/services/tagService.ts'
 import type { Tag } from '../src/services/tagService.ts'
 import type { ClickHouseClient } from '../src/db/client.ts'
 
@@ -81,19 +81,6 @@ describe('truncatedH160Index — resolve EVM-side aliases of tagged native accou
       tag('broken', ['not-an-account']),
     ])
     expect(idx.size).toBe(0)
-  })
-})
-
-// The money-market reserve set in the truncated-account form its on-chain
-// activity is indexed under — the MM tag's membership source.
-describe('mmContractAccountIds', () => {
-  const trunc = (h160: string) => '0x45544800' + h160.slice(2).toLowerCase() + '0000000000000000'
-  const ATOKEN = '0x02639ec01313c8775fae74f2dad1118c8a8a86da'
-  const VDEBT = '0x00000000000000000000000000000000000dead0'
-
-  it('derives the truncated-account set from the reserve map and ignores malformed addresses', () => {
-    const ids = mmContractAccountIds([{ atoken: ATOKEN, vdebt: VDEBT, pool_proxy: 'not-an-address' }])
-    expect(ids).toEqual(new Set([trunc(ATOKEN), trunc(VDEBT)]))
   })
 })
 

@@ -32,7 +32,7 @@ describe('the account history narrows only on an explicit series=1', () => {
     expect(history).toContain('balanceHistory: opts.seriesOnly ? [] : history.balanceHistory')
     expect([...history.matchAll(/opts\.seriesOnly/g)]).toHaveLength(1)
     expect(history).toContain('portfolioDates: history.portfolioDates')
-    expect(history).toContain('if (portfolioSeries.length) portfolioSeries[portfolioSeries.length - 1] = +(detail.portfolioUsd - debtUsd).toFixed(2)')
+    expect(history).toContain('if (portfolioSeries.length) portfolioSeries[portfolioSeries.length - 1] = +detail.portfolioUsd.toFixed(2)')
   })
 
   it('still shares the one cached walk, so this trims bytes and not query work', () => {

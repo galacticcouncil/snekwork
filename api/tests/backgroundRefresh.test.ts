@@ -1,17 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// The scheduler imports the three refresh functions; stub them so the test
-// exercises only the cadence/serialization logic, not the heavy service graph.
-const hdx = vi.fn(async () => {})
+// The scheduler imports its refresh functions; stub them so the test exercises
+// only the cadence/serialization logic, not the heavy service graph.
 const proxy = vi.fn(async () => {})
-const erc20 = vi.fn(async () => {})
-const contractCode = vi.fn(async () => {})
-const wormhole = vi.fn(async () => {})
-vi.mock('../src/services/hdxService.ts', () => ({ refreshHdxSnapshot: () => hdx() }))
 vi.mock('../src/services/proxyMultisigService.ts', () => ({ refreshProxyMultisig: () => proxy() }))
-vi.mock('../src/services/erc20WalletService.ts', () => ({ refreshErc20Wallets: () => erc20() }))
-vi.mock('../src/services/contractRegistryService.ts', () => ({ refreshContractCode: () => contractCode() }))
-vi.mock('../src/services/wormholeNttService.ts', () => ({ refreshWormholeBacking: () => wormhole() }))
 
 const { startBackgroundRefresh, stopBackgroundRefresh, dueTasks } = await import('../src/services/backgroundRefresh.ts')
 
@@ -27,73 +19,49 @@ describe('dueTasks cadence', () => {
     expect(dueTasks(6, tasks).map(t => t.name)).toEqual(['a', 'b'])
   })
 
-  it('schedules the contract-code snapshot on every 15th tick (~15 min)', () => {
-    expect(dueTasks(14).map(t => t.name)).not.toContain('contract-code')
-    expect(dueTasks(15).map(t => t.name)).toContain('contract-code')
-    expect(dueTasks(30).map(t => t.name)).toContain('contract-code')
-  })
-
-  // A backing shortfall is the one finding on this scheduler worth minutes
-  // rather than an hour, so the cycle runs at the base cadence.
-  it('schedules the Wormhole backing check on every tick (~60s)', () => {
-    for (const tick of [1, 2, 3, 4]) expect(dueTasks(tick).map(t => t.name), `tick ${tick}`).toContain('wormhole-backing')
+  it('schedules the proxy/multisig reconstruction on every tick (~60s)', () => {
+    for (const tick of [1, 2, 3, 4]) expect(dueTasks(tick).map(t => t.name), `tick ${tick}`).toContain('proxy-multisig')
   })
 })
 
 describe('startBackgroundRefresh scheduling', () => {
-  beforeEach(() => { vi.useFakeTimers(); hdx.mockClear(); proxy.mockClear(); erc20.mockClear(); wormhole.mockClear() })
+  beforeEach(() => { vi.useFakeTimers(); proxy.mockClear() })
   afterEach(() => { stopBackgroundRefresh(); vi.useRealTimers() })
 
-  it('runs an initial pass of all tasks once, then locks+proxy every 60s and erc20 every 180s', async () => {
+  it('runs an initial pass once, then every 60s', async () => {
     startBackgroundRefresh()
     await vi.advanceTimersByTimeAsync(0)
-    // initial pass: all three once
-    expect(hdx).toHaveBeenCalledTimes(1)
     expect(proxy).toHaveBeenCalledTimes(1)
-    expect(erc20).toHaveBeenCalledTimes(1)
 
-    // ticks 1 and 2 (60s, 120s): locks + proxy + wormhole each tick
     await vi.advanceTimersByTimeAsync(60_000)
-    expect(wormhole).toHaveBeenCalledTimes(2)
+    expect(proxy).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(60_000)
-    expect(hdx).toHaveBeenCalledTimes(3)
     expect(proxy).toHaveBeenCalledTimes(3)
-    expect(erc20).toHaveBeenCalledTimes(1)
-    expect(wormhole).toHaveBeenCalledTimes(3)
-
-    // tick 3 (180s): erc20 joins
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(hdx).toHaveBeenCalledTimes(4)
-    expect(erc20).toHaveBeenCalledTimes(2)
   })
 
-  it('serializes the batch and skips a tick while it is still running (no pile-up)', async () => {
+  it('skips a tick while a batch is still running (no pile-up)', async () => {
     let release: () => void = () => {}
-    hdx.mockImplementationOnce(() => new Promise<void>(r => { release = r }))
+    proxy.mockImplementationOnce(() => new Promise<void>(r => { release = r }))
     startBackgroundRefresh()
-    // initial pass entered hdx and blocks; proxy waits behind it (sequential)
     await vi.advanceTimersByTimeAsync(0)
-    expect(hdx).toHaveBeenCalledTimes(1)
-    expect(proxy).toHaveBeenCalledTimes(0)
-    // a tick fires while the batch is still in flight → skipped, no new hdx run
+    expect(proxy).toHaveBeenCalledTimes(1)
+    // a tick fires while the batch is still in flight → skipped, no new run
     await vi.advanceTimersByTimeAsync(60_000)
-    expect(hdx).toHaveBeenCalledTimes(1)
-    // unblock: the initial batch drains its remaining tasks in order
+    expect(proxy).toHaveBeenCalledTimes(1)
+    // unblock: the next tick resumes the normal cadence
     release()
     await vi.advanceTimersByTimeAsync(0)
-    expect(proxy).toHaveBeenCalledTimes(1)
-    expect(erc20).toHaveBeenCalledTimes(1)
-    // the next tick then resumes the normal cadence
     await vi.advanceTimersByTimeAsync(60_000)
-    expect(hdx).toHaveBeenCalledTimes(2)
+    expect(proxy).toHaveBeenCalledTimes(2)
   })
 
-  it('isolates a failing task so the rest of the batch still runs', async () => {
+  it('isolates a failing task so the scheduler keeps ticking', async () => {
     proxy.mockRejectedValueOnce(new Error('boom'))
     startBackgroundRefresh()
     await vi.advanceTimersByTimeAsync(0)
-    expect(hdx).toHaveBeenCalledTimes(1)
     expect(proxy).toHaveBeenCalledTimes(1)
-    expect(erc20).toHaveBeenCalledTimes(1) // ran despite proxy throwing
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(proxy).toHaveBeenCalledTimes(2)
   })
 })

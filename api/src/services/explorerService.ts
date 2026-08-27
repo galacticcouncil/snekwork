@@ -7,35 +7,24 @@ import { referendumTitleFor, referendumTitleKey } from './referendumTitleService
 // through a dynamic import instead, same as the tag branch does for tagService.
 import type { ReferendumListRow, ReferendumPallet } from './governanceService.ts'
 import { weightedFromLabels } from './convictionWeight.ts'
-import { assetDescriptor, allExplorerAssets, ATOKEN_UNDERLYING_ID, PRICE_ALIAS_ID, SHARE_TOKEN_UNDERLYING_ID, UNDERLYING_TO_ATOKEN_ID, UNDERLYING_TO_SHARE_IDS, priceAssetId, displayAssetId, type ExplorerAsset } from './explorerAssets.ts'
+import { assetDescriptor, allExplorerAssets, PRICE_ALIAS_ID, SHARE_TOKEN_UNDERLYING_ID, priceAssetId, displayAssetId, type ExplorerAsset } from './explorerAssets.ts'
 import { accountVolumeSource } from './accountTradeVolume.ts'
-import { PROTOCOL_REVENUE_PREDICATE_SQL, REVENUE_STREAMS, buildRevenueEventRowsSql, type EventfulRevenueStream } from './revenueStreams.ts'
 import { tagForAccount, taggedAccountByH160, taggedTruncationPairs, ammPoolAccounts, getTag as getTagRecord, allTags, INCENTIVES_REWARD_POT } from './tagService.ts'
 import { identityForAccount, searchIdentitiesByDisplay, type AccountIdentity } from './identityService.ts'
 import { normalizeAddress, hydrationAddress, polkadotAddress, reservedH160AccountId, type NormalizedAddress } from './addressIdentity.ts'
 import { accountIcon, emojisMatchingName, emojiNameFor, parseSuffixEmojiQuery } from './omniwatchIdentity.ts'
-import { encodeAddress, base58Encode } from '@polkadot/util-crypto'
+import { encodeAddress } from '@polkadot/util-crypto'
 import { hexToU8a } from '@polkadot/util'
 import { proxyInfoFor, multisigCompositionFor, multisigMembershipsFor, pendingMultisigOps, threshold1OpsFor, type ProxyRelation, type PendingMultisigOp } from './proxyMultisigService.ts'
-import { isContractAccount, contractByH160, allContracts, contractsPage, type ContractRegistryEntry, type ContractCreation, type ContractSort } from './contractRegistryService.ts'
-import { verifiedContractInfo, verificationDisplay, searchVerifiedNames, allVerifiedContracts, type VerificationDisplay } from './contractVerificationService.ts'
-import { decodeEvmCallSites, attachEvmLogDecodes, decodeEvmLogArgs, decodeEventLog, getContractAbiIndexes, type DecodedEvmCall, type EvmLogDecode } from './contractAbiDecode.ts'
 import {
   resolveProxyInner, buildMultisigOperations, enrichMultisigOperations, proxyChildAddress,
   type ExtrinsicCallRow, type ProxyInnerInfo, type MultisigLifecycleEvent, type MultisigCallInfo,
   type MultisigOperationState,
 } from './onBehalfActivity.ts'
-import { ERC20_WALLET_ASSETS, ERC20_WALLET_ASSET_IDS } from './erc20WalletService.ts'
 import { FEE_BALANCE_EVENTS, deriveFeePayment, hasSubstrateFee, type FeePaymentEvent } from './extrinsicFeePayment.ts'
-import { bridgeLabel, xcmJourneySourcesFor, xcmJourneysByOriginTx, type XcmJourneySource } from './xcmJourneyService.ts'
 import { queryLockBreakdowns, type AssetLockBreakdown, type BalanceLockComponent, type BalanceLockTranche, type BalanceUnlockSlice } from './lockBreakdownService.ts'
-import { canSkipRepublish } from './snapshotRepublish.ts'
 import { createHash } from 'node:crypto'
 import { resolveModuleError } from './runtimeErrorNames.ts'
-import { profileForAccount } from './userProfileService.ts'
-import { parsePoolAssetIds } from './stableswapSnapshot.ts'
-import { findMempoolTx, findPendingBlock, findPendingExtrinsic, findPendingExtrinsicByHash, mempoolTxs, pendingBestHeight, pendingBlocksDesc, type MempoolTx, type PendingBlock, type PendingExtrinsicRow } from './pendingHeadService.ts'
-import { buildMempoolActivities, buildPendingActivities, type PendingActivity } from './pendingActivity.ts'
 
 let client: ClickHouseClient
 export function initExplorerService(c: ClickHouseClient): void { client = c }
@@ -58,9 +47,6 @@ export interface AccountRef {
   emojiUrl?: string                                 // custom image icon (e.g. a Discord avatar) — render in place of the emoji char
   tag: { id: string; name: string; color: string; icon: string; memberCount?: number } | null
   identity?: AccountIdentity | null   // on-chain Identity.IdentityOf display + judgement status
-  profile: { name: string; avatarVersion: number } | null   // self-set display name/avatar, if any
-  isContract?: boolean                // deployed EVM smart contract (contract registry)
-  contractName?: string               // verified source's contract name — the pill's label, like an identity display
 }
 
 function asset(assetIdStr: string | number): AssetRef {
@@ -78,109 +64,6 @@ function evmAccountForm(acc: string): string | null {
   if (evmFromAccountId(acc)) return acc
   return /^0x[0-9a-f]{64}$/i.test(acc) ? '0x45544800' + acc.slice(2, 42) + '0000000000000000' : null
 }
-// The same mapping as SQL, for joining a substrate-keyed model to an EVM-keyed one.
-// A column already in truncated form folds to itself, since the marker and the
-// trailing zeros are what the concatenation puts back.
-function evmAccountFormSql(column: string): string {
-  return `concat('0x45544800', substring(lower(${column}), 3, 40), '0000000000000000')`
-}
-// Money-market reserve EVM address → substrate asset id. Reserves are either the
-// ERC20 precompile (0x…01 + 8-hex assetId) or a deployed token (e.g. HOLLAR).
-// Money-market reserve contracts that aren't the standard ERC20 precompile (e.g.
-// HOLLAR). Extend via EXPLORER_EXTRA_MM_CONTRACT_ASSET ({"0x…":<assetId>}) when a
-// new market adds a deployed-token reserve.
-function envContractAssetMap(): Record<string, number> {
-  const raw = process.env.EXPLORER_EXTRA_MM_CONTRACT_ASSET?.trim()
-  if (!raw) return {}
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>
-    const out: Record<string, number> = {}
-    for (const [k, v] of Object.entries(parsed)) {
-      const id = Number(v)
-      if (/^0x[0-9a-fA-F]{40}$/.test(k) && Number.isInteger(id)) out[k.toLowerCase()] = id
-    }
-    return out
-  } catch {
-    console.error('[Explorer] EXPLORER_EXTRA_MM_CONTRACT_ASSET is not valid JSON; ignoring')
-    return {}
-  }
-}
-const MM_CONTRACT_ASSET: Record<string, number> = { '0x531a654d1696ed52e7275a8cede955e82620f99a': 222, ...envContractAssetMap() }
-function assetIdFromMmAddress(addr: string): number | null {
-  const h = (addr ?? '').toLowerCase().replace(/^0x/, '')
-  if (MM_CONTRACT_ASSET['0x' + h] != null) return MM_CONTRACT_ASSET['0x' + h]
-  if (h.length === 40 && /^0{30}01/.test(h)) return parseInt(h.slice(32), 16)
-  return null
-}
-export function mmReserveAddressForAsset(assetId: number): string[] {
-  const reserveId = ATOKEN_UNDERLYING_ID[assetId] ?? assetId
-  const standard = '0x' + '0'.repeat(30) + '01' + reserveId.toString(16).padStart(8, '0')
-  const deployed = Object.entries(MM_CONTRACT_ASSET)
-    .filter(([, id]) => id === reserveId)
-    .map(([addr]) => addr)
-  return [...new Set([standard, ...deployed])]
-}
-
-// Every id whose money-market rows belong to `assetId`. Up to three aliases can
-// stand between the id a reader asks for and the id the market files rows under:
-//   • an aToken (aDOT 1001) is a claim on its reserve (DOT 5),
-//   • a pool-share token IS the reserve while the id a reader asks for is the main
-//     asset it displays as — GDOT 69's collateral is 2-Pool-GDOT 690,
-//   • both at once (atBTC 1006 → tBTC 1000765).
-// One source for the whole app, so a filter and a per-asset read can never disagree
-// about which rows are the asset's.
-export function mmReserveIdsForAsset(assetId: number): number[] {
-  const direct = ATOKEN_UNDERLYING_ID[assetId] ?? assetId
-  return [...new Set([assetId, direct,
-    ...(UNDERLYING_TO_SHARE_IDS[assetId] ?? []), ...(UNDERLYING_TO_SHARE_IDS[direct] ?? [])])]
-}
-
-// The reserve addresses a token filter has to match. Asking for GDOT matched only
-// GDOT's own precompile, where the market never files a supply, borrow, repay or
-// liquidation — those all sit on the pool share — so the filter returned reward
-// claims and nothing else.
-//
-// Unlike a per-asset read, a filter needs no units or price-feed agreement between
-// the aliases: it only decides which rows are selected, and each row is displayed
-// and valued through the asset its own reserve address resolves to.
-export function mmTokenMatchIds(tokenIds: number[]): number[] {
-  return [...new Set(tokenIds.flatMap(mmReserveIdsForAsset))]
-}
-export function mmReserveAddressesForTokens(tokenIds: number[]): string[] {
-  return [...new Set(mmTokenMatchIds(tokenIds).flatMap(mmReserveAddressForAsset))]
-}
-
-// The inverse, for a row: the other ids a money-market row on `reserveId` answers to
-// — the aToken a supplier actually holds (DOT 5 → aDOT 1001), and the main asset a
-// pool-share reserve displays as (2-Pool-GDOT 690 → GDOT 69).
-//
-// Rows carry these as `assetRefs`, the same channel a liquidity row uses for the
-// pool-side assets it references but does not display, because the token filter is
-// applied TWICE: once as the SQL reserve-address predicate, then again per assembled
-// row. Widening only the SQL half made the reads select rows the row test then threw
-// away, so a filtered feed found nothing and its walker kept searching until it hit
-// the depth bound — asking for aDOT or GETH answered 503 rather than 0.
-export function mmReserveAliasIds(reserveId: number): number[] {
-  const aliases = [UNDERLYING_TO_ATOKEN_ID[reserveId], SHARE_TOKEN_UNDERLYING_ID[reserveId]]
-  return [...new Set(aliases.filter((id): id is number => id != null && id !== reserveId))]
-}
-function mmAssetIdSql(expr: string): string {
-  const addr = `lower(ifNull(${expr}, ''))`
-  const h = `replaceRegexpOne(${addr}, '^0x', '')`
-  const contractAddrs = Object.keys(MM_CONTRACT_ASSET).map(a => `'${a}'`)
-  const contractIds = Object.values(MM_CONTRACT_ASSET).map(id => String(id))
-  const fallback = `if(length(${h}) = 40 AND substring(${h}, 1, 32) = '00000000000000000000000000000001', reinterpretAsUInt32(reverse(unhex(substring(${h}, 33, 8)))), 0)`
-  return contractAddrs.length
-    ? `transform(${addr}, [${contractAddrs.join(',')}], [${contractIds.join(',')}], ${fallback})`
-    : fallback
-}
-function mmAssetKnownSql(expr: string): string {
-  const addr = `lower(ifNull(${expr}, ''))`
-  const h = `replaceRegexpOne(${addr}, '^0x', '')`
-  const contractAddrs = Object.keys(MM_CONTRACT_ASSET).map(a => `'${a}'`)
-  const standard = `(length(${h}) = 40 AND substring(${h}, 1, 32) = '00000000000000000000000000000001')`
-  return contractAddrs.length ? `(${addr} IN (${contractAddrs.join(',')}) OR ${standard})` : standard
-}
 // Resolve a tag's display icon for aggregate (SQL-grouped) rows: prefer the
 // explicit icon from the DB row, else the icon the tagService derived (from the
 // tag's first member's omniwatch emoji). Keeps grouped rows consistent with
@@ -190,68 +73,14 @@ function tagIcon(tagId: string, dbIcon: string): string {
   return getTagRecord(tagId)?.icon || '🏷️'
 }
 
-// H160 → bound substrate account (EVMAccounts.Bound), refreshed periodically.
-// Lets display refs resolve an ETH-prefixed AccountId32 back to the substrate
-// account the user actually operates as — EVM is not primary for bound accounts.
-let evmBindings = new Map<string, string>()
-let evmBindingsRefreshTimer: ReturnType<typeof setInterval> | null = null
-let evmBindingsInflight: Promise<void> | null = null
-
-async function loadEvmBindingsUncached(): Promise<void> {
-  const res = await client.query({
-    // raw_account_aliases re-records every alias on every block it is observed, so
-    // 19,867 distinct identities sit behind 16.2M rows and its ORDER BY starts with
-    // block_height — no alias predicate can use it. account_alias_directory is the
-    // MV-maintained set (min/max block per identity, so replay is idempotent);
-    // confidence stays in its key, which keeps every reader's DISTINCT set intact.
-    query: `SELECT DISTINCT evm_address AS evm, account_id
-            FROM price_data.account_alias_directory
-            WHERE relationship = 'explicit_binding' AND alias_type = 'substrate_account_id'
-              AND account_id != '' AND evm_address != ''`,
-    format: 'JSONEachRow',
-  })
-  const m = new Map<string, string>()
-  for (const r of await res.json<{ evm: string; account_id: string }>()) {
-    if (ACCOUNT_RE.test(r.account_id) && !evmFromAccountId(r.account_id)) m.set(r.evm, r.account_id)
-  }
-  evmBindings = m
-}
-
-export function loadEvmBindings(): Promise<void> {
-  if (evmBindingsInflight) return evmBindingsInflight
-  const request = loadEvmBindingsUncached().finally(() => {
-    if (evmBindingsInflight === request) evmBindingsInflight = null
-  })
-  evmBindingsInflight = request
-  return request
-}
-
-export function startEvmBindingsRefresh(): void {
-  if (evmBindingsRefreshTimer) return
-  evmBindingsRefreshTimer = setInterval(() => { void loadEvmBindings().catch(() => {}) }, 10 * 60_000)
-  evmBindingsRefreshTimer.unref()
-}
-
 // Canonical display identity for an account id: ETH-prefixed forms resolve to
 // the real account they stand for — module/sovereign truncations to the padded
-// substrate account, bound H160s to their substrate owner, and truncations of
-// tagged derived accounts (e.g. a stableswap pool's EVM-side aToken holdings)
-// to the pool account. Only genuine, unbound EVM accounts keep the ETH-prefixed
-// id (and display their H160).
+// substrate account, and truncations of tagged derived accounts to the account
+// they belong to.
 export function resolveDisplayAccountId(accountId: string): string {
   const evm = evmFromAccountId(accountId)
   if (!evm) return accountId
-  return reservedH160AccountId(evm.slice(2)) ?? evmBindings.get(evm) ?? taggedAccountByH160(evm) ?? accountId
-}
-
-// A verified contract's own name for an account id, as an optional-field spread.
-// evmFromAccountId returns null for anything but a genuinely ETH-prefixed
-// account, so no substrate account can borrow a contract's name; the map is
-// in-memory, so this is one lookup on every pill.
-function contractNameOf(accountId: string): { contractName?: string } {
-  const evm = evmFromAccountId(accountId)
-  const name = evm ? verifiedContractInfo(evm)?.name : undefined
-  return name ? { contractName: name } : {}
+  return reservedH160AccountId(evm.slice(2)) ?? taggedAccountByH160(evm) ?? accountId
 }
 
 export function accountRef(accountId: string): AccountRef {
@@ -270,21 +99,7 @@ export function accountRef(accountId: string): AccountRef {
     emojiUrl: icon.emojiUrl,
     tag: t ? { id: t.tagId, name: t.name, color: t.color, icon: t.icon, memberCount: t.memberCount } : null,
     identity: id,
-    profile: profileForAccount(resolved),
-    // One Set lookup — every list surface gets the contract marker for free.
-    ...(isContractAccount(resolved) ? { isContract: true } : {}),
-    // A verified contract's own name, so a pill can label it the way it labels
-    // an identity instead of showing bare hex.
-    ...contractNameOf(resolved),
   }
-}
-
-// DefiSim accepts a raw AccountId32 for native accounts and an H160 for genuine
-// EVM accounts. Keep aggregate/tag targets in that exact form so the UI never
-// has to guess from an opaque fallback string.
-function defiSimTargetForAccountId(accountId: string): string {
-  const ref = accountRef(accountId)
-  return EVM_RE.test(ref.address) ? ref.address : ref.accountId
 }
 
 const ACCOUNT_RE = /^0x[0-9a-f]{64}$/
@@ -301,13 +116,6 @@ function evmAccountIdFromAddress(evmAddress: string): string | null {
   return EVM_RE.test(evmAddress) ? '0x45544800' + evmAddress.slice(2) + '0000000000000000' : null
 }
 
-// The compact read models below fully cover history (their materialized views
-// populate them for every raw range as it is ingested), so the request path
-// reads them unconditionally. These helpers centralize the model table names
-// their callers embed in SQL.
-function otcActivityTable(alias = ''): string {
-  return `price_data.otc_activity${alias ? ` AS ${alias}` : ''} FINAL`
-}
 // Every XCM consumer collapses stable (block,event) identities while decoding.
 // Avoid FINAL here: it disables primary-key pruning on this 55M-row replacing
 // model and turns bounded block/asset lookups into multi-gigabyte partition
@@ -363,18 +171,6 @@ function xcmInboundWalkTable(alias = ''): string {
 function xcmEventActivityByAccountTable(alias = ''): string {
   return `price_data.xcm_event_activity_by_account${alias ? ` AS ${alias}` : ''}`
 }
-
-// Published only after a complete, count-checked generation of every current
-// bare/farmed Omnipool NFT position has been written. Until then `/accounts`
-// keeps its previous wallet/MM-only semantics instead of reading partial claims.
-let omnipoolAccountClaimsReady = false
-export function setOmnipoolAccountClaimsReady(): void { omnipoolAccountClaimsReady = true }
-
-// Published only after a complete generation has combined every configured
-// market's scaled reserve balances, latest indices, and aggregate risk state.
-// Until then the directory retains its previous aggregate-position query.
-let moneyMarketAccountValuesReady = false
-export function setMoneyMarketAccountValuesReady(): void { moneyMarketAccountValuesReady = true }
 
 // One arm per account costs at least one granule per active part of
 // account_activity_v3 (~130 parts × 8192 rows here), which the merged mark ranges
@@ -681,10 +477,6 @@ export interface EventListFilters { event?: string }
 export interface ValueListFilters {
   token?: string
   min?: number
-  // A floor on what the PROTOCOL earned on the row's extrinsic — a different
-  // question from the row's own value, and answered on the protocol share alone
-  // (a big routed swap can pay LPs handsomely and the protocol very little).
-  minRevenue?: number
   unit?: 'usd' | 'token'
   identity?: 'named' | 'unnamed'
   // Accounts THIS viewer has tagged, in their own lists or ones they subscribe
@@ -943,9 +735,8 @@ export function liquidityAmountFromArgs(eventName: string, args: Record<string, 
 // The who/asset/amount a liquidity candidate displays, decided from the event args
 // alone. Shared by the in-memory builders (extrinsic page, block hook section) and
 // mirrored by liquidity_activity_mv's expressions, so the two layers cannot extract
-// a row differently. Omnipool.PositionCreated is the one event that names its
-// account `owner` and its asset `asset` — every other liquidity event uses `who`
-// plus one of rewardCurrency/assetId/poolId/assetA (or the legacy snake_case
+// a row differently. A liquidity event names its account `who` (or `owner`) plus
+// one of rewardCurrency/assetId/poolId/assetA (or the legacy snake_case
 // `asset_id`, which the MV carries too).
 export function liquidityCandidateArgs(eventName: string, args: Record<string, unknown>): {
   who: string; asset_id: number; asset_b: number; pool_acc: string; amount: string
@@ -957,23 +748,6 @@ export function liquidityCandidateArgs(eventName: string, args: Record<string, u
     pool_acc: argStr(args, 'pool'),
     amount: liquidityAmountFromArgs(eventName, args),
   }
-}
-
-// Drop every Omnipool.PositionCreated candidate whose block also holds an
-// Omnipool.LiquidityAdded naming the same account and asset: those are the two
-// companion events of one user add_liquidity, already rendered by the
-// LiquidityAdded row. What survives is the listing grant — `add_token`'s seed
-// position, which has no LiquidityAdded anywhere. The SQL twin of this rule lives
-// in routerHopLiquiditySql's predicate; the two must not drift.
-export function suppressPositionCreatedCompanions<T extends {
-  event_name: string; block_height: number; who: string; asset_id: number
-}>(rows: readonly T[]): T[] {
-  const added = new Set<string>()
-  for (const r of rows) {
-    if (r.event_name === 'Omnipool.LiquidityAdded') added.add(`${r.block_height}:${r.who.toLowerCase()}:${r.asset_id}`)
-  }
-  return rows.filter(r => r.event_name !== 'Omnipool.PositionCreated'
-    || !added.has(`${r.block_height}:${r.who.toLowerCase()}:${r.asset_id}`))
 }
 
 // Enrich Create-pool activity rows with BOTH seed legs (the same-extrinsic
@@ -1261,15 +1035,6 @@ export function datedWindowIsClosed(to?: string, today: string = utcToday()): bo
 async function liveHeadTag(timeWindowed = false, closed = false): Promise<string> {
   return headCacheTag(timeWindowed && closed ? null : await indexedRawHead())
 }
-// Tag for the feeds that merge PENDING (unfinalized) rows: a new best block
-// must invalidate their pages just like a newly ingested finalized one.
-async function liveFeedTag(timeWindowed = false, closed = false): Promise<string> {
-  if (timeWindowed && closed) return 'tw'
-  const head = await indexedRawHead()
-  const best = pendingBestHeight()
-  return best > head ? `h${head}p${best}` : `h${head}`
-}
-
 // "24h"/"7d"-style windows were historically fixed block-count offsets that
 // assumed a constant block time (12s, later 6s), so `head - 7200` was taken to
 // mean "24h ago". A Hydration block is ~6s today (elastic scaling runs it a
@@ -1406,20 +1171,6 @@ async function refreshPrices(): Promise<Map<number, PriceInfo>> {
         const change = priceThen > 0 ? (price - priceThen) / priceThen : 0
         if (Number.isFinite(price) && price > 0) m.set(r.asset_id, { price, priceRaw: r.price_raw, change24h: change })
       }
-    }
-    // aTokens carry no price feed — alias each to its priced underlying (resolved
-    // TRANSITIVELY: GIGAHDX → stHDX → HDX) so every value/volume computation that
-    // reads this map values them 1:1.
-    for (const aToken of Object.keys(PRICE_ALIAS_ID)) {
-      const u = m.get(priceAssetId(Number(aToken)))
-      if (u && !m.has(Number(aToken))) m.set(Number(aToken), u)
-    }
-    // Replace the 1:1 underlying-proxy price of pool-SHARE tokens with their true
-    // per-share NAV (Σ reserve×price / issuance). Done after the alias loop so the
-    // reserves (including aTokens) are already priced. A pool we can't fully price
-    // keeps the proxy. See loadStableswapNav.
-    for (const [shareId, navPerShare] of await loadStableswapNav(m)) {
-      m.set(shareId, { price: navPerShare, priceRaw: String(navPerShare), change24h: m.get(shareId)?.change24h ?? 0 })
     }
     priceMap = m
     priceLoadedAt = Date.now()
@@ -1700,53 +1451,6 @@ function rowMeetsExactUsdMinimum(row: object & { valueUsd: number | null }, mini
   return row.valueUsd != null && Number.isFinite(row.valueUsd) && row.valueUsd >= minimum
 }
 
-// stableswap share-token NAV pricing
-// A pool-share token (2-Pool-apyUSD, GIGA GDOT/GETH/GSOL, the stable n-Pools, …)
-// is worth its slice of the pool's reserves, NOT one unit of a "main underlying".
-// We compute the market NAV per share
-//     navPerShare = Σ(reserve_i × usdPrice_i) / totalIssuance
-// from the latest per-block stableswap snapshot. The on-chain `peg_multipliers`
-// scale only the internal trading curve and are deliberately NOT applied to a
-// reserve-value NAV. Reserve prices come from the already-aliased price map
-// (aTokens resolved to their underlying); a pool whose
-// reserves we can't fully price is skipped so the caller keeps the 1:1 proxy.
-interface SnapshotPool { pool_id: number; assets: string | number[]; reserves: string[]; total_issuance: string }
-const parsePoolAssets = parsePoolAssetIds
-let navMap = new Map<number, number>()
-let navLoadedAt = 0
-async function loadStableswapNav(prices: Map<number, PriceInfo>): Promise<Map<number, number>> {
-  if (navMap.size && Date.now() - navLoadedAt < 30_000) return navMap
-  try {
-    const res = await client.query({
-      query: `SELECT JSONExtractRaw(payload_json, 'stableswap') AS ss
-              FROM price_data.raw_block_snapshots
-              WHERE block_height = (SELECT max(block_height) FROM price_data.raw_block_snapshots)
-              LIMIT 1`,
-      format: 'JSONEachRow',
-    })
-    const row = (await res.json<{ ss: string }>())[0]
-    const pools = (safeJson(row?.ss) as { pools?: SnapshotPool[] } | null)?.pools ?? []
-    const m = new Map<number, number>()
-    for (const pool of pools) {
-      const ids = parsePoolAssets(pool.assets)
-      const reserves = pool.reserves ?? []
-      if (!ids.length || ids.length !== reserves.length) continue
-      let nav = 0, ok = true
-      for (let i = 0; i < ids.length; i++) {
-        const px = prices.get(ids[i])?.price
-        if (px == null) { ok = false; break }
-        nav += (Number(reserves[i]) / 10 ** asset(ids[i]).decimals) * px
-      }
-      // navPerShare must be USD per whole share, so scale issuance by the share
-      // token's own decimals (its asset id == pool_id).
-      const issuance = Number(pool.total_issuance) / 10 ** asset(pool.pool_id).decimals
-      if (ok && issuance > 0 && Number.isFinite(nav)) m.set(pool.pool_id, nav / issuance)
-    }
-    if (m.size) { navMap = m; navLoadedAt = Date.now() }
-  } catch { /* keep last good NAV map */ }
-  return navMap
-}
-
 // overview
 export interface ExplorerStats {
   headBlock: number
@@ -1816,7 +1520,7 @@ export async function getStats(): Promise<ExplorerStats> {
   // cache — the head shown is never a TTL behind the data. The three 24h counts
   // have their own 30s hold above, so a faster chain cannot multiply their scan
   // frequency. This TTL is garbage collection, not head freshness.
-  return cached(`explorer:stats:${await liveFeedTag()}`, 30_000, async () => {
+  return cached(`explorer:stats:${await liveHeadTag()}`, 30_000, async () => {
     // Wall-clock 24h cutoff height, measured from the blocks table — a fixed
     // head−7200 offset assumed 12s blocks and covers ~11h at today's ~6s (and
     // would cover ~4h at the planned 2s). The counts read replayable
@@ -1851,16 +1555,10 @@ export async function getStats(): Promise<ExplorerStats> {
     ])
     const row = (await mainRes.json<{ head_block: string; head_time: string; avg_block: number }>())[0]
     const head = Number(row?.head_block ?? 0)
-    // The head is the newest block we can SHOW (unfinalized pending blocks
-    // included); the finalized boundary is what the raw pipeline has ingested.
-    // Every FinalizedBadge in the UI compares against this boundary, so rows
-    // above it read Pending and flip as ingestion passes them. Before the
-    // pending layer this was faked as head − 2.
-    const best = pendingBlocksDesc(head)[0]
     return {
-      headBlock: best?.height ?? head,
+      headBlock: head,
       finalizedBlock: head,
-      headTime: best?.timestamp ?? row?.head_time ?? '',
+      headTime: row?.head_time ?? '',
       avgBlockSec: Number(row?.avg_block ?? 0),
       nominalBlockSec: nominalBlockMs / 1000,
       transfers24h: counts.transfers24h,
@@ -1880,116 +1578,10 @@ export interface BlockSummary {
   specVersion: number
   extrinsicCount: number
   eventCount: number
-  // false = still unfinalized (served from the in-memory pending-head layer,
-  // may reorg away). Absent = finalized — additive, so old clients are unmoved.
-  finalized?: boolean
-}
-
-// pending (unfinalized) rows — see pendingHeadService.ts for the layer's
-// contract: memory-only, reorg-replaceable, pruned at the finalized floor.
-function pendingBlockSummary(b: PendingBlock): BlockSummary {
-  return {
-    height: b.height,
-    timestamp: b.timestamp,
-    hash: b.hash,
-    // Author decode needs the session-key mapping — not worth it for rows that
-    // live ~40 seconds; the finalized row fills it in.
-    author: null,
-    specVersion: b.specVersion,
-    extrinsicCount: b.extrinsics.length,
-    eventCount: b.events.length,
-    finalized: false,
-  }
-}
-function pendingExtrinsicSummary(b: PendingBlock, e: PendingExtrinsicRow): ExtrinsicSummary {
-  return {
-    blockHeight: b.height,
-    index: e.index,
-    hash: e.hash,
-    timestamp: b.timestamp,
-    signer: e.signerId ? accountRef(e.signerId) : null,
-    success: e.success,
-    callName: e.callName,
-    // The fee is charged on execution and lands with the finalized row.
-    fee: null,
-    finalized: false,
-  }
-}
-function pendingEventRows(b: PendingBlock): EventRow[] {
-  return [...b.events].reverse().map(e => ({
-    blockHeight: b.height,
-    eventIndex: e.eventIndex,
-    extrinsicIndex: e.extrinsicIndex,
-    timestamp: b.timestamp,
-    name: e.name,
-    args: e.args,
-    decoded: true,
-    finalized: false,
-  }))
-}
-function pendingExtrinsicDetail(b: PendingBlock, e: PendingExtrinsicRow): ExtrinsicDetail {
-  return {
-    ...pendingExtrinsicSummary(b, e),
-    version: e.version,
-    tip: e.tip,
-    callArgs: e.callArgs,
-    error: null,
-    // Failure details decode with the finalized row; until then the status
-    // badge alone carries the outcome.
-    errorReason: null,
-    events: e.events.map(ev => ({ eventIndex: ev.eventIndex, name: ev.name, args: ev.args })),
-  }
-}
-// Transaction-pool rows: no block yet, so height/index are 0 placeholders and
-// everything downstream of execution is a dry-run PROJECTION (see
-// pendingHeadService.syncMempool). Clients address these rows by hash.
-function mempoolExtrinsicSummary(tx: MempoolTx): ExtrinsicSummary {
-  return {
-    blockHeight: 0,
-    index: 0,
-    hash: tx.hash,
-    timestamp: tx.firstSeen,
-    signer: tx.signerId ? accountRef(tx.signerId) : null,
-    // The dry-run verdict; an unjudged transaction reads as would-succeed
-    // rather than wearing a failure it has not earned — but `projected` below
-    // keeps the distinction, and the client renders from that.
-    success: tx.success ?? true,
-    callName: tx.callName,
-    fee: null,
-    finalized: false,
-    mempool: true,
-    projected: tx.success == null ? 'unknown' : tx.success ? 'ok' : 'fail',
-    includability: tx.includability,
-    unincludableReason: tx.rejectReason,
-    ...(tx.replacedBy ? { replacedBy: tx.replacedBy } : {}),
-  }
-}
-function mempoolExtrinsicDetail(tx: MempoolTx): ExtrinsicDetail {
-  return {
-    ...mempoolExtrinsicSummary(tx),
-    version: tx.version,
-    tip: tx.tip,
-    callArgs: tx.callArgs,
-    error: null,
-    errorReason: null,
-    // The events the dry run projects this transaction would emit right now.
-    events: tx.events.map(ev => ({ eventIndex: ev.eventIndex, name: ev.name, args: ev.args })),
-  }
-}
-function pendingBlockDetail(b: PendingBlock): BlockDetail {
-  return {
-    ...pendingBlockSummary(b),
-    parentHash: b.parentHash,
-    stateRoot: null,
-    extrinsicsRoot: null,
-    extrinsics: b.extrinsics.map(e => pendingExtrinsicSummary(b, e)),
-    events: b.events.map(e => ({ eventIndex: e.eventIndex, extrinsicIndex: e.extrinsicIndex, name: e.name, args: e.args })),
-    eventsShown: b.events.length,
-  }
 }
 
 export async function getRecentBlocks(limit: number, offset = 0): Promise<BlockSummary[]> {
-  return cached(`explorer:blocks:${await liveFeedTag()}:${limit}:${offset}`, LIVE_CACHE_MS, async () => {
+  return cached(`explorer:blocks:${await liveHeadTag()}:${limit}:${offset}`, LIVE_CACHE_MS, async () => {
     const blocksRes = await client.query({
       query: `
         SELECT block_height, toString(block_timestamp) AS ts, block_hash, author, spec_version
@@ -2031,13 +1623,6 @@ export async function getRecentBlocks(limit: number, offset = 0): Promise<BlockS
       extrinsicCount: extCounts.get(b.block_height) ?? 0,
       eventCount: evCounts.get(b.block_height) ?? 0,
     }))
-    // Page 0 leads with the unfinalized best-head blocks. Deeper pages shift by
-    // however many pending rows exist — showing the incoming data outranks
-    // page-boundary exactness here, by design.
-    if (offset === 0) {
-      const pending = pendingBlocksDesc(rows[0]?.height ?? 0).map(pendingBlockSummary)
-      if (pending.length) return [...pending, ...rows].slice(0, limit)
-    }
     return rows
   })
 }
@@ -2067,30 +1652,6 @@ export interface ExtrinsicSummary {
   // to `FailureReason | null` always-present, hence the `| null` so the
   // override stays assignable to the base property type.
   errorReason?: FailureReason | null
-  // false = unfinalized (pending-head layer; may reorg away). Absent = finalized.
-  finalized?: boolean
-  // true = still in the transaction pool (no block yet; outcome is a dry-run
-  // projection). blockHeight/index are 0 placeholders — address it by hash.
-  mempool?: boolean
-  // Set when another transaction from the same signer reused this one's nonce:
-  // the hash that replaced it. Such a transaction can never be included, so it
-  // stops being a row — this field is what its own page says instead.
-  replacedBy?: string
-  // What the dry run actually established about a pool transaction, kept apart
-  // from `success` because the two are different claims: `success` is a
-  // boolean the row must carry, while a projection can also be UNJUDGED (no
-  // DryRunApi answer). Printing a green tick for an unjudged transaction
-  // asserts something nothing established. Present on mempool rows only.
-  projected?: 'ok' | 'fail' | 'unknown'
-  // The runtime's includability verdict for a pool transaction, distinct from the
-  // dry-run `projected` outcome: `projected` is what the CALL would do, this is
-  // whether the transaction can enter a block at all. A 'rejected' transaction
-  // (it cannot pay its fee, its nonce is stale, …) is a genuine failing one, shown
-  // and badged with `unincludableReason`; its doomed followups are dropped from
-  // the feeds entirely. 'queued' waits on an earlier nonce. Present on mempool
-  // rows only.
-  includability?: 'includable' | 'queued' | 'rejected' | 'unknown'
-  unincludableReason?: string | null
 }
 interface ExtrinsicSummaryRow {
   block_height: number
@@ -2177,7 +1738,7 @@ function uniqueExtrinsicSummaries(rows: ExtrinsicSummaryRow[]): ExtrinsicSummary
     return [extrinsicSummary(row)]
   })
 }
-export interface BlockEvent { eventIndex: number; extrinsicIndex: number | null; name: string; args: unknown; evmDecoded?: EvmLogDecode }
+export interface BlockEvent { eventIndex: number; extrinsicIndex: number | null; name: string; args: unknown }
 export interface BlockDetail extends BlockSummary {
   parentHash: string
   stateRoot: string | null
@@ -2195,12 +1756,6 @@ export interface BlockDetail extends BlockSummary {
 const BLOCK_EVENT_PAGE = 400
 
 export async function getBlock(height: number): Promise<BlockDetail | null> {
-  // Pending first: a block the finalized pipeline does not serve yet answers
-  // from memory, marked unfinalized. The map prunes only once ClickHouse has
-  // the block, so the flip to the finalized version has no gap — and the
-  // pending read never enters the 10s cache below, so it can't outlive itself.
-  const pending = findPendingBlock(height)
-  if (pending) return pendingBlockDetail(pending)
   return cached(`explorer:block:${height}`, 10000, async () => {
     const [blockRes, extRes, evRes, evListRes] = await Promise.all([
       client.query({
@@ -2231,7 +1786,6 @@ export async function getBlock(height: number): Promise<BlockDetail | null> {
     const events: BlockEvent[] = (await evListRes.json<{ event_index: number; extrinsic_index: number | null; event_name: string; args_json: string }>())
       .filter(r => (evSeen.has(r.event_index) ? false : (evSeen.add(r.event_index), true)))
       .map(r => ({ eventIndex: r.event_index, extrinsicIndex: r.extrinsic_index, name: r.event_name, args: safeJson(r.args_json) }))
-    await attachEvmLogDecodes(events)
     // De-dup replay rows by extrinsic_index.
     const seen = new Set<number>()
     const extrinsics: ExtrinsicSummary[] = []
@@ -2270,11 +1824,7 @@ export async function getBlock(height: number): Promise<BlockDetail | null> {
 // recent extrinsics
 export async function getRecentExtrinsics(limit: number, signedOnly: boolean, from?: string, to?: string, offset = 0, filters: ExtrinsicListFilters = {}): Promise<ExtrinsicSummary[]> {
   const tw = timeWindow(from, to)
-  // Page 0 of the plain live feed also leads with transaction-pool rows. Those
-  // are merged OUTSIDE the cache (see below), so the pool moving costs no read
-  // at all — the cached page stays keyed on the block watermarks alone.
-  const livePage0 = offset === 0 && !tw && !filters.call?.trim() && !filters.result && !filters.origin
-  const finalized = await cached(`explorer:extrinsics:${await liveFeedTag(Boolean(tw), datedWindowIsClosed(to))}:${limit}:${offset}:${signedOnly}:${from ?? ''}:${to ?? ''}:${filterKey(filters)}`, tw ? 30000 : LIVE_CACHE_MS, async () => {
+  return cached(`explorer:extrinsics:${await liveHeadTag(Boolean(tw), datedWindowIsClosed(to))}:${limit}:${offset}:${signedOnly}:${from ?? ''}:${to ?? ''}:${filterKey(filters)}`, tw ? 30000 : LIVE_CACHE_MS, async () => {
     const callFilter = filters.call?.trim() ? textNameFilter('call_name', 'callName') : ''
     const resultFilter = filters.result === 'success' ? 'AND success = 1' : filters.result === 'failed' ? 'AND success = 0' : ''
     const rows = await withFeedWindow(tw, limit, offset + limit, async (bound) => {
@@ -2304,24 +1854,8 @@ export async function getRecentExtrinsics(limit: number, signedOnly: boolean, fr
       })
       return res.json<ExtrinsicSummaryRow & { error_json: string | null; spec_version: number }>()
     })
-    const finalizedRows = uniqueExtrinsicSummaries(rows)
-    // Page 0 of the plain live feed leads with the unfinalized extrinsics.
-    // Filtered/dated/deep views stay finalized-only: this layer's job is
-    // showing the incoming data, not filter-complete pending coverage.
-    if (livePage0) {
-      const pending = pendingBlocksDesc(finalizedRows[0]?.blockHeight ?? 0).flatMap(b =>
-        b.extrinsics.filter(e => !signedOnly || e.signerId != null).map(e => pendingExtrinsicSummary(b, e)))
-      if (pending.length) return [...pending, ...finalizedRows].slice(0, limit)
-    }
-    return finalizedRows
+    return uniqueExtrinsicSummaries(rows)
   })
-  // The pool, read fresh per request from memory: it changes many times between
-  // blocks, and re-keying the cached page on it would buy a ClickHouse read for
-  // every one of those changes. Pool entries are always signed, so both feed
-  // variants carry them.
-  if (!livePage0) return finalized
-  const pool = mempoolTxs().slice(0, poolShare(limit)).map(mempoolExtrinsicSummary)
-  return pool.length ? [...pool, ...finalized].slice(0, limit) : finalized
 }
 
 // single extrinsic
@@ -2343,51 +1877,7 @@ export interface ExtrinsicDetail extends ExtrinsicSummary {
   callArgs: unknown
   error: unknown
   errorReason: FailureReason | null
-  events: { eventIndex: number; name: string; args: unknown; evmDecoded?: EvmLogDecode }[]
-  // Verified-ABI decodes of the EVM calls this extrinsic performs (top-level
-  // Ethereum.transact / EVM.call plus EVM.call nodes nested in wrapper call
-  // trees), decoded at request time from callArgs alone. Additive; absent when
-  // no target has a verified ABI.
-  evmCalls?: DecodedEvmCall[]
-  // The Ethereum-native identity and outcome of an `Ethereum.transact`
-  // extrinsic; absent on every other call. Additive.
-  evmTx?: EvmTransactionFacts
-}
-
-// What the Ethereum.Executed event states about the transaction its extrinsic
-// submitted: the hash it is known by off-chain, how the EVM exited, and the
-// returned data (the revert selector on a failure).
-export interface EvmTransactionFacts {
-  txHash: string
-  exitKind: string
-  exitDetail: string | null
-  extraData: string | null
-}
-
-// Read off the extrinsic's OWN Ethereum.Executed event, which the detail already
-// carries — not from evm_transactions. That table is ordered by tx_hash so that a
-// hash can be resolved to an extrinsic (its whole purpose); asking it for the
-// transaction AT a (block, index) has no usable key prefix and would put a
-// full-table read on every EVM extrinsic view. Same source either way: the MV's
-// columns are these exact JSON paths over this exact event.
-export function evmTransactionFacts(events: { name: string; args: unknown }[]): EvmTransactionFacts | null {
-  for (const event of events) {
-    if (event.name !== 'Ethereum.Executed') continue
-    const args = (event.args != null && typeof event.args === 'object') ? event.args as Record<string, unknown> : {}
-    const txHash = typeof args.transactionHash === 'string' ? args.transactionHash : null
-    if (!txHash) continue
-    const reason = (args.exitReason != null && typeof args.exitReason === 'object') ? args.exitReason as Record<string, unknown> : {}
-    const detail = (reason.value != null && typeof reason.value === 'object') ? reason.value as Record<string, unknown> : {}
-    const extraData = typeof args.extraData === 'string' ? args.extraData : null
-    return {
-      txHash,
-      exitKind: typeof reason.__kind === 'string' ? reason.__kind : '',
-      exitDetail: typeof detail.__kind === 'string' ? detail.__kind : null,
-      // '0x' is the empty return, not returned data.
-      extraData: extraData && extraData !== '0x' ? extraData : null,
-    }
-  }
-  return null
+  events: { eventIndex: number; name: string; args: unknown }[]
 }
 
 interface ExtrinsicDetailRow {
@@ -2438,11 +1928,7 @@ async function hydrateExtrinsicDetail(row: ExtrinsicDetailRow): Promise<Extrinsi
     seen.add(event.event_index)
     events.push({ eventIndex: event.event_index, name: event.event_name, args: safeJson(event.args_json) })
   }
-  await attachEvmLogDecodes(events)
-
   const callArgs = safeJson(row.call_args_json)
-  const evmCalls = await decodeEvmCallSites(row.call_name, callArgs)
-  const evmTx = evmTransactionFacts(events)
   const feePayment = feePaymentOf(events, row.signer, row.fee, row.tip)
 
   return {
@@ -2461,26 +1947,7 @@ async function hydrateExtrinsicDetail(row: ExtrinsicDetailRow): Promise<Extrinsi
     errorReason: row.success === 1 ? null : dispatchErrorReason(row.error_json, row.spec_version, resolveModuleError),
     events,
     ...(feePayment ? { feePayment } : {}),
-    ...(evmCalls.length ? { evmCalls } : {}),
-    ...(evmTx ? { evmTx } : {}),
   }
-}
-
-// The extrinsic that submitted the EVM transaction with this hash, or null when no
-// indexed transaction carries it. Answered from evm_transactions, whose ORDER BY
-// tx_hash is exactly this predicate; duplicates from a replayed raw range carry
-// identical values (one event, one hash), so the newest row is taken rather than
-// paying FINAL. A null extrinsic_index is a MISS: without an owning extrinsic
-// there is nothing to open.
-async function evmTransactionExtrinsic(txHash: string): Promise<{ blockHeight: number; extrinsicIndex: number } | null> {
-  const res = await client.query({
-    query: `SELECT block_height, extrinsic_index FROM price_data.evm_transactions
-            WHERE tx_hash = {h:String} ORDER BY ingested_at DESC LIMIT 1`,
-    query_params: { h: txHash }, format: 'JSONEachRow',
-  })
-  const row = (await res.json<{ block_height: number; extrinsic_index: number | null }>())[0]
-  if (!row || row.extrinsic_index == null) return null
-  return { blockHeight: Number(row.block_height), extrinsicIndex: Number(row.extrinsic_index) }
 }
 
 // A 64-hex extrinsic id, resolved as a substrate extrinsic hash first and an
@@ -2490,32 +1957,14 @@ async function evmTransactionExtrinsic(txHash: string): Promise<{ blockHeight: n
 // a real ambiguity. An EVM hit answers through getExtrinsicAt, so a transaction
 // hash and its canonical height-index id return the same object from the same
 // code and can never disagree.
-// How much of page 0 the transaction pool may take. One busy transaction
-// projects dozens of events and a spammed pool holds dozens of transactions —
-// either would push every chain fact off the first page, turning a feed of what
-// happened into a feed of what might. A third leaves the page recognisable.
-function poolShare(limit: number): number {
-  return Math.max(3, Math.floor(limit / 3))
-}
-
 // Thrown by the hash lookup's cache builder so a miss propagates as an error
 // (which cached() does not store) rather than as a cached null.
 class ExtrinsicNotFound extends Error {}
 export async function getExtrinsic(hash: string): Promise<ExtrinsicDetail | null> {
   if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) return null
-  // Pending first (see getBlock) — this is the lookup a just-submitted
-  // transaction's hash link hits, ~40s before its block finalizes.
-  const pending = findPendingExtrinsicByHash(hash)
-  if (pending) return pendingExtrinsicDetail(pending.block, pending.ext)
-  // Then the transaction pool — the state a hash link lives in between wallet
-  // submission and block inclusion (a drop-grace inside the service covers the
-  // pool-to-block handoff so this page never flashes "not found").
-  const pooled = findMempoolTx(hash)
-  if (pooled) return mempoolExtrinsicDetail(pooled)
-  // A miss is NOT cached: a hash asked for while its block is between the
-  // pending layer and ClickHouse would otherwise 404 for the whole TTL, long
-  // after the extrinsic became readable. Misses are cheap and rare; a hit
-  // caches normally.
+  // A miss is NOT cached: a hash asked for while its block is still being
+  // ingested would otherwise 404 for the whole TTL, long after the extrinsic
+  // became readable. Misses are cheap and rare; a hit caches normally.
   const found = await cached(`explorer:extrinsic:${hash.toLowerCase()}`, 10000, async () => {
     const res = await client.query({
       query: `SELECT e.block_height AS block_height, e.extrinsic_index AS extrinsic_index, e.extrinsic_hash AS extrinsic_hash,
@@ -2529,11 +1978,8 @@ export async function getExtrinsic(hash: string): Promise<ExtrinsicDetail | null
       query_params: { hash: hash.toLowerCase() }, format: 'JSONEachRow',
     })
     const row = (await res.json<ExtrinsicDetailRow>())[0]
-    if (row) return hydrateExtrinsicDetail(row)
-    const evm = await evmTransactionExtrinsic(hash.toLowerCase())
-    const resolved = evm ? await getExtrinsicAt(evm.blockHeight, evm.extrinsicIndex) : null
-    if (!resolved) throw new ExtrinsicNotFound()
-    return resolved
+    if (!row) throw new ExtrinsicNotFound()
+    return hydrateExtrinsicDetail(row)
   }).catch(error => {
     if (error instanceof ExtrinsicNotFound) return null
     throw error
@@ -2585,41 +2031,6 @@ function dedupeTransferEvents<T extends RawTransferEventRow>(rows: T[]): T[] {
   })
 }
 
-// Money-market protocol accounts (aToken/vDebt/pool contracts) in truncated-
-// account form: the counterparties of supply/withdraw/borrow/repay token legs.
-// Derived from the same reserve map that feeds the "Supply & Borrow" tag, so
-// newly listed reserves are covered automatically.
-async function mmReserveAccountIds(): Promise<Set<string>> {
-  const tokens = await getMmReserveTokens()
-  const out = new Set<string>()
-  for (const t of tokens) {
-    for (const h160 of [t.aToken, t.vDebt, t.poolProxy]) {
-      if (/^0x[0-9a-fA-F]{40}$/.test(h160)) out.add('0x45544800' + h160.slice(2).toLowerCase() + '0000000000000000')
-    }
-  }
-  return out
-}
-
-// Truncated-account form of EVERY indexed money-market contract (aToken, variable-
-// debt token, pool proxy) across ALL markets — not just the configured ones
-// getMmReserveTokens filters to. A supply/withdraw/borrow/repay leg's counterparty
-// is one of these; suppressing them keeps an MM leg from being mislabeled a
-// transfer marker (its value change is the position curve, represented elsewhere).
-// Reads the same atoken_reserve_map the reserve reconstruction uses; cached.
-async function mmContractAccountIds(): Promise<Set<string>> {
-  return cached('explorer:mm-contract-accounts', 60_000, async () => {
-    const res = await client.query({
-      query: `SELECT DISTINCT lower(c) AS h160 FROM (
-                SELECT arrayJoin([atoken, vdebt, pool_proxy]) AS c FROM price_data.atoken_reserve_map FINAL
-              ) WHERE match(h160, '^0x[0-9a-f]{40}$')`,
-      format: 'JSONEachRow',
-    })
-    const out = new Set<string>()
-    for (const r of await res.json<{ h160: string }>()) out.add('0x45544800' + r.h160.slice(2) + '0000000000000000')
-    return out
-  })
-}
-
 // An asset the value reconstruction cannot price on the wallet curve (share
 // tokens have no historical NAV feed — they're valued via LP decomposition, not
 // a token close). A swap only MOVES reconstructed value when it trades into such
@@ -2628,34 +2039,9 @@ function isUnpricedAsset(assetId: number): boolean {
   return SHARE_TOKEN_UNDERLYING_ID[assetId] != null
 }
 
-async function moneyMarketExtrinsicsForTransfers(rows: TransferRow[]): Promise<Set<string>> {
-  const pairs = [...new Set(rows
-    .filter(r => r.extrinsicIndex != null)
-    .map(r => `(${r.blockHeight},${r.extrinsicIndex})`))]
-  if (!pairs.length) return new Set()
-  const res = await client.query({
-    query: `
-      SELECT e.block_height, e.extrinsic_index
-      FROM price_data.raw_events e
-      INNER JOIN price_data.raw_money_market_events m
-        ON m.block_height = e.block_height AND m.event_index = e.event_index
-      WHERE (e.block_height, e.extrinsic_index) IN (${pairs.join(',')})
-        AND m.event_name IN ('Supply','Borrow','Repay','Withdraw','LiquidationCall')
-        AND lower(ifNull(m.pool_address, '')) IN (${configuredMmPoolsSql()})
-        AND m.user_address NOT LIKE '0x6d6f646c%'
-      GROUP BY e.block_height, e.extrinsic_index`,
-    format: 'JSONEachRow',
-  })
-  const mm = new Set<string>()
-  for (const r of await res.json<{ block_height: number; extrinsic_index: number | null }>()) {
-    if (r.extrinsic_index != null) mm.add(`${r.block_height}:${r.extrinsic_index}`)
-  }
-  return mm
-}
-
-async function getRecentTransfers(limit: number, from?: string, to?: string, offset = 0, userOnly = false, filters: ValueListFilters = {}, suppressMoneyMarket = false): Promise<TransferRow[]> {
+async function getRecentTransfers(limit: number, from?: string, to?: string, offset = 0, userOnly = false, filters: ValueListFilters = {}): Promise<TransferRow[]> {
   const tw = timeWindow(from, to)
-  return cached(`explorer:transfers:${await liveHeadTag(Boolean(tw), datedWindowIsClosed(to))}:${limit}:${offset}:${from ?? ''}:${to ?? ''}:${userOnly}:${filterKey(filters)}:${suppressMoneyMarket}`, tw ? 30000 : LIVE_CACHE_MS, async () => {
+  return cached(`explorer:transfers:${await liveHeadTag(Boolean(tw), datedWindowIsClosed(to))}:${limit}:${offset}:${from ?? ''}:${to ?? ''}:${userOnly}:${filterKey(filters)}`, tw ? 30000 : LIVE_CACHE_MS, async () => {
     const prices = await ensurePrices()
     const tokenIds = assetIdsForToken(filters.token)
     const useAssetTransferReadModel = tokenIds != null
@@ -2669,13 +2055,10 @@ async function getRecentTransfers(limit: number, from?: string, to?: string, off
     const postUsdFilter = filters.min != null && filters.unit !== 'token'
     const amountFilter = eventValueFilterSql(assetExpr, amountExpr, 'block_timestamp',
       postUsdFilter ? { ...filters, min: undefined, unit: undefined } : filters, prices, 'transfer_price')
-    // A transfer of an NTT asset to its minter is that asset's outbound Wormhole send —
-    // a cross-chain row, not a transfer (see getRecentNttOut, which renders exactly the
-    // rows this predicate removes).
-    const nttExclusion = nttMinterLegExclusionSql(await nttMinterAccounts())
+    const nttExclusion = ''
     // userOnly drops pallet/pool/fee legs (module accounts 0x6d6f646c…) so the
     // Activity's "Transfers" tab shows genuine user↔user transfers, not swap noise.
-    const plumbing = [...ammPoolAccounts(), ...(await mmReserveAccountIds())]
+    const plumbing = [...ammPoolAccounts()]
     const plumbingList = plumbing.length ? plumbing.map(a => `'${a}'`).join(',') : "''"
     const userFilter = userOnly && useTransferReadModel
       ? `AND NOT match(from_account, '^0x(6d6f646c|7369626c|70617261|506172656e74)')
@@ -2688,9 +2071,8 @@ async function getRecentTransfers(limit: number, from?: string, to?: string, off
          AND JSONExtractString(args_json,'from') NOT IN (${plumbingList})
          AND JSONExtractString(args_json,'to') NOT IN (${plumbingList})`
       : ''
-    const want = offset + limit
-    const scanLimit = suppressMoneyMarket ? Math.max(want * 4, limit + 250) : limit
-    const scanOffset = suppressMoneyMarket ? 0 : offset
+    const scanLimit = limit
+    const scanOffset = offset
     const buildTransferRows = async (rawRows: RawTransferEventRow[]): Promise<TransferRow[]> => {
       const raw = dedupeTransferEvents(rawRows)
       const seen = new Set<string>()
@@ -2781,7 +2163,7 @@ async function getRecentTransfers(limit: number, from?: string, to?: string, off
         }
         return buildTransferRows(raw)
       }
-      const deep = await fetchFilteredDeep(tw, want,
+      const deep = await fetchFilteredDeep(tw, offset + limit,
         fetchValuePage,
         row => rowMeetsExactUsdMinimum(row, filters.min!),
         row => row.blockHeight, row => row.eventIndex,
@@ -2789,15 +2171,8 @@ async function getRecentTransfers(limit: number, from?: string, to?: string, off
         { pageSize: 25_000, pageState: () => pageState })
       return deep.slice(offset, offset + limit)
     }
-    const out = await withFeedWindow(tw, scanLimit, scanOffset + scanLimit,
+    return withFeedWindow(tw, scanLimit, scanOffset + scanLimit,
       bound => fetchPage(bound, scanLimit, scanOffset))
-    if (suppressMoneyMarket) {
-      const mmExtrinsics = await moneyMarketExtrinsicsForTransfers(out)
-      const filtered = out.filter(t => !(t.extrinsicIndex != null && mmExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)))
-      if (filtered.length < want && out.length >= scanLimit) throw activityQueryTooBroad()
-      return filtered.slice(offset, offset + limit)
-    }
-    return out
   })
 }
 
@@ -2818,71 +2193,27 @@ export interface HolderRow {
 
 export interface HoldersPage { asset: AssetRef; holders: HolderRow[]; total: number; totalUsd: number }
 
-// The holders list, folded under one viewer's OWN (or subscribed) tags in
-// addition to the shared system ones — getAccountsForViewerFold's exact
-// pattern: same query/reconstruction work, only a different grouping key for
-// the accounts the fold names, cached per-viewer and never shared.
-export function getHoldersForViewerFold(assetId: number, limit: number, offset: number, fold: ViewerFold): Promise<HoldersPage> {
-  if (!fold.ids.length) return getHolders(assetId, limit, offset)
-  return getHolders(assetId, limit, offset, fold)
-}
-
-// A refFor for the TS-side holder groupers that lets a viewer's fold win an
-// account before its system tag does — the in-memory mirror of the SQL path's
-// `if(userKey != '', userKey, system)`. directoryFoldFor already excluded
-// every account the system slot wins in priority order, so a hit here IS the
-// resolved winner, never a competing claim.
-function viewerFoldRefFor(fold: ViewerFold | undefined): (accountId: string) => AccountRef {
-  if (!fold) return accountRef
-  const keyById = new Map<string, string>()
-  fold.ids.forEach((id, i) => keyById.set(id, fold.keys[i]))
-  return (accountId: string) => {
-    const ref = accountRef(accountId)
-    const key = keyById.get(ref.accountId)
-    const group = key ? fold.groups.get(key) : undefined
-    return group ? { ...ref, tag: { id: group.tagId, name: group.name, color: group.color, icon: group.icon, memberCount: group.memberCount } } : ref
-  }
-}
-
-// After TS-side grouping, stamp the rows whose tag came from the viewer's fold
-// with the additive user-tag markers (the SQL path does this inline).
-function markViewerHolderTags(rows: HolderRow[], fold: ViewerFold | undefined): HolderRow[] {
-  if (!fold) return rows
-  const listByTagId = new Map([...fold.groups.values()].map(g => [g.tagId, g.listId]))
-  return rows.map(r => {
-    const listId = r.tag ? listByTagId.get(r.tag.tagId) : undefined
-    return listId ? { ...r, tag: { ...r.tag!, userTagId: r.tag!.tagId, listId } } : r
-  })
-}
-
 // Paginated holder list. `limit`/`offset` page the full set (no hard cap), and
 // `total`/`totalUsd` describe the whole holder base regardless of the page so the
-// UI can show the true count, per-holder share, and a pager. `viewerFold`
-// (only ever set via getHoldersForViewerFold) additionally folds the viewer's
-// own tags; absent a fold every path below is unchanged, including its cache key.
-export async function getHolders(assetId: number, limit: number, offset = 0, viewerFold?: ViewerFold): Promise<HoldersPage> {
+// UI can show the true count, per-holder share, and a pager.
+export async function getHolders(assetId: number, limit: number, offset = 0): Promise<HoldersPage> {
   const a = asset(assetId)
-  // Per-viewer results carry the fold fingerprint and their own key prefix so
-  // they can never be served from — or evict into — the shared anonymous entry.
-  const pageKey = viewerFold
-    ? `user-holders:${viewerFold.fingerprint}:${assetId}:${limit}:${offset}`
-    : `explorer:holders:${assetId}:${limit}:${offset}`
+  const pageKey = `explorer:holders:${assetId}:${limit}:${offset}`
   const enrichShare = (rows: HolderRow[], prices: Map<number, PriceInfo>, totalUsd: number): HolderRow[] => rows.map(h => {
     const valueUsd = usdValue(prices, assetId, h.balance, a.decimals)
     return { ...h, valueUsd, share: totalUsd > 0 ? (valueUsd ?? 0) / totalUsd : 0 }
   })
 
-  // Giga/display assets are backed by hidden stableswap-share ids (GDOT←690,
-  // GETH←4200, …). Their economic holder list combines direct display/share
-  // balances and replaces each money-market aToken custody row with its actual
-  // suppliers; otherwise the visible asset has zero holders or names the vault.
+  // A display asset is backed by hidden pool-share ids: its economic holder
+  // list combines the direct display balance with the share-token balances,
+  // otherwise the visible asset reads as having no holders at all.
   const foldedShareIds = Object.entries(SHARE_TOKEN_UNDERLYING_ID)
     .filter(([, displayId]) => displayId === assetId)
     .map(([shareId]) => Number(shareId))
   if (foldedShareIds.length) {
     return cached(pageKey, 30000, async () => {
       const prices = await ensurePrices()
-      const all = markViewerHolderTags(await getFoldedDisplayAssetHolders(assetId, foldedShareIds, viewerFold), viewerFold)
+      const all = await getFoldedDisplayAssetHolders(assetId, foldedShareIds)
       const totalRaw = all.reduce((sum, row) => sum + BigInt(row.balance), 0n)
       const totalUsd = usdValue(prices, assetId, totalRaw.toString(), a.decimals) ?? 0
       const page = all.slice(offset, limit > 0 ? offset + limit : all.length)
@@ -2891,42 +2222,10 @@ export async function getHolders(assetId: number, limit: number, offset = 0, vie
     })
   }
 
-  // aTokens never hit substrate balances — their true holders are the money-market
-  // suppliers reconstructed from indexed anchors and event deltas. Those
-  // sets are small, so fetch all and page in memory.
-  if (ATOKEN_UNDERLYING_ID[assetId] != null) {
-    return cached(pageKey, 30000, async () => {
-      const [prices, allRows, supplies] = await Promise.all([ensurePrices(), getATokenHolders(assetId, 1_000_000, viewerFold), getATokenTotalSupplies()])
-      const all = markViewerHolderTags(allRows, viewerFold)
-      // Value the asset at its reconstructed total supply — the same figure the
-      // assets list shows. Summing the displayed rows instead would shrink the TVL
-      // by whatever pallet accounts hold (35% of aDOT sits in the Omnipool), so the
-      // two surfaces reported different TVLs for one asset and every share was
-      // measured against the reduced denominator. Pallet holders stay out of the
-      // displayed list, so the shares of what IS displayed sum to below 100%.
-      const supply = supplies.get(assetId)
-      const totalUsd = supply != null
-        ? usdValue(prices, assetId, supply.toString(), a.decimals) ?? 0
-        : all.reduce((sum, h) => sum + (usdValue(prices, assetId, h.balance, a.decimals) ?? 0), 0)
-      const page = all.slice(offset, limit > 0 ? offset + limit : all.length)
-        .map((h, i) => ({ ...h, rank: offset + i + 1 }))
-      return { asset: a, holders: enrichShare(page, prices, totalUsd), total: all.length, totalUsd }
-    })
-  }
   return cached(pageKey, 30000, async () => {
     const prices = await ensurePrices()
-    // Same two splices as accountsPage's gkeySql/labelIdSql (see its comments
-    // for the full rationale, including why label_id must be neutralized
-    // alongside the group key): a viewer's fold overrides the grouping for
-    // exactly the accounts it names, before GROUP BY runs — and absent a fold
-    // both branches are the exact original expressions, unchanged.
-    const foldKey = `transform(latest.account_id, {fold_ids:Array(String)}, {fold_keys:Array(String)}, '')`
-    const groupKeySql = viewerFold
-      ? `if(${foldKey} != '', ${foldKey}, if(t.label_id = '', latest.account_id, t.label_id))`
-      : `if(t.label_id = '', latest.account_id, t.label_id)`
-    const labelIdSql = viewerFold
-      ? `if(${foldKey} != '', '', t.label_id)`
-      : `t.label_id`
+    const groupKeySql = `if(t.label_id = '', latest.account_id, t.label_id)`
+    const labelIdSql = `t.label_id`
     const res = await client.query({
       query: `
         WITH
@@ -2955,18 +2254,8 @@ export async function getHolders(assetId: number, limit: number, offset = 0, vie
             SELECT
               ${boundAccountSql('l')} AS account_id,
               sum(l.bal) AS bal, max(l.last_block) AS last_block FROM (
-              ${ERC20_WALLET_ASSET_IDS.includes(assetId) ? `
-              -- ERC-20-backed asset: the plain latest Tokens-side balance plus
-              -- the separate authoritative ERC-20-side wallet pot.
-              SELECT account_id, latest_bal AS bal, latest_block AS last_block FROM latest_raw
-              UNION ALL
-              -- ERC-20-side holdings (separate pot, see erc20WalletService) —
-              -- summed per account above.
-              SELECT account_id, toUInt256OrZero(argMax(total, updated_at)) AS bal, 0 AS last_block
-              FROM price_data.erc20_wallet_balances WHERE asset_id = {asset:String}
-              GROUP BY account_id HAVING bal > 0` : `
               SELECT latest_raw.account_id AS account_id, latest_raw.latest_bal AS bal, latest_raw.latest_block AS last_block
-              FROM latest_raw`}
+              FROM latest_raw
             ) l
             LEFT JOIN bind b ON b.eth_id = l.account_id
             GROUP BY account_id
@@ -2993,27 +2282,18 @@ export async function getHolders(assetId: number, limit: number, offset = 0, vie
         FROM grouped
         ORDER BY gbal DESC
         LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
-      query_params: {
-        asset: String(assetId), limit, offset,
-        ...(viewerFold ? { fold_ids: viewerFold.ids, fold_keys: viewerFold.keys } : {}),
-      }, format: 'JSONEachRow',
+      query_params: { asset: String(assetId), limit, offset }, format: 'JSONEachRow',
     })
     const rows = await res.json<{ group_key: string; label_id: string; label_name: string; color: string; icon: string; member_count: string; balance: string; last_block: number; sample_account: string; total: string; total_bal: string }>()
     const total = rows.length ? Number(rows[0].total) : 0
     const totalUsd = rows.length ? (usdValue(prices, assetId, rows[0].total_bal, a.decimals) ?? 0) : 0
     const holders: HolderRow[] = rows.map((r, i) => {
-      // A viewer's own tag wins the row over a system one — directoryFoldFor
-      // guarantees they never compete for the same account, so a hit here
-      // means label_id was neutralized to '' by labelIdSql above.
-      const userGroup = viewerFold ? viewerFold.groups.get(r.group_key) : undefined
-      const isTag = r.label_id !== '' || !!userGroup
+      const isTag = r.label_id !== ''
       const valueUsd = usdValue(prices, assetId, r.balance, a.decimals)
       return {
         rank: offset + i + 1,
         account: isTag ? null : accountRef(r.sample_account),
-        tag: userGroup
-          ? { tagId: userGroup.tagId, name: userGroup.name, color: userGroup.color, icon: userGroup.icon, memberCount: Number(r.member_count), userTagId: userGroup.tagId, listId: userGroup.listId }
-          : (isTag ? { tagId: r.label_id, name: r.label_name, color: r.color, icon: tagIcon(r.label_id, r.icon), memberCount: Number(r.member_count) } : null),
+        tag: isTag ? { tagId: r.label_id, name: r.label_name, color: r.color, icon: tagIcon(r.label_id, r.icon), memberCount: Number(r.member_count) } : null,
         balance: r.balance,
         lastBlock: r.last_block,
         valueUsd,
@@ -3180,43 +2460,6 @@ async function queryLockBreakdownsSafe(accountListSql: string): Promise<Map<numb
   }
 }
 
-// Wallet-held stableswap pool-share tokens (2-Pool-GDOT, 4-Pool, …) ARE liquidity
-// positions — surface them as such (venue 'Stablepool') instead of leaving them
-// buried in the balance fold. Must be fed the RAW balance rows, before
-// foldShareBalances relabels them into their underlying: only wallet-held shares
-// qualify — share collateral supplied to a money market stays on that market's
-// card, and GIGA tokens (GDOT/GETH/GSOL) stay ordinary balances (they're products,
-// not something the holder LP'd into). Display-only rows: their USD value is
-// already counted once via the folded wallet balances, so callers must NOT add
-// them into lpUsd/portfolio.
-export function stableswapLpPositions(balances: AddressBalance[]): LpPosition[] {
-  return balances
-    .filter(b => b.total !== '0' && (SHARE_TOKEN_UNDERLYING_ID[b.asset.assetId] != null || /^\d+-Pool(-|$)/.test(b.asset.symbol)))
-    .map(b => ({ positionId: `share-${b.asset.assetId}`, asset: b.asset, amount: b.total, shares: b.total, valueUsd: b.valueUsd, venue: 'Stablepool' }))
-}
-export interface MoneyMarketPosition {
-  marketKey: string                 // 'core', 'gigahdx', … — which isolated market
-  market: string                    // display label, e.g. 'GIGAHDX'
-  role: 'primary' | 'supplemental'  // primary owns global summaries + DefiSim
-  defiSimSupported: boolean
-  stakingBacked?: boolean           // collateral backed by locked-in-wallet HDX (display-only in net worth)
-  blockHeight: number
-  timestamp: string
-  totalCollateralBase: string
-  // Total supplied value can exceed liquidation-eligible collateral when a
-  // reserve is lendable but not enabled as collateral. Risk math must always
-  // use totalCollateralBase; presentation uses this field when available.
-  totalSuppliedBase?: string
-  totalDebtBase: string
-  availableBorrowsBase: string
-  liquidationThreshold: string
-  ltv: string
-  healthFactor: string
-  // Present for aggregate/tag positions: a real member whose position can be
-  // opened in DefiSim (never the tag id or an unrelated first member).
-  simAccount?: string
-  reserves?: MmReserve[]
-}
 // Proxy & multisig relations resolved to displayable account refs.
 export interface ProxyRelationDisplay { account: AccountRef; proxyType: string; delay: number }
 export interface AccountProxyDisplay {
@@ -3231,139 +2474,6 @@ export interface MultisigDisplay {
 }
 export interface MultisigMembershipDisplay { account: AccountRef; threshold: number; signatories: number }
 
-// A contract's registry row, resolved to displayable refs. Serves both the
-// /explorer/contracts directory and AddressDetail.contract. `verified` is the
-// compact directory chip; `verification` is the full card (§5.2), an explicit
-// `unverified` status when no verification exists.
-export interface ContractCreationDisplay {
-  method: 'create' | 'factory' | 'unknown'
-  deployer?: AccountRef | null
-  deployerWhitelisted?: boolean       // in the advisory ContractDeployer whitelist (provenance only)
-  factory?: AccountRef
-  attribution?: 'first-log'
-  blockHeight?: number
-  extrinsicIndex?: number
-  timestamp?: string
-  txHash?: string
-}
-// What a contract holds and does as an ACCOUNT, on the same models the accounts
-// directory reads — a contract is an account, so the two directories must not
-// describe one differently. Absent fields mean "not established", never zero:
-// before the first background pass, and for a contract outside the activity
-// leaderboard's pool, the cell stays empty rather than inventing a number.
-export interface ContractMetrics {
-  portfolioUsd?: number
-  topAssets?: { asset: AssetRef; valueUsd: number }[]
-  sparkline?: number[]
-  tradingVolumeUsd?: number
-  activityCount?: number
-  activityCountComplete?: boolean
-}
-export interface ContractDisplay extends ContractMetrics {
-  address: string
-  account: AccountRef
-  verified: { status: string; name: string; matchType: string } | null
-  verification: VerificationDisplay
-  creation: ContractCreationDisplay
-  codeHash: string
-  codeSize: number
-  destroyed: boolean
-  txCount: number
-  logCount: number
-  firstActivity: string | null
-  lastActivity: string | null
-}
-
-function contractDisplay(e: ContractRegistryEntry): ContractDisplay {
-  const c: ContractCreation = e.creation
-  const creation: ContractCreationDisplay =
-    c.method === 'create' ? {
-      method: 'create',
-      deployer: c.deployer ? accountRef(c.deployer) : null,
-      deployerWhitelisted: c.deployerWhitelisted,
-      blockHeight: c.blockHeight, extrinsicIndex: c.extrinsicIndex, timestamp: c.timestamp, txHash: c.txHash,
-    } : c.method === 'factory' ? {
-      method: 'factory',
-      factory: accountRef(evmAccountIdFromAddress(c.factory) ?? c.factory),
-      attribution: 'first-log',
-      blockHeight: c.blockHeight, timestamp: c.timestamp, txHash: c.txHash,
-    } : { method: 'unknown' }
-  const verification = verificationDisplay(verifiedContractInfo(e.address), e.codeHash)
-  return {
-    ...contractMetrics(e.address),
-    address: e.address,
-    account: accountRef(evmAccountIdFromAddress(e.address) ?? e.address),
-    verified: verification.status === 'verified'
-      ? { status: 'verified', name: verification.name ?? '', matchType: verification.matchType ?? '' }
-      : null,
-    verification,
-    creation,
-    codeHash: e.codeHash,
-    codeSize: e.codeSize,
-    destroyed: e.destroyed,
-    txCount: e.txCount,
-    logCount: e.logCount,
-    firstActivity: e.firstActivity,
-    lastActivity: e.lastActivity,
-  }
-}
-
-// Directory page — served entirely from the in-memory registry plus the
-// in-memory metrics map, no ClickHouse on the request path. The account-shaped
-// sorts (value/volume/activity) rank on the metrics map, so they live here
-// rather than in the registry's own comparator.
-export function getContracts(offset: number, limit: number, sort: ContractSort): { contracts: ContractDisplay[]; total: number } {
-  const sorted = sort === 'name'
-    ? sortContractsByName(allContracts(), a => verifiedContractInfo(a)?.name ?? '')
-    : CONTRACT_METRIC_SORTS[sort]
-      ? sortContractsByMetric(allContracts(), contractMetrics, sort)
-      : null
-  if (!sorted) {
-    const { rows, total } = contractsPage(offset, limit, sort)
-    return { contracts: rows.map(contractDisplay), total }
-  }
-  return { contracts: sorted.slice(offset, offset + limit).map(contractDisplay), total: sorted.length }
-}
-
-// The only ASCENDING sort here: a name is read alphabetically, unlike every
-// metric, which is read largest-first. Named contracts lead — an unnamed one has
-// nothing to sort by, so it follows in address order rather than being ranked
-// against the empty string.
-export function sortContractsByName<T extends { address: string }>(
-  list: T[],
-  nameFor: (address: string) => string,
-): T[] {
-  return [...list].sort((a, b) => {
-    const na = nameFor(a.address), nb = nameFor(b.address)
-    if (!na !== !nb) return na ? -1 : 1
-    const byName = na.localeCompare(nb, 'en', { sensitivity: 'base' })
-    if (byName !== 0) return byName
-    return a.address < b.address ? -1 : 1
-  })
-}
-const CONTRACT_METRIC_SORTS: Partial<Record<ContractSort, (m: ContractMetrics) => number>> = {
-  value: m => m.portfolioUsd ?? 0,
-  volume: m => m.tradingVolumeUsd ?? 0,
-  activity: m => m.activityCount ?? 0,
-}
-// Descending on the metric, address ascending to break ties — the same
-// deterministic rule pageContracts uses, so paging never repeats or drops a row.
-// A contract with no established metric sorts as 0, i.e. last, rather than being
-// dropped from the directory: the row set is the registry, always.
-export function sortContractsByMetric<T extends { address: string }>(
-  list: T[],
-  metricsFor: (address: string) => ContractMetrics,
-  sort: ContractSort,
-): T[] {
-  const metric = CONTRACT_METRIC_SORTS[sort]
-  if (!metric) return [...list]
-  return [...list].sort((a, b) => {
-    const va = metric(metricsFor(a.address)), vb = metric(metricsFor(b.address))
-    if (va !== vb) return vb - va
-    return a.address < b.address ? -1 : 1
-  })
-}
-
 // --- contract tab activity (§9) ----------------------------------------------
 //
 // Two contract-scoped pages for the Contract tab. Transactions ride
@@ -3377,160 +2487,6 @@ export function sortContractsByMetric<T extends { address: string }>(
 // method chip is named from the target's cached verified-ABI index, and log
 // rows fall back from a verified-ABI decode to the ingest decode to raw topics.
 
-export interface ContractTxMethod { selector: string | null; name: string | null; signature: string | null }
-export interface ContractTxRow {
-  blockHeight: number
-  extrinsicIndex: number | null
-  timestamp: string
-  txHash: string
-  from: AccountRef | null
-  success: boolean
-  method: ContractTxMethod
-}
-
-export async function getContractTransactions(address: string, offset: number, limit: number): Promise<{ transactions: ContractTxRow[]; total: number } | null> {
-  const addr = address.toLowerCase()
-  if (!contractByH160(addr)) return null
-  return cached(`contract:txs:${addr}:${offset}:${limit}`, 30_000, async () => {
-    const [rows, countRows] = await Promise.all([
-      client.query({
-        query: `
-          SELECT block_height, event_index, any(extrinsic_index) AS extrinsic_index,
-                 toString(any(block_timestamp)) AS ts, any(tx_hash) AS tx_hash,
-                 any(from_address) AS from_address, any(exit_kind) AS exit_kind
-          FROM price_data.evm_executed
-          WHERE to_address = {address:String}
-          GROUP BY block_height, event_index
-          ORDER BY block_height DESC, event_index DESC
-          LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
-        query_params: { address: addr, limit, offset }, format: 'JSONEachRow',
-      }).then(r => r.json<{ block_height: number; event_index: number; extrinsic_index: number | null; ts: string; tx_hash: string; from_address: string; exit_kind: string }>()),
-      client.query({
-        query: `SELECT toUInt32(uniqExact((block_height, event_index))) AS c
-                FROM price_data.evm_executed WHERE to_address = {address:String}`,
-        query_params: { address: addr }, format: 'JSONEachRow',
-      }).then(r => r.json<{ c: number }>()),
-    ])
-
-    // Page-scoped selector enrichment: evm_executed carries no calldata, so the
-    // page's own extrinsics are read back by primary key for their first four
-    // input bytes. Only an Ethereum.transact input is trusted — any other
-    // wrapper would make the prefix a guess.
-    const selectors = new Map<string, string>()
-    const keys = [...new Set(rows.filter(r => r.extrinsic_index != null).map(r => `(${r.block_height},${r.extrinsic_index})`))]
-    if (keys.length) {
-      const inputRows = await client.query({
-        query: `
-          SELECT block_height, extrinsic_index, any(call_name) AS call_name,
-                 any(substring(JSONExtractString(call_args_json, 'transaction', 'value', 'input'), 1, 10)) AS input_prefix
-          FROM price_data.raw_extrinsics
-          WHERE (block_height, extrinsic_index) IN (${keys.join(',')})
-          GROUP BY block_height, extrinsic_index`,
-        format: 'JSONEachRow',
-      }).then(r => r.json<{ block_height: number; extrinsic_index: number; call_name: string; input_prefix: string }>())
-      for (const row of inputRows) {
-        if (row.call_name !== 'Ethereum.transact') continue
-        if (/^0x[0-9a-f]{8}$/.test(row.input_prefix)) selectors.set(`${row.block_height}:${row.extrinsic_index}`, row.input_prefix)
-      }
-    }
-
-    const indexes = await getContractAbiIndexes(addr)
-    const transactions: ContractTxRow[] = rows.map(row => {
-      const selector = row.extrinsic_index != null ? selectors.get(`${row.block_height}:${row.extrinsic_index}`) ?? null : null
-      const fn = selector ? indexes?.functionsBySelector.get(selector) : undefined
-      return {
-        blockHeight: row.block_height,
-        extrinsicIndex: row.extrinsic_index,
-        timestamp: row.ts,
-        txHash: row.tx_hash,
-        from: row.from_address ? accountRef(evmAccountIdFromAddress(row.from_address) ?? row.from_address) : null,
-        success: row.exit_kind === 'Succeed',
-        method: { selector, name: fn?.name ?? null, signature: fn?.signature ?? null },
-      }
-    })
-    return { transactions, total: Number(countRows[0]?.c ?? 0) }
-  })
-}
-
-export interface ContractEventRow {
-  blockHeight: number
-  eventIndex: number
-  extrinsicIndex: number | null
-  timestamp: string
-  name: string | null
-  topics: string[]
-  data: string
-  evmDecoded?: EvmLogDecode
-  args?: Record<string, unknown>
-  decodedBy?: 'verified-abi' | 'ingest'
-}
-
-export async function getContractEvents(address: string, offset: number, limit: number): Promise<{ events: ContractEventRow[]; total: number } | null> {
-  const addr = address.toLowerCase()
-  const entry = contractByH160(addr)
-  if (!entry) return null
-  return cached(`contract:events:${addr}:${offset}:${limit}`, 30_000, async () => {
-    const keys = await client.query({
-      query: `
-        SELECT block_height, event_index
-        FROM price_data.raw_evm_logs
-        WHERE contract_address = {address:String}
-        GROUP BY block_height, event_index
-        ORDER BY block_height DESC, event_index DESC
-        LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
-      query_params: { address: addr, limit, offset }, format: 'JSONEachRow',
-    }).then(r => r.json<{ block_height: number; event_index: number }>())
-
-    let rows: { block_height: number; event_index: number; extrinsic_index: number | null; ts: string; topics: string[]; data: string; decode_status: string; event_name: string | null; decoded_args_json: string }[] = []
-    if (keys.length) {
-      const tuples = keys.map(k => `(${k.block_height},${k.event_index})`).join(',')
-      rows = await client.query({
-        query: `
-          SELECT block_height, event_index, any(extrinsic_index) AS extrinsic_index,
-                 toString(any(block_timestamp)) AS ts, any(topics) AS topics, any(data) AS data,
-                 any(decode_status) AS decode_status, any(event_name) AS event_name,
-                 any(decoded_args_json) AS decoded_args_json
-          FROM price_data.raw_evm_logs
-          WHERE (block_height, event_index) IN (${tuples}) AND contract_address = {address:String}
-          GROUP BY block_height, event_index
-          ORDER BY block_height DESC, event_index DESC`,
-        query_params: { address: addr }, format: 'JSONEachRow',
-      }).then(r => r.json<{ block_height: number; event_index: number; extrinsic_index: number | null; ts: string; topics: string[]; data: string; decode_status: string; event_name: string | null; decoded_args_json: string }>())
-    }
-
-    const indexes = await getContractAbiIndexes(addr)
-    const events: ContractEventRow[] = rows.map(row => {
-      const base: ContractEventRow = {
-        blockHeight: row.block_height,
-        eventIndex: row.event_index,
-        extrinsicIndex: row.extrinsic_index,
-        timestamp: row.ts,
-        name: null,
-        topics: row.topics,
-        data: row.data,
-      }
-      const decoded = indexes ? decodeEventLog(indexes, row.topics, row.data) : { decoded: false as const }
-      if (decoded.decoded) {
-        return { ...base, name: decoded.name, evmDecoded: decoded, decodedBy: 'verified-abi' }
-      }
-      if (row.decode_status === 'decoded' && row.event_name) {
-        const args = safeJson(row.decoded_args_json)
-        return {
-          ...base,
-          name: row.event_name,
-          decodedBy: 'ingest',
-          ...(args != null && typeof args === 'object' && !Array.isArray(args) ? { args: args as Record<string, unknown> } : {}),
-        }
-      }
-      return base
-    })
-    // The total is the registry's bitmap cardinality — exact under replay and
-    // already in memory; a count() over 33M raw log rows would say the same
-    // thing for the price of a scan.
-    return { events, total: entry.logCount }
-  })
-}
-
 export interface AddressDetail {
   input: string
   kind: string
@@ -3543,7 +2499,6 @@ export interface AddressDetail {
   ss58Polkadot: string
   tag: { id: string; name: string; color: string; icon: string } | null
   identity: AccountIdentity | null
-  profile: { name: string; avatarVersion: number } | null
   relatedAccountIds: string[]
   aliases: { accountId: string | null; evmAddress: string | null; primaryProfile: string; relationship: string; confidence: number }[]
   balances: AddressBalance[]
@@ -3552,19 +2507,11 @@ export interface AddressDetail {
   topAssets: { asset: AssetRef; valueUsd: number }[]
   portfolioUsd: number
   tradingVolumeUsd: number
-  liquidationVolumeUsd: number
-  // Protocol revenue earned from this account (absent when zero).
-  revenueUsd?: number
-  moneyMarket: MoneyMarketPosition[]          // one entry per isolated market the account has a position in
   liquidityPositions?: LpPosition[]
-  activeDcas?: ActiveDca[]
   proxy: AccountProxyDisplay | null
   multisig: MultisigDisplay | null
   multisigMemberships: MultisigMembershipDisplay[]
-  contract?: ContractDisplay | null   // deployed EVM contract at this address (registry lookup)
 }
-
-const MAX_UINT256 = '115792089237316195423570985008687907853269984665640564039457584007913129639935'
 
 // Resolve an address input to its canonical AccountId32 + the full set of
 // related account_ids (self + alias-linked accounts of the same entity). Shared
@@ -3690,130 +2637,35 @@ export async function getAddress(addressInput: string, opts: { summary?: boolean
   if (!resolved) return null
   const { norm, aliasRows } = resolved
   // The hover card shows only name + value + top holdings + volumes. `summary` skips
-  // the expensive extras it never renders (LP positions, DCA, proxy/multisig live
-  // reads) so the preview loads fast; the detail page still requests the full object.
+  // the expensive extras it never renders (proxy/multisig live reads) so the
+  // preview loads fast; the detail page still requests the full object.
   const summary = opts.summary === true
   return cached(`explorer:address:${accountValueGenerationEpoch}:${norm.accountId}${summary ? ':summary' : ''}`, 8000, async () => {
     // 1. Aliases — discover all account_ids belonging to the same entity.
     const related = new Set<string>(resolved.related)
     const list = sqlAccountList([...related])
-    // MM positions are stored under each account's truncated-H160 (EVM) form, not
-    // its full AccountId, so the stored-position fallback must look them up there.
-    const mmList = sqlAccountList([...new Set([...related].map(evmAccountForm).filter(Boolean) as string[])])
 
-    const [balanceRows, lockBreakdowns, mmRes, prices] = await Promise.all([
+    const [balanceRows, lockBreakdowns, prices] = await Promise.all([
       queryAggregatedBalances(list),
       summary ? Promise.resolve(new Map<number, AssetLockBreakdown>()) : queryLockBreakdownsSafe(list),
-      // Alone among the current-state readers this one collapses every related
-      // account into ONE row per market, so its winner is chosen across holders
-      // and it cannot read the per-(holder, market) projection.
-      moneyMarketAccountValuesReady ? Promise.resolve(null) : client.query({
-        query: `
-          SELECT pool_address,
-                 max(block_height) AS lb,
-                 toString(argMax(block_timestamp, ${moneyMarketPositionOrderSql()})) AS ts,
-                 argMax(total_collateral_base, ${moneyMarketPositionOrderSql()}) AS total_collateral_base,
-                 argMax(total_debt_base, ${moneyMarketPositionOrderSql()}) AS total_debt_base,
-                 argMax(available_borrows_base, ${moneyMarketPositionOrderSql()}) AS available_borrows_base,
-                 argMax(current_liquidation_threshold, ${moneyMarketPositionOrderSql()}) AS current_liquidation_threshold,
-                 argMax(ltv, ${moneyMarketPositionOrderSql()}) AS ltv,
-                 argMax(health_factor, ${moneyMarketPositionOrderSql()}) AS health_factor
-          FROM price_data.raw_money_market_positions
-          WHERE account_id IN (${mmList})
-          GROUP BY pool_address`,
-        format: 'JSONEachRow',
-      }),
       ensureAccountValuePrices(),
     ])
 
-    const rawBalances = valueAccountBalances(balanceRows, prices)
-    // Wallet-held pool shares double as LP display rows (see stableswapLpPositions) —
-    // captured before the fold below hides them behind their underlying.
-    const stableLp = stableswapLpPositions(rawBalances)
-    let balances: AddressBalance[] = foldShareBalances(rawBalances)
+    let balances: AddressBalance[] = foldShareBalances(valueAccountBalances(balanceRows, prices))
 
-    // Latest indexed position per market (pool_address). Unknown pools are ignored.
-    const mmRows = mmRes ? await mmRes.json<{ pool_address: string; lb: number; ts: string; total_collateral_base: string; total_debt_base: string; available_borrows_base: string; current_liquidation_threshold: string; ltv: string; health_factor: string }>() : []
-    const storedByMarket = new Map<string, MoneyMarketPosition>()
-    for (const r of mmRows) {
-      if (r.total_collateral_base === '0' && r.total_debt_base === '0') continue
-      const m = MM_MARKET_BY_POOL.get((r.pool_address ?? '').toLowerCase())
-      if (!m) continue
-      storedByMarket.set(m.key, {
-        ...moneyMarketFields(m),
-        blockHeight: r.lb, timestamp: r.ts,
-        totalCollateralBase: r.total_collateral_base, totalSuppliedBase: r.total_collateral_base, totalDebtBase: r.total_debt_base,
-        availableBorrowsBase: r.available_borrows_base, liquidationThreshold: r.current_liquidation_threshold,
-        ltv: r.ltv, healthFactor: r.health_factor === MAX_UINT256 ? 'inf' : r.health_factor,
-      })
-    }
-    // Money-market positions live on the EVM side and never hit substrate balances.
-    // Query the indexed H160 form as well as the account-id form above: explicit for
-    // EVM accounts, or Hydration's first-20-byte mapping for substrate accounts.
-    const mmH160 = norm.evmAddress ?? '0x' + norm.accountId.slice(2, 42)
-    const indexedByMarket = new Map<string, MoneyMarketPosition>()
-    for (const position of await getMoneyMarketPositions(mmH160)) indexedByMarket.set(position.marketKey, position)
-    // Merge the freshest indexed result over the account-scoped fallback, per market.
-    const byMarket = new Map<string, MoneyMarketPosition>(storedByMarket)
-    for (const [marketKey, position] of indexedByMarket) byMarket.set(marketKey, position)
-    // Attach indexed per-reserve detail (supplied/debt tokens) to each market.
-    // Reserve balances include supplied assets that are not collateral-enabled, so
-    // read them even when the aggregate position has no collateral or debt.
-    const reservesByMarket = new Map<string, MmReserve[]>()
-    for (const r of await getMoneyMarketReserves(mmH160)) {
-      const k = r.marketKey ?? 'core'
-      ;(reservesByMarket.get(k) ?? reservesByMarket.set(k, []).get(k)!).push(r)
-    }
-    for (const [k, rs] of reservesByMarket) {
-      const pos = byMarket.get(k)
-      byMarket.set(k, pos ? attachMmReserves(pos, rs, prices) : moneyMarketFromReserves(k, rs, prices))
-    }
-
-    // Surface supplied aToken collateral as a wallet balance — it IS the account's
-    // aToken holding (e.g. aDOT), matching the Hydration wallet. EXCEPT staking-backed
-    // markets (GIGAHDX): there the collateral (stHDX) is backed by HDX that stays locked
-    // in the wallet, which is already counted — so we never fold it into balances or
-    // portfolio value (it remains visible in that market's card). Debt is not a balance.
-    let moneyMarket = orderMoneyMarkets([...byMarket.values()])
-    const countedPositions = moneyMarket.filter(p => !p.stakingBacked)
-    const foldedMmUsd = countedPositions.reduce((s, p) => s + applyMmCollateralToBalances(balances, p, prices), 0)
-    // MM collateral is added under the reserve's own asset id (Hydration's money
-    // market uses the pool tokens, e.g. the 2-Pool-GETH reserve), so re-fold to
-    // merge that supplied collateral into the underlying main asset as well.
-    balances = foldShareBalances(balances)
-    // ERC-20-side wallet holdings (HOLLAR): read from the bounded snapshot and
-    // summed onto any Tokens-side balance — the two pots are separate on-chain.
-    balances = mergeErc20Balances(balances, await erc20WalletHoldings(mmH160), prices)
     // Attach the lock/reserve components once the display rows are final.
     balances = attachLockBreakdowns(balances, lockBreakdowns)
-    // Fold each market's borrow-position display the same way (2-Pool-GETH → GETH);
-    // done now, after applyMmCollateralToBalances has consumed the unfolded reserves.
-    moneyMarket = moneyMarket.map(p => p.reserves?.length ? { ...p, reserves: foldShareReserves(p.reserves) } : p)
-    // Count MM collateral the per-reserve read couldn't surface (RPC shortfall) so a
-    // borrower's portfolio stays correct (collateral − debt > 0). Staking-backed
-    // markets are excluded — their collateral is the already-counted locked HDX.
-    const collateralShortfall = countedPositions.reduce((s, p) => s + mmCollateralShortfallUsd(p, 0), 0)
-    const portfolioUsd = balances.reduce((s, b) => s + (b.valueUsd ?? 0), 0) + Math.max(0, collateralShortfall - foldedMmUsd)
+    const portfolioUsd = balances.reduce((s, b) => s + (b.valueUsd ?? 0), 0)
     const volumeAccounts = [...new Set([...related, ...[...related].map(evmAccountForm).filter(Boolean) as string[]])]
-    const [tradingVolumeUsd, liquidationVolumeUsd, revenueUsd] = await Promise.all([
-      tradingVolumeByAccount(volumeAccounts).then(m => [...m.values()].reduce((s, v) => s + v, 0)),
-      liquidationVolumeByAccount(volumeAccounts).then(m => [...m.values()].reduce((s, v) => s + v, 0)),
-      revenueByAccount(volumeAccounts).then(m => [...m.values()].reduce((s, v) => s + v, 0)),
-    ])
+    const tradingVolumeUsd = await tradingVolumeByAccount(volumeAccounts).then(m => [...m.values()].reduce((s, v) => s + v, 0))
 
     const tag = tagForAccount(norm.accountId)
     const onchainId = identityForAccount(norm.accountId)
-    const profile = profileForAccount(norm.accountId)
     const addrIcon = accountIcon(norm.accountId)
     // LP positions stay even in summary — they count toward the displayed value, so
     // dropping them would make the hover's value disagree with the detail page. Only
-    // DCA/proxy/multisig (below), which the card never shows, are skipped.
-    const [bareLp, farmLp, xykLp, activeDcas] = await Promise.all([
-      getOmnipoolPositions([...related]),
-      getFarmingPositions([...related]),
-      getXykPositions([...related], balances),
-      summary ? Promise.resolve([]) : getActiveDcas([...related]),
-    ])
+    // proxy/multisig (below), which the card never shows, are skipped.
+    const lpPositions0 = await getXykPositions([...related], balances)
     // Proxy & multisig relations (in-memory indexes refreshed by the
     // proxyMultisigService; pending ops come from indexed events).
     const toProxyRel = (r: ProxyRelation): ProxyRelationDisplay => ({ account: accountRef(r.accountId), proxyType: r.proxyType, delay: r.delay })
@@ -3832,23 +2684,8 @@ export async function getAddress(addressInput: string, opts: { summary?: boolean
     } : null
     const multisigMemberships: MultisigMembershipDisplay[] = multisigMembershipsFor([...related])
       .map(m => ({ account: accountRef(m.accountId), threshold: m.threshold, signatories: m.signatories }))
-    // Deployed contract at this address — O(1) registry lookup, hover card never shows it.
-    const contractEntry = summary || !norm.evmAddress ? null : contractByH160(norm.evmAddress)
-    const contract = contractEntry ? contractDisplay(contractEntry) : null
-    // Omnipool LP = bare positions + farmed deposits. Bare and farmed are disjoint by
-    // NFT ownership (a farmed position's NFT is held by the LM pallet), so no de-dup
-    // is needed. Each is valued at its withdraw value. Staking is intentionally NOT
-    // added: the staked HDX principal is already counted (it's locked-but-free HDX in
-    // the wallet balance), and the official Hydration net worth excludes the
-    // pot-held, loyalty-slashable pending rewards.
-    const lpPositions = [...bareLp, ...farmLp, ...xykLp].sort((x, y) => (y.valueUsd ?? 0) - (x.valueUsd ?? 0))
-    // Only NFT-held positions add value here — stableLp rows are wallet balances
-    // already counted in portfolioUsd, they're appended for display only.
+    const lpPositions = [...lpPositions0].sort((x, y) => (y.valueUsd ?? 0) - (x.valueUsd ?? 0))
     const lpUsd = lpPositions.reduce((s, p) => s + (p.valueUsd ?? 0), 0)
-    // Pin the history's final point to the authoritative current net worth so the
-    // chart ends exactly on the headline figure (the live aToken valuation can
-    // differ from the MM base collateral by a small amount). Copy first — history
-    // is a shared cached object.
     return {
       input: addressInput,
       kind: norm.kind,
@@ -3861,22 +2698,16 @@ export async function getAddress(addressInput: string, opts: { summary?: boolean
       ss58Polkadot: norm.ss58Polkadot ?? '',
       tag: tag ? { id: tag.tagId, name: tag.name, color: tag.color, icon: tag.icon } : null,
       identity: onchainId,
-      profile,
       relatedAccountIds: [...related],
       aliases: aliasRows.map(a => ({ accountId: a.account_id, evmAddress: a.evm_address, primaryProfile: a.primary_profile, relationship: a.relationship, confidence: a.confidence })),
       balances,
       topAssets: topHeldTokens(balances),
       portfolioUsd: portfolioUsd + lpUsd,
       tradingVolumeUsd,
-      liquidationVolumeUsd,
-      ...(revenueUsd > 0 ? { revenueUsd } : {}),
-      moneyMarket,
-      liquidityPositions: [...lpPositions, ...stableLp].sort((x, y) => (y.valueUsd ?? 0) - (x.valueUsd ?? 0)),
-      activeDcas,
+      liquidityPositions: lpPositions,
       proxy,
       multisig,
       multisigMemberships,
-      contract,
       portfolioSeries: [],
       portfolioDates: [],
       balanceHistory: [],
@@ -3896,1052 +2727,14 @@ export async function getAddressHistory(addressInput: string, opts: { seriesOnly
   // detection uses, so chart and markers share one heavy walk. Only the trivial
   // final-point pin is recomputed per request.
   const history = await getAccountHistoryShared(detail.relatedAccountIds, `addr:${detail.accountId}`)
-  const debtUsd = detail.moneyMarket.reduce((s, p) => s + Number(p.totalDebtBase) / 1e8, 0)
   const portfolioSeries = history.portfolioSeries.slice()
-  if (portfolioSeries.length) portfolioSeries[portfolioSeries.length - 1] = +(detail.portfolioUsd - debtUsd).toFixed(2)
+  if (portfolioSeries.length) portfolioSeries[portfolioSeries.length - 1] = +detail.portfolioUsd.toFixed(2)
   return {
     portfolioSeries,
     portfolioDates: history.portfolioDates,
     balanceHistory: opts.seriesOnly ? [] : history.balanceHistory,
   }
 }
-
-// indexed Money Market positions
-// Event observations plus the periodic snapshot service keep current aggregate
-// positions in ClickHouse; account requests perform no per-user RPC reads.
-// AAVE v3 markets are isolated pools: getUserAccountData(user) on one pool returns
-// ONLY that pool's aggregate, with its OWN health factor. A borrower in two markets
-// (e.g. core + GIGAHDX) therefore has TWO independent positions/health factors — we
-// never blend them, since liquidation is per-market. Core is primary and GIGAHDX
-// is a built-in supplemental market; EXPLORER_MM_MARKETS remains available for
-// future deployments.
-// `stakingBacked` marks a market (GIGAHDX) whose collateral (stHDX) is backed by HDX
-// that stays LOCKED IN THE WALLET — so its collateral is display-only and must not be
-// added to portfolioUsd (the locked HDX is already counted). See applyMmCollateralToBalances.
-export interface ApiMmMarket {
-  key: string
-  label: string
-  poolProxy: string
-  role: 'primary' | 'supplemental'
-  defiSimSupported: boolean
-  stakingBacked: boolean
-}
-const CORE_MM_MARKET: ApiMmMarket = {
-  key: 'core', label: 'Money Market', poolProxy: '0x1b02e051683b5cfac5929c25e84adb26ecf87b38',
-  role: 'primary', defiSimSupported: true, stakingBacked: false,
-}
-const GIGAHDX_MM_MARKET: ApiMmMarket = {
-  key: 'gigahdx', label: 'GIGAHDX', poolProxy: '0x2ce2cfff743cdb6637f4b5d351937a541b8c8923',
-  role: 'supplemental', defiSimSupported: false, stakingBacked: true,
-}
-// Isolated BIL market (Decentral × DUX Group invoice factoring): uBIL + HOLLAR
-// reserves, BIL (asset 55) as the uBIL reserve's aToken. Deposits are ordinary
-// EVM pool supplies — no staking pallet moves collateral — so unlike GIGAHDX it
-// is not staking-backed and its Supply/Withdraw rows are real user acts.
-const BIL_MM_MARKET: ApiMmMarket = {
-  key: 'bil', label: 'BIL', poolProxy: '0x69310fda58c819ad82df7d2cb61841c853337a53',
-  role: 'supplemental', defiSimSupported: false, stakingBacked: false,
-}
-function envMmMarkets(): ApiMmMarket[] {
-  const raw = process.env.EXPLORER_MM_MARKETS?.trim()
-  if (!raw) return []
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    if (!Array.isArray(parsed)) return []
-    const out: ApiMmMarket[] = []
-    parsed.forEach((e, i) => {
-      const r = (e ?? {}) as Record<string, unknown>
-      const poolProxy = typeof r.poolProxy === 'string' && /^0x[0-9a-fA-F]{40}$/.test(r.poolProxy) ? r.poolProxy.toLowerCase() : null
-      if (!poolProxy) { console.error(`[Explorer] EXPLORER_MM_MARKETS[${i}].poolProxy invalid; skipping`); return }
-      const key = typeof r.key === 'string' && r.key.trim() ? r.key.trim() : `market${i + 1}`
-      out.push({
-        key, label: typeof r.label === 'string' && r.label.trim() ? r.label.trim() : key, poolProxy,
-        role: 'supplemental', defiSimSupported: false, stakingBacked: r.stakingBacked === true,
-      })
-    })
-    return out
-  } catch {
-    console.error('[Explorer] EXPLORER_MM_MARKETS is not valid JSON; ignoring')
-    return []
-  }
-}
-// Core first, then extra markets, deduped by pool proxy.
-const MM_MARKETS: ApiMmMarket[] = (() => {
-  const seen = new Set<string>(); const out: ApiMmMarket[] = []
-  const keys = new Set<string>()
-  for (const m of [CORE_MM_MARKET, GIGAHDX_MM_MARKET, BIL_MM_MARKET, ...envMmMarkets()]) {
-    if (!seen.has(m.poolProxy) && !keys.has(m.key)) { seen.add(m.poolProxy); keys.add(m.key); out.push(m) }
-  }
-  return out
-})()
-// The configured markets, in display order. Exported so a surface that reports per
-// market (the Security page's solvency panel) uses the same set and the same
-// primary/supplemental roles the money-market pages do — the two isolated markets
-// must never be blended.
-export function mmMarkets(): readonly ApiMmMarket[] { return MM_MARKETS }
-const MM_MARKET_BY_POOL = new Map<string, ApiMmMarket>(MM_MARKETS.map(m => [m.poolProxy, m]))
-const MM_MARKET_BY_KEY = new Map<string, ApiMmMarket>(MM_MARKETS.map(m => [m.key, m]))
-const MM_MARKET_ORDER = new Map<string, number>(MM_MARKETS.map((m, i) => [m.key, i]))
-const configuredMmPoolsSql = () => MM_MARKETS.map(m => `'${m.poolProxy}'`).join(',')
-const supplementalMmPoolsSql = () => MM_MARKETS.filter(m => m.role === 'supplemental').map(m => `'${m.poolProxy}'`).join(',') || "''"
-const countedMmPoolsSql = () => MM_MARKETS.filter(m => !m.stakingBacked).map(m => `'${m.poolProxy}'`).join(',') || "''"
-const stakingBackedMmPoolsSql = () => MM_MARKETS.filter(m => m.stakingBacked).map(m => `'${m.poolProxy}'`).join(',') || "''"
-
-// The collateral legs a staking-backed market's own pallet moves, and which are
-// therefore not activity of their own.
-//
-// GIGAHDX staking mints stHDX and supplies it into the isolated GIGAHDX market as a
-// single act; unstaking withdraws it again, and migrating a legacy position or
-// claiming rewards tops it up. The GIGAHDX Stake / Unstake / Migrate / Reward /
-// Cancel unstake row IS that act, so the Supply/Withdraw beside it is plumbing and
-// every surface renders only the staking row. stHDX already held can still be
-// supplied straight into the market through the EVM pool — with no staking event
-// beside it, that keeps a Lend row of its own.
-//
-// The test is a GigaHdx.* event for the same account in the same block. The
-// money-market models are EVM logs with no extrinsic index (it is resolved per row
-// afterwards through raw_events), so the block is the tightest key both sides share;
-// across all indexed history it splits the legs exactly as their originating call
-// does — the pallet's own calls and the Utility/Proxy wrappers around them on one
-// side, dispatch_permit and Ethereum.transact on the other. Stated as SQL so it
-// applies before every LIMIT and a suppressed leg never costs a page one of its rows.
-//
-// Borrow, Repay and LiquidationCall stay: those are the user's own acts in this
-// market whatever put the collateral there.
-export function mmStakingPlumbingExclusionSql(poolColumn = "ifNull(pool_address, '')", accountColumn = "ifNull(account_id, '')"): string {
-  return `AND (event_name NOT IN ('Supply','Withdraw')
-                  OR lower(${poolColumn}) NOT IN (${stakingBackedMmPoolsSql()})
-                  OR (block_height, lower(${accountColumn})) NOT IN (
-                       SELECT block_height, ${evmAccountFormSql('who')}
-                       FROM price_data.staking_activity
-                       WHERE event_name LIKE 'GigaHdx%' AND length(who) = 66))`
-}
-function moneyMarketFields(m: ApiMmMarket): Pick<MoneyMarketPosition, 'marketKey' | 'market' | 'role' | 'defiSimSupported' | 'stakingBacked'> {
-  return { marketKey: m.key, market: m.label, role: m.role, defiSimSupported: m.defiSimSupported, stakingBacked: m.stakingBacked }
-}
-function orderMoneyMarkets<T extends Pick<MoneyMarketPosition, 'marketKey'>>(positions: T[]): T[] {
-  return positions.sort((a, b) => (MM_MARKET_ORDER.get(a.marketKey) ?? Number.MAX_SAFE_INTEGER) - (MM_MARKET_ORDER.get(b.marketKey) ?? Number.MAX_SAFE_INTEGER))
-}
-// ERC-20-backed wallet assets (HOLLAR): served from the erc20_wallet_balances table
-// (refreshed every 10 min by erc20WalletService) rather than a per-request eth_call.
-// The table is keyed by the anchored account_id; match this h160 by the ETH-prefixed
-// form, the reserved (module) form, or a substrate account whose truncation is the h160.
-async function erc20WalletHoldings(h160: string): Promise<{ asset: AssetRef; raw: bigint }[]> {
-  const body = /^0x[0-9a-fA-F]{40}$/.test(h160) ? h160.slice(2).toLowerCase() : ''
-  if (!body) return []
-  return cached(`explorer:erc20-wallet:${body}`, 15000, () => erc20WalletHoldingsForAccounts([h160]))
-}
-
-// Aggregate EVM-side wallet holdings for a bounded account set in one query.
-// Tag pages use this instead of issuing one query per member; exact ETH-prefixed
-// and reserved forms plus the native AccountId→H160 truncation mirror the account
-// detail lookup above.
-async function erc20WalletHoldingsForAccounts(h160s: string[]): Promise<{ asset: AssetRef; raw: bigint }[]> {
-  const bodies = [...new Set(h160s
-    .filter(h => /^0x[0-9a-fA-F]{40}$/.test(h))
-    .map(h => h.slice(2).toLowerCase()))]
-  if (!bodies.length) return []
-  const exactAccounts = [...new Set(bodies.flatMap(body => [
-    '0x45544800' + body + '0000000000000000',
-    reservedH160AccountId(body),
-  ]).filter((account): account is string => account != null))]
-  const res = await client.query({
-    query: `SELECT asset_id, toString(sum(toUInt256(total))) AS total
-            FROM price_data.erc20_wallet_balances FINAL
-            WHERE asset_id IN {assets:Array(String)}
-              AND (lower(account_id) IN {accounts:Array(String)}
-                OR substring(lower(account_id), 3, 40) IN {bodies:Array(String)})
-            GROUP BY asset_id`,
-    query_params: {
-      assets: ERC20_WALLET_ASSET_IDS.map(String),
-      accounts: exactAccounts,
-      bodies,
-    },
-    format: 'JSONEachRow',
-  })
-  const out: { asset: AssetRef; raw: bigint }[] = []
-  for (const r of await res.json<{ asset_id: string; total: string }>()) {
-    const raw = BigInt(r.total || '0')
-    if (raw > 0n) out.push({ asset: asset(Number(r.asset_id)), raw })
-  }
-  return out
-}
-
-// Per-holder form of the read above: the same bounded snapshot, grouped by the
-// account each row belongs to instead of summed across the whole set. A caller
-// asking on behalf of several unrelated owners (the funding balance behind their
-// DCA orders) must not see one owner's pot land on another's.
-async function erc20WalletHoldingsByAccount(h160s: string[]): Promise<Map<string, { asset: AssetRef; raw: bigint }[]>> {
-  const out = new Map<string, { asset: AssetRef; raw: bigint }[]>()
-  const bodies = [...new Set(h160s
-    .filter(h => /^0x[0-9a-fA-F]{40}$/.test(h))
-    .map(h => h.slice(2).toLowerCase()))]
-  if (!bodies.length) return out
-  const wanted = new Set(bodies)
-  const exactAccounts = [...new Set(bodies.flatMap(body => [
-    '0x45544800' + body + '0000000000000000',
-    reservedH160AccountId(body),
-  ]).filter((account): account is string => account != null))]
-  const res = await client.query({
-    query: `SELECT account_id, asset_id, toString(sum(toUInt256(total))) AS total
-            FROM price_data.erc20_wallet_balances FINAL
-            WHERE asset_id IN {assets:Array(String)}
-              AND (lower(account_id) IN {accounts:Array(String)}
-                OR substring(lower(account_id), 3, 40) IN {bodies:Array(String)})
-            GROUP BY account_id, asset_id`,
-    query_params: { assets: ERC20_WALLET_ASSET_IDS.map(String), accounts: exactAccounts, bodies },
-    format: 'JSONEachRow',
-  })
-  for (const r of await res.json<{ account_id: string; asset_id: string; total: string }>()) {
-    const id = r.account_id.toLowerCase()
-    // Undo the three storage forms the WHERE matched, back to the h160 that asked.
-    const h160 = evmFromAccountId(id) ?? '0x' + id.slice(2, 42)
-    if (!wanted.has(h160.slice(2))) continue
-    const raw = BigInt(r.total || '0')
-    if (raw <= 0n) continue
-    ;(out.get(h160) ?? out.set(h160, []).get(h160)!).push({ asset: asset(Number(r.asset_id)), raw })
-  }
-  return out
-}
-
-// Fold live ERC-20 holdings into the Tokens-side balance list: summed when the
-// asset already has a (separate-pot) Tokens balance, appended otherwise.
-export function mergeErc20Balances(balances: AddressBalance[], holdings: { asset: AssetRef; raw: bigint }[], prices: Map<number, PriceInfo>): AddressBalance[] {
-  if (!holdings.length) return balances
-  const out = balances.slice()
-  for (const h of holdings) {
-    if (h.raw <= 0n) continue
-    const existing = out.findIndex(b => b.asset.assetId === h.asset.assetId)
-    if (existing >= 0) {
-      const b = out[existing]
-      const total = (BigInt(b.total || '0') + h.raw).toString()
-      const free = (BigInt(b.free || '0') + h.raw).toString()
-      out[existing] = { ...b, total, free, valueUsd: usdValue(prices, b.asset.assetId, total, b.asset.decimals) }
-    } else {
-      const total = h.raw.toString()
-      out.push({ asset: h.asset, total, free: total, reserved: '0', lastBlock: 0, valueUsd: usdValue(prices, h.asset.assetId, total, h.asset.decimals) })
-    }
-  }
-  return out.sort((x, y) => (y.valueUsd ?? 0) - (x.valueUsd ?? 0))
-}
-
-// Per-market positions (collateral/debt/health-factor), one row per isolated pool,
-// from the indexed positions the periodic sweep service and event indexing maintain
-// in raw_money_market_positions. Explorer requests never call getUserAccountData
-// directly.
-//
-// Reads money_market_latest_positions, NOT the published account-value snapshot
-// (a different thing from the sweep above).
-// The snapshot's aggregate rows are a verbatim copy of this projection taken every
-// MONEY_MARKET_ACCOUNT_VALUES_REFRESH_MS (see buildMoneyMarketAccountValueClaims),
-// so reading it here could only ever return the same numbers up to five minutes
-// later — a borrow or repay would sit invisible on the account page for a whole
-// refresh period. The projection is a primary-key point lookup on user_address,
-// so the fresher read is also the cheaper one. The snapshot remains the source for
-// the accounts directory, which needs every account's value at once.
-async function getMoneyMarketPositions(h160: string): Promise<MoneyMarketPosition[]> {
-  if (!/^0x[0-9a-fA-F]{40}$/.test(h160)) return []
-  return cached(`explorer:mm-positions:${accountValueGenerationEpoch}:${h160.toLowerCase()}`, 15000, async () => {
-    const res = await client.query({
-      query: `SELECT pool AS pool_address, ${mmPositionField('block_height')} AS lb,
-                toString(${mmPositionField('block_timestamp')}) AS ts,
-                toString(${mmPositionField('total_collateral_base')}) AS c, toString(${mmPositionField('total_debt_base')}) AS d,
-                toString(${mmPositionField('available_borrows_base')}) AS ab, toString(${mmPositionField('current_liquidation_threshold')}) AS lt,
-                toString(${mmPositionField('ltv')}) AS ltv, toString(${mmPositionField('health_factor')}) AS hf
-              FROM (${latestMoneyMarketPositionsSql('user_address = {h:String}')})`,
-      query_params: { h: h160.toLowerCase() }, format: 'JSONEachRow',
-    })
-    const out: MoneyMarketPosition[] = []
-    for (const r of await res.json<{ pool_address: string; lb: number; ts: string; c: string; d: string; ab: string; lt: string; ltv: string; hf: string }>()) {
-      const collateral = r.c || '0', debt = r.d || '0'
-      if (collateral === '0' && debt === '0') continue  // no position in this market
-      const m = MM_MARKET_BY_POOL.get((r.pool_address ?? '').toLowerCase())
-      if (!m) continue
-      out.push({
-        ...moneyMarketFields(m),
-        blockHeight: r.lb, timestamp: r.ts,
-        totalCollateralBase: collateral, totalSuppliedBase: collateral, totalDebtBase: debt, availableBorrowsBase: r.ab || '0',
-        liquidationThreshold: r.lt || '0', ltv: r.ltv || '0',
-        healthFactor: r.hf === MAX_UINT256 ? 'inf' : (r.hf || 'inf'),
-      })
-    }
-    return orderMoneyMarkets(out)
-  })
-}
-
-// One address's PRIMARY-market health factor, as a number (Infinity = no debt,
-// null = no position or an unreadable address). The two markets are isolated, so
-// this deliberately reads the primary market alone and never blends a
-// supplemental (GIGAHDX) position into it — the same rule the account page,
-// the directory and DefiSim follow.
-//
-// Shares getMoneyMarketPositions' 15s cache, so a watcher polling several
-// addresses costs one point lookup per address per cache period.
-export async function getPrimaryHealthFactor(addressInput: string): Promise<number | null> {
-  const norm = normalizeAddress(addressInput)
-  if (!norm) return null
-  const h160 = norm.evmAddress ?? mmH160ForAccount(norm.accountId)
-  if (!h160) return null
-  const primary = (await getMoneyMarketPositions(h160)).find(p => p.role === 'primary')
-  if (!primary) return null
-  if (primary.healthFactor === 'inf') return Infinity
-  const hf = Number(primary.healthFactor) / 1e18
-  return Number.isFinite(hf) ? hf : null
-}
-
-// Per-reserve money-market balances reconstructed from indexed aToken/vDebt
-// anchors and event deltas. Reused by account/tag positions and Hollar metrics.
-export interface MmReserve {
-  assetId: number
-  iconAssetId?: number
-  symbol: string
-  decimals: number
-  parachainId?: number | null
-  origin?: AssetRef['origin']
-  supplied: string
-  debt: string
-  suppliedUsd: number | null
-  debtUsd: number | null
-  collateral: boolean
-  marketKey?: string
-}
-
-// Fold money-market reserves like wallet balances: a pool-share reserve (Hydration's
-// money market uses the 2-Pool tokens, e.g. 2-Pool-GETH / 2-Pool-HUSDC) is shown as
-// its underlying main asset (GETH / HUSDC), rescaling the supplied/debt amounts to
-// the underlying's decimals. USD values are unchanged (the share token is priced via
-// its underlying); reserves that fold to the same id merge. DISPLAY only — apply
-// AFTER MM collateral is folded into wallet balances, since that step matches on the
-// unfolded reserve id (folding first would overwrite the wallet's own pool holding).
-export function foldShareReserves(reserves: MmReserve[]): MmReserve[] {
-  if (!reserves.some(r => displayAssetId(r.assetId) !== r.assetId)) return reserves
-  const byId = new Map<number, MmReserve>()
-  for (const r of reserves) {
-    const did = displayAssetId(r.assetId)
-    const d = did === r.assetId ? null : asset(did)
-    const supplied = d ? rescaleRaw(r.supplied, r.decimals, d.decimals) : r.supplied
-    const debt = d ? rescaleRaw(r.debt, r.decimals, d.decimals) : r.debt
-    const cur = byId.get(did)
-    if (!cur) byId.set(did, d ? {
-      ...r,
-      assetId: did,
-      iconAssetId: d.iconAssetId,
-      symbol: d.symbol,
-      decimals: d.decimals,
-      parachainId: d.parachainId,
-      origin: d.origin,
-      supplied,
-      debt,
-    } : { ...r })
-    else {
-      cur.supplied = (BigInt(cur.supplied) + BigInt(supplied)).toString()
-      cur.debt = (BigInt(cur.debt) + BigInt(debt)).toString()
-      cur.suppliedUsd = (cur.suppliedUsd ?? 0) + (r.suppliedUsd ?? 0)
-      cur.debtUsd = (cur.debtUsd ?? 0) + (r.debtUsd ?? 0)
-      cur.collateral = cur.collateral || r.collateral
-    }
-  }
-  return [...byId.values()].sort((a, b) => (b.suppliedUsd ?? b.debtUsd ?? 0) - (a.suppliedUsd ?? a.debtUsd ?? 0))
-}
-// Reserve set, per-account balances, and totals come from the indexed anchor table
-// and event deltas. The shared reserve configuration is cached and reused by the
-// per-account reserve read and aToken holder derivation.
-export interface MmReserveToken { asset: string; aToken: string; vDebt: string; poolProxy: string; marketKey: string }
-// Reserve → aToken/vDebt/pool map from atoken_reserve_map, refreshed by
-// snapshot-atoken-anchors.ts from on-chain reserve data.
-async function getMmReserveTokens(): Promise<MmReserveToken[]> {
-  return cached('explorer:mm-reserve-tokens', 60000, async () => {
-    const res = await client.query({
-      query: `SELECT asset_address, pool_proxy,
-                     argMax(atoken, updated_at) AS atoken, argMax(vdebt, updated_at) AS vdebt,
-                     argMax(market_key, updated_at) AS market_key
-              FROM price_data.atoken_reserve_map GROUP BY pool_proxy, asset_address`,
-      format: 'JSONEachRow',
-    })
-    return (await res.json<{ asset_address: string; atoken: string; vdebt: string; pool_proxy: string; market_key: string }>())
-      .filter(r => MM_MARKET_BY_POOL.get(r.pool_proxy.toLowerCase())?.key === (r.market_key || 'core'))
-      .map(r => ({ asset: r.asset_address, aToken: r.atoken, vDebt: r.vdebt, poolProxy: r.pool_proxy, marketKey: r.market_key || 'core' }))
-  })
-}
-
-// aToken / variable-debt scaled-balance reconstruction (no per-request RPC)
-// balance = ( scaled_anchor@B0 + Σ scaled_delta(events, block > B0) ) · index_now / RAY.
-// See clickhouse/schema/041_atoken_anchors.sql. B0 is read from the anchor table so a
-// re-anchor at a new block is picked up automatically; 0 ⇒ anchor missing (guard).
-const ATOKEN_RAY = 10n ** 27n
-
-async function aTokenAnchorBlock(): Promise<number> {
-  return cached('explorer:atoken-b0', 60000, async () => {
-    const res = await client.query({ query: `SELECT max(anchor_block) AS b0 FROM price_data.atoken_scaled_anchor`, format: 'JSONEachRow' })
-    return Number((await res.json<{ b0: number | null }>())[0]?.b0 ?? 0)
-  })
-}
-
-// Latest liquidityIndex + variableBorrowIndex per reserve (RAY units) for the final
-// scaled→actual multiply, from indexed ReserveDataUpdated events.
-async function reserveIndicesNow(): Promise<Map<string, { liq: bigint; vbi: bigint }>> {
-  return cached('explorer:mm-reserve-indices', 30000, async () => {
-    const res = await client.query({
-      query: `SELECT pool_address AS pool, reserve_address AS reserve,
-              toString(argMax(liquidity_index, tuple(block_height,event_index,ingested_at))) AS liq,
-              toString(argMax(variable_borrow_index, tuple(block_height,event_index,ingested_at))) AS vbi
-            -- No FINAL: argMax over (block_height, event_index, ingested_at) is the
-            -- table's full replacement key plus its version column, so a replayed
-            -- duplicate already resolves to the same winner. FINAL only added a
-            -- 26-part merge on top of that.
-            FROM price_data.money_market_reserve_indices
-            GROUP BY pool, reserve`,
-      format: 'JSONEachRow',
-    })
-    const m = new Map<string, { liq: bigint; vbi: bigint }>()
-    for (const r of await res.json<{ pool: string; reserve: string; liq: string; vbi: string }>())
-      m.set(`${r.pool}:${r.reserve}`, { liq: BigInt(r.liq || '0'), vbi: BigInt(r.vbi || '0') })
-    return m
-  })
-}
-
-interface ATokenReserve {
-  assetId: number
-  token: MmReserveToken
-  liquidityIndex: bigint
-}
-
-// Registry aToken id → active receipt-token contract. Both the
-// directory summary and holder detail use this exact mapping and balance
-// semantics; their independent cache windows only affect short-lived freshness.
-async function getATokenReserves(): Promise<ATokenReserve[]> {
-  return cached('explorer:atoken-reserves', 30000, async () => {
-    const [tokens, indices] = await Promise.all([getMmReserveTokens(), reserveIndicesNow()])
-    // Registered aTokens exist outside the primary market too (GIGAHDX is the
-    // gigahdx market's aToken over stHDX). An underlying listed in several
-    // markets would match its first reserve — none is today.
-    const out: ATokenReserve[] = []
-    for (const [aTokenId, underlyingId] of Object.entries(ATOKEN_UNDERLYING_ID)) {
-      const reserveAddresses = new Set(mmReserveAddressForAsset(underlyingId).map(address => address.toLowerCase()))
-      const token = tokens.find(candidate => reserveAddresses.has(candidate.asset.toLowerCase()))
-      if (!token) continue
-      const liquidityIndex = indices.get(`${token.poolProxy.toLowerCase()}:${token.asset.toLowerCase()}`)?.liq ?? 0n
-      if (liquidityIndex <= 0n) continue
-      out.push({ assetId: Number(aTokenId), token, liquidityIndex })
-    }
-    return out
-  })
-}
-
-// Scaled balance per holder for ONE token contract (aToken or vDebt): anchor + Σ delta.
-// Module/pallet accounts are included (caller filters them from a displayed list).
-async function reconstructHolderScaled(contract: string, b0: number): Promise<{ holder: string; scaled: bigint }[]> {
-  const deltaTable = 'price_data.atoken_scaled_deltas_by_contract'
-  const res = await client.query({
-    query: `
-      SELECT holder, toString(sum(anchor) + sum(delta)) AS scaled FROM (
-        SELECT holder, toInt256(scaled_balance) AS anchor, toInt256(0) AS delta
-        FROM price_data.atoken_scaled_anchor FINAL
-        WHERE contract_address = {c:String} AND holder != ''
-        UNION ALL
-        SELECT holder, toInt256(0) AS anchor, sum(scaled_delta) AS delta
-        FROM ${deltaTable} FINAL
-        WHERE contract_address = {c:String} AND block_height > {b0:UInt32}
-        GROUP BY holder
-      ) GROUP BY holder HAVING (sum(anchor) + sum(delta)) > 0`,
-    query_params: { c: contract.toLowerCase(), b0 }, format: 'JSONEachRow',
-  })
-  return (await res.json<{ holder: string; scaled: string }>()).map(r => ({ holder: r.holder.toLowerCase(), scaled: BigInt(r.scaled) }))
-}
-
-// Current positive holder counts for multiple aToken contracts in one scan.
-// This is the count-only equivalent of reconstructHolderScaled: the same
-// anchor/delta fold and module-account exclusion, without materializing every
-// holder or enriching account identities for the asset directory.
-export async function reconstructATokenHolderCounts(
-  db: ClickHouseClient,
-  contracts: string[],
-  b0: number,
-): Promise<Map<string, number>> {
-  const normalized = [...new Set(contracts.map(contract => contract.toLowerCase()).filter(contract => /^0x[0-9a-f]{40}$/.test(contract)))]
-  if (!normalized.length) return new Map()
-  const deltaTable = 'price_data.atoken_scaled_deltas_by_contract'
-  const res = await db.query({
-    query: `
-      SELECT contract, count() AS holders
-      FROM (
-        SELECT contract, holder, sum(anchor) + sum(delta) AS scaled
-        FROM (
-          SELECT lower(contract_address) AS contract, lower(holder) AS holder,
-            toInt256(scaled_balance) AS anchor, toInt256(0) AS delta
-          FROM price_data.atoken_scaled_anchor FINAL
-          WHERE contract_address IN ({contracts:Array(String)}) AND holder != ''
-          UNION ALL
-          SELECT contract_address AS contract, holder, toInt256(0) AS anchor,
-            sum(scaled_delta) AS delta
-          FROM ${deltaTable} FINAL
-          WHERE contract_address IN ({contracts:Array(String)}) AND block_height > {b0:UInt32}
-          GROUP BY contract, holder
-        )
-        GROUP BY contract, holder
-        HAVING scaled > 0 AND NOT startsWith(holder, '0x6d6f646c')
-      ) GROUP BY contract`,
-    query_params: { contracts: normalized, b0 },
-    format: 'JSONEachRow',
-    // Folding all core aToken contracts in one pass avoids rescanning the large
-    // log table once per token. Spill aggregation state early so this directory
-    // summary stays well below the API's normal per-query memory ceiling.
-    clickhouse_settings: {
-      max_threads: 4,
-      max_memory_usage: '3000000000',
-      max_bytes_before_external_group_by: '500000000',
-    },
-  })
-  const counts = new Map<string, number>()
-  for (const row of await res.json<{ contract: string; holders: string | number }>()) {
-    const count = Number(row.holders)
-    if (Number.isSafeInteger(count) && count >= 0) counts.set(row.contract.toLowerCase(), count)
-  }
-  return counts
-}
-
-// GIGAHDX market totals for the HDX dashboard: per-reserve supplied/debt from
-// the scaled-total reconstruction × current indices, plus holder counts. stHDX
-// has no market price of its own — it's staked HDX, valued at the HDX price.
-export interface GigaMarketReserveStat { asset: AssetRef; supplied: number; suppliedUsd: number | null; debt: number; debtUsd: number | null; suppliers: number; borrowers: number }
-export async function getGigaMarketStats(): Promise<GigaMarketReserveStat[] | null> {
-  return cached('explorer:giga-market-stats', 300_000, async () => {
-    const b0 = await aTokenAnchorBlock()
-    if (!b0) return null
-    const tokens = (await getMmReserveTokens()).filter(t => t.marketKey === 'gigahdx')
-    if (!tokens.length) return null
-    const contracts = tokens.flatMap(t => [t.aToken, t.vDebt])
-    const [indices, totals, counts, prices] = await Promise.all([
-      reserveIndicesNow(), reconstructTotalScaled(contracts, b0),
-      reconstructATokenHolderCounts(client, contracts, b0), ensurePrices(),
-    ])
-    const out: GigaMarketReserveStat[] = []
-    for (const t of tokens) {
-      const idx = indices.get(`${t.poolProxy.toLowerCase()}:${t.asset.toLowerCase()}`)
-      const assetId = assetIdFromMmAddress(t.asset)
-      if (!idx || assetId == null) continue
-      const reg = asset(assetId)
-      const dec = 10 ** (reg.decimals ?? 12)
-      const supplied = Number((totals.get(t.aToken.toLowerCase()) ?? 0n) * idx.liq / ATOKEN_RAY) / dec
-      const debt = Number((totals.get(t.vDebt.toLowerCase()) ?? 0n) * idx.vbi / ATOKEN_RAY) / dec
-      const price = prices.get(assetId)?.price ?? (assetId === 670 ? prices.get(0)?.price : undefined)
-      out.push({
-        asset: reg,
-        supplied, suppliedUsd: price != null ? supplied * price : null,
-        debt, debtUsd: price != null ? debt * price : null,
-        suppliers: counts.get(t.aToken.toLowerCase()) ?? 0,
-        borrowers: counts.get(t.vDebt.toLowerCase()) ?? 0,
-      })
-    }
-    return out.length ? out : null
-  })
-}
-
-// GIGAHDX liquidation levels. In this isolated market ALL collateral is
-// HDX-priced (stHDX) and all debt is a $1-stable (HOLLAR), so the health
-// factor falls linearly with the HDX price and a position crosses HF = 1 at
-// exactly currentPrice / HF. Positions already below HF 1 keep their (higher)
-// derived price -- the chart clamps them into its top bucket.
-export interface GigaLiquidationPoint { price: number; stHdx: number }
-interface GigaPositionRow { total_collateral_base: string; total_debt_base: string; health_factor: string }
-export function liquidationPointsFromPositions(rows: GigaPositionRow[], currentPrice: number): GigaLiquidationPoint[] {
-  const out: GigaLiquidationPoint[] = []
-  if (!(currentPrice > 0)) return out
-  for (const r of rows) {
-    const debt = Number(r.total_debt_base)
-    const collateralUsd = Number(r.total_collateral_base) / 1e8
-    const hf = Number(r.health_factor) / 1e18
-    if (!(debt > 0) || !(collateralUsd > 0) || !Number.isFinite(hf) || hf <= 0) continue
-    out.push({ price: currentPrice / hf, stHdx: collateralUsd / currentPrice })
-  }
-  return out.sort((a, b) => a.price - b.price)
-}
-
-export interface GigaLiquidations { currentPrice: number; points: GigaLiquidationPoint[] }
-export async function getGigaLiquidationLevels(): Promise<GigaLiquidations | null> {
-  return cached('explorer:giga-liquidations', 300_000, async () => {
-    const pool = (await getMmReserveTokens()).find(t => t.marketKey === 'gigahdx')?.poolProxy
-    const currentPrice = (await ensurePrices()).get(0)?.price
-    if (!pool || !(currentPrice != null && currentPrice > 0)) return null
-    // Latest position per borrower in this market; the MV keeps it current.
-    const res = await client.query({
-      query: `SELECT toString(${mmPositionField('total_collateral_base')}) AS total_collateral_base,
-                     toString(${mmPositionField('total_debt_base')}) AS total_debt_base,
-                     toString(${mmPositionField('health_factor')}) AS health_factor
-              FROM (${latestMoneyMarketPositionsSql('pool_address = {pool:String}')})
-              WHERE ${mmPositionField('total_debt_base')} > 0`,
-      query_params: { pool: pool.toLowerCase() }, format: 'JSONEachRow',
-    })
-    const points = liquidationPointsFromPositions(await res.json<GigaPositionRow>(), currentPrice)
-    return points.length ? { currentPrice, points } : null
-  })
-}
-
-// totalSupply (scaled) for every requested contract: holder='' anchor +
-// Σ (Mint − Burn) after B0. BalanceTransfer nets to zero across holders. Keeping
-// all reserve contracts in one query avoids repeatedly scanning raw_evm_logs.
-async function reconstructTotalScaled(contracts: string[], b0: number): Promise<Map<string, bigint>> {
-  const normalized = [...new Set(contracts.map(c => c.toLowerCase()).filter(c => /^0x[0-9a-f]{40}$/.test(c)))]
-  if (!normalized.length) return new Map()
-  const deltaTable = 'price_data.atoken_scaled_deltas_by_contract'
-  const res = await client.query({
-    query: `
-      SELECT contract, toString(sum(anchor) + sum(delta)) AS scaled
-      FROM (
-        SELECT contract_address AS contract,
-          toInt256(argMax(scaled_balance, updated_at)) AS anchor,
-          toInt256(0) AS delta
-        FROM price_data.atoken_scaled_anchor
-        WHERE holder = '' AND contract_address IN ({contracts:Array(String)})
-        GROUP BY contract
-        UNION ALL
-        SELECT contract_address AS contract, toInt256(0) AS anchor,
-          sum(scaled_delta) AS delta
-        FROM ${deltaTable} FINAL
-        WHERE contract_address IN ({contracts:Array(String)}) AND block_height > {b0:UInt32}
-        GROUP BY contract
-      ) GROUP BY contract`,
-    query_params: { contracts: normalized, b0 }, format: 'JSONEachRow',
-  })
-  const totals = new Map<string, bigint>()
-  for (const row of await res.json<{ contract: string; scaled: string }>()) {
-    totals.set(row.contract.toLowerCase(), BigInt(row.scaled || '0'))
-  }
-  return totals
-}
-
-// Scaled balance per token contract for ONE account (aToken supplied + vDebt debt),
-// bounded to the account's own events via has(participants, h).
-async function reconstructAccountScaled(h160: string, b0: number): Promise<Map<string, bigint>> {
-  const h = h160.toLowerCase()
-  const res = await client.query({
-    query: `
-      SELECT contract, toString(sum(anchor) + sum(delta)) AS scaled FROM (
-        SELECT lower(contract_address) AS contract, toInt256(scaled_balance) AS anchor, toInt256(0) AS delta
-        FROM price_data.atoken_scaled_anchor FINAL WHERE holder = {h:String}
-        UNION ALL
-        SELECT contract_address AS contract, toInt256(0) AS anchor, sum(scaled_delta) AS delta
-        FROM price_data.atoken_scaled_deltas FINAL
-        WHERE holder = {h:String} AND block_height > {b0:UInt32}
-        GROUP BY contract
-      ) GROUP BY contract HAVING (sum(anchor) + sum(delta)) > 0`,
-    query_params: { h, b0 }, format: 'JSONEachRow',
-  })
-  const m = new Map<string, bigint>()
-  for (const r of await res.json<{ contract: string; scaled: string }>()) m.set(r.contract.toLowerCase(), BigInt(r.scaled))
-  return m
-}
-
-// Per-reserve supplied (aToken) and debt (vDebt), reconstructed from the anchor
-// and indexed event deltas without request-time RPC.
-//
-// Reconstructed per request rather than read from the published account-value
-// snapshot, for the same freshness reason as getMoneyMarketPositions — and it must
-// move in lockstep with it: attachMmReserves raises the card's displayed totals to
-// max(aggregate, reserve-derived), so pairing a fresh aggregate with five-minute-old
-// reserves would let a stale-high debt survive a repay. Bounded to the account's own
-// rows (holder leads atoken_scaled_deltas' sort key); the anchor scan it adds is
-// ~92k rows / 12 MiB / 14 ms per uncached call.
-export async function getMoneyMarketReserves(h160: string): Promise<MmReserve[]> {
-  if (!/^0x[0-9a-fA-F]{40}$/.test(h160)) return []
-  return cached(`explorer:mm-reserves:${accountValueGenerationEpoch}:${h160.toLowerCase()}`, 15000, async () => {
-    const b0 = await aTokenAnchorBlock()
-    if (!b0) return []
-    const [prices, tokens, indices, byContract] = await Promise.all([
-      ensureAccountValuePrices(), getMmReserveTokens(), reserveIndicesNow(), reconstructAccountScaled(h160, b0),
-    ])
-    if (!byContract.size || !tokens.length) return []
-    const out: MmReserve[] = []
-    for (const t of tokens) {
-      const resIdx = indices.get(`${t.poolProxy.toLowerCase()}:${t.asset.toLowerCase()}`)
-      if (!resIdx) continue
-      const aScaled = byContract.get(t.aToken.toLowerCase()) ?? 0n
-      const dScaled = byContract.get(t.vDebt.toLowerCase()) ?? 0n
-      const sup = aScaled > 0n ? (aScaled * resIdx.liq) / ATOKEN_RAY : 0n
-      const dbt = dScaled > 0n ? (dScaled * resIdx.vbi) / ATOKEN_RAY : 0n
-      if (sup <= 0n && dbt <= 0n) continue
-      const underId = assetIdFromMmAddress(t.asset)
-      const reg = underId != null ? asset(underId) : null
-      const decimals = reg?.decimals ?? 18
-      const p = reg ? prices.get(reg.assetId) : undefined
-      // Label supplied collateral with the aToken the user holds (DOT→aDOT), matching
-      // the Hydration wallet/borrow UI; debt stays the borrowed underlying.
-      const aTokenId = sup > 0n && reg ? UNDERLYING_TO_ATOKEN_ID[reg.assetId] : undefined
-      const disp = aTokenId != null ? asset(aTokenId) : null
-      out.push({
-        assetId: disp?.assetId ?? reg?.assetId ?? -1, symbol: disp?.symbol ?? (reg?.symbol ?? '?'), decimals,
-        iconAssetId: disp?.iconAssetId ?? reg?.iconAssetId,
-        parachainId: disp?.parachainId ?? reg?.parachainId ?? null,
-        origin: disp?.origin ?? reg?.origin ?? null,
-        supplied: sup.toString(), debt: dbt.toString(),
-        suppliedUsd: p ? Number(sup) / 10 ** decimals * p.price : null,
-        debtUsd: p ? Number(dbt) / 10 ** decimals * p.price : null,
-        collateral: sup > 0n,
-        marketKey: t.marketKey ?? 'core',
-      })
-    }
-    return out.sort((a, b) => (b.suppliedUsd ?? b.debtUsd ?? 0) - (a.suppliedUsd ?? a.debtUsd ?? 0))
-  })
-}
-
-// Batched form of reconstructAccountScaled: current scaled aToken/vDebt balances
-// for MANY holders in a single raw_evm_logs scan (anchor@B0 + Σ post-B0 deltas).
-// Used by the accounts-directory top-holdings enrichment so one page costs one scan
-// instead of one reconstruction per row. Returns holder → contract → scaled.
-async function reconstructAccountsScaled(h160s: string[], b0: number): Promise<Map<string, Map<string, bigint>>> {
-  const hs = [...new Set(h160s.map(h => h.toLowerCase()).filter(h => /^0x[0-9a-f]{40}$/.test(h)))]
-  const out = new Map<string, Map<string, bigint>>()
-  if (!hs.length || !b0) return out
-  const res = await client.query({
-    query: `
-      SELECT holder, contract, toString(sum(anchor) + sum(delta)) AS scaled FROM (
-        SELECT lower(holder) AS holder, lower(contract_address) AS contract,
-          toInt256(scaled_balance) AS anchor, toInt256(0) AS delta
-        FROM price_data.atoken_scaled_anchor FINAL WHERE lower(holder) IN {hs:Array(String)}
-        UNION ALL
-        SELECT holder, contract_address AS contract, toInt256(0) AS anchor,
-          sum(scaled_delta) AS delta
-        FROM price_data.atoken_scaled_deltas FINAL
-        WHERE holder IN {hs:Array(String)} AND block_height > {b0:UInt32}
-        GROUP BY holder, contract
-      ) GROUP BY holder, contract HAVING (sum(anchor) + sum(delta)) > 0`,
-    query_params: { hs, b0 }, format: 'JSONEachRow',
-  })
-  for (const r of await res.json<{ holder: string; contract: string; scaled: string }>()) {
-    const h = r.holder.toLowerCase()
-    const m = out.get(h) ?? out.set(h, new Map<string, bigint>()).get(h)!
-    m.set(r.contract.toLowerCase(), BigInt(r.scaled))
-  }
-  return out
-}
-
-// Per-holder supplied-collateral (aToken) reserves for a bounded holder set, built
-// from batched reconstruction — the batched twin of getMoneyMarketReserves, used to
-// fold MM collateral into the accounts-directory top-holdings enrichment. Debt
-// reserves are still emitted (collateral:false) but callers fold only supplied.
-async function mmReservesByHolder(h160s: string[]): Promise<Map<string, MmReserve[]>> {
-  const out = new Map<string, MmReserve[]>()
-  const hs = [...new Set(h160s.map(h => h.toLowerCase()).filter(h => /^0x[0-9a-f]{40}$/.test(h)))]
-  if (!hs.length) return out
-  const b0 = await aTokenAnchorBlock()
-  if (!b0) return out
-  const [prices, tokens, indices] = await Promise.all([ensureAccountValuePrices(), getMmReserveTokens(), reserveIndicesNow()])
-  // Reconstruct in small holder chunks: hasAny(participants, …) over the whole
-  // raw_evm_logs table blows ClickHouse's per-query memory once the holder set is
-  // large, so cap each scan's matched rows AND how many scans run at once.
-  const CHUNK = 8
-  const CHUNK_CONCURRENCY = 4
-  const chunks: string[][] = []
-  for (let i = 0; i < hs.length; i += CHUNK) chunks.push(hs.slice(i, i + CHUNK))
-  const byHolder = new Map<string, Map<string, bigint>>()
-  let nextChunk = 0
-  const chunkWorker = async (): Promise<void> => {
-    while (nextChunk < chunks.length) {
-      const part = await reconstructAccountsScaled(chunks[nextChunk++], b0)
-      for (const [h, m] of part) byHolder.set(h, m)
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(CHUNK_CONCURRENCY, chunks.length) }, chunkWorker))
-  for (const [h, byContract] of byHolder) {
-    const reserves: MmReserve[] = []
-    for (const t of tokens) {
-      const resIdx = indices.get(`${t.poolProxy.toLowerCase()}:${t.asset.toLowerCase()}`)
-      if (!resIdx) continue
-      const aScaled = byContract.get(t.aToken.toLowerCase()) ?? 0n
-      const dScaled = byContract.get(t.vDebt.toLowerCase()) ?? 0n
-      const sup = aScaled > 0n ? (aScaled * resIdx.liq) / ATOKEN_RAY : 0n
-      const dbt = dScaled > 0n ? (dScaled * resIdx.vbi) / ATOKEN_RAY : 0n
-      if (sup <= 0n && dbt <= 0n) continue
-      const underId = assetIdFromMmAddress(t.asset)
-      const reg = underId != null ? asset(underId) : null
-      const decimals = reg?.decimals ?? 18
-      const p = reg ? prices.get(reg.assetId) : undefined
-      const aTokenId = sup > 0n && reg ? UNDERLYING_TO_ATOKEN_ID[reg.assetId] : undefined
-      const disp = aTokenId != null ? asset(aTokenId) : null
-      reserves.push({
-        assetId: disp?.assetId ?? reg?.assetId ?? -1, symbol: disp?.symbol ?? (reg?.symbol ?? '?'), decimals,
-        iconAssetId: disp?.iconAssetId ?? reg?.iconAssetId,
-        parachainId: disp?.parachainId ?? reg?.parachainId ?? null,
-        origin: disp?.origin ?? reg?.origin ?? null,
-        supplied: sup.toString(), debt: dbt.toString(),
-        suppliedUsd: p ? Number(sup) / 10 ** decimals * p.price : null,
-        debtUsd: p ? Number(dbt) / 10 ** decimals * p.price : null,
-        collateral: sup > 0n,
-        marketKey: t.marketKey ?? 'core',
-      })
-    }
-    if (reserves.length) out.set(h, reserves)
-  }
-  return out
-}
-
-export interface MoneyMarketScaledHolding {
-  holder: string
-  contract: string
-  scaled: bigint
-}
-
-export interface LatestMoneyMarketAggregate {
-  holder: string
-  poolAddress: string
-  marketKey: string
-  totalCollateralBase: bigint
-  totalDebtBase: bigint
-  availableBorrowsBase: bigint
-  liquidationThreshold: number
-  ltv: bigint
-  healthFactor: bigint
-  blockHeight: number
-  blockTimestamp: string
-}
-
-export interface MoneyMarketAccountValueClaim {
-  accountId: string
-  holder: string
-  poolAddress: string
-  marketKey: string
-  reservePresent: boolean
-  assetId: number
-  supplied: bigint
-  debt: bigint
-  totalCollateralBase: bigint
-  totalDebtBase: bigint
-  availableBorrowsBase: bigint
-  liquidationThreshold: number
-  ltv: bigint
-  healthFactor: bigint
-  blockHeight: number
-  blockTimestamp: string
-}
-
-// Convert a complete current scaled-balance generation into compact raw reserve
-// claims. Aggregate Aave base values stay on one header row per account/market;
-// reserve rows retain integer principal so request-time valuation can use the
-// same current Explorer prices as account detail.
-export function buildMoneyMarketAccountValueClaims(
-  holdings: MoneyMarketScaledHolding[],
-  tokens: MmReserveToken[],
-  indices: Map<string, { liq: bigint; vbi: bigint }>,
-  aggregates: LatestMoneyMarketAggregate[],
-): MoneyMarketAccountValueClaim[] {
-  const contractMap = new Map<string, { token: MmReserveToken; side: 'supplied' | 'debt' }>()
-  for (const token of tokens) {
-    const poolAddress = token.poolProxy.toLowerCase()
-    const normalized = { ...token, asset: token.asset.toLowerCase(), poolProxy: poolAddress }
-    for (const [contract, side] of [[token.aToken, 'supplied'], [token.vDebt, 'debt']] as const) {
-      const key = contract.toLowerCase()
-      if (contractMap.has(key)) throw new Error(`duplicate money-market reserve contract ${key}`)
-      contractMap.set(key, { token: normalized, side })
-    }
-  }
-
-  type ReserveClaim = { supplied: bigint; debt: bigint; token: MmReserveToken }
-  const reserves = new Map<string, ReserveClaim>()
-  const holderMarkets = new Set<string>()
-  const seenHoldings = new Set<string>()
-  for (const holding of holdings) {
-    if (holding.scaled <= 0n) continue
-    const holder = holding.holder.toLowerCase()
-    const holdingKey = `${holder}|${holding.contract.toLowerCase()}`
-    if (seenHoldings.has(holdingKey)) throw new Error(`duplicate money-market scaled holding ${holdingKey}`)
-    seenHoldings.add(holdingKey)
-    const mapped = contractMap.get(holding.contract.toLowerCase())
-    if (!mapped) throw new Error(`unmapped positive money-market contract ${holding.contract}`)
-    const idx = indices.get(`${mapped.token.poolProxy}:${mapped.token.asset}`)
-    if (!idx) throw new Error(`missing money-market reserve index ${mapped.token.poolProxy}:${mapped.token.asset}`)
-    const assetId = assetIdFromMmAddress(mapped.token.asset)
-    if (assetId == null) throw new Error(`unmapped money-market reserve asset ${mapped.token.asset}`)
-    const actual = holding.scaled * (mapped.side === 'supplied' ? idx.liq : idx.vbi) / ATOKEN_RAY
-    const holderMarket = `${holder}|${mapped.token.poolProxy}`
-    holderMarkets.add(holderMarket)
-    if (actual <= 0n) continue
-    const key = `${holderMarket}|${assetId}`
-    const current = reserves.get(key) ?? { supplied: 0n, debt: 0n, token: mapped.token }
-    current[mapped.side] += actual
-    reserves.set(key, current)
-  }
-
-  const aggregateByHolderMarket = new Map<string, LatestMoneyMarketAggregate>()
-  for (const aggregate of aggregates) {
-    const holder = aggregate.holder.toLowerCase()
-    const poolAddress = aggregate.poolAddress.toLowerCase()
-    const key = `${holder}|${poolAddress}`
-    if (aggregateByHolderMarket.has(key)) throw new Error(`duplicate money-market aggregate ${key}`)
-    aggregateByHolderMarket.set(key, { ...aggregate, holder, poolAddress })
-    holderMarkets.add(key)
-  }
-
-  const claims: MoneyMarketAccountValueClaim[] = []
-  const sortedHolderMarkets = [...holderMarkets].sort()
-  for (const holderMarket of sortedHolderMarkets) {
-    const separator = holderMarket.lastIndexOf('|')
-    const holder = holderMarket.slice(0, separator)
-    const poolAddress = holderMarket.slice(separator + 1)
-    const accountId = evmAccountIdFromAddress(holder)
-    if (!accountId) throw new Error(`invalid money-market holder ${holder}`)
-    const aggregate = aggregateByHolderMarket.get(holderMarket)
-    const marketKey = aggregate?.marketKey ?? tokens.find(token => token.poolProxy.toLowerCase() === poolAddress)?.marketKey
-    if (!marketKey) throw new Error(`unknown money-market pool ${poolAddress}`)
-    claims.push({
-      accountId, holder, poolAddress, marketKey, reservePresent: false, assetId: 0,
-      supplied: 0n, debt: 0n,
-      totalCollateralBase: aggregate?.totalCollateralBase ?? 0n,
-      totalDebtBase: aggregate?.totalDebtBase ?? 0n,
-      availableBorrowsBase: aggregate?.availableBorrowsBase ?? 0n,
-      liquidationThreshold: aggregate?.liquidationThreshold ?? 0,
-      ltv: aggregate?.ltv ?? 0n, healthFactor: aggregate?.healthFactor ?? 0n,
-      blockHeight: aggregate?.blockHeight ?? 0,
-      blockTimestamp: aggregate?.blockTimestamp ?? '1970-01-01 00:00:00',
-    })
-    const prefix = `${holderMarket}|`
-    for (const [key, reserve] of [...reserves.entries()].filter(([key]) => key.startsWith(prefix)).sort(([a], [b]) => a.localeCompare(b))) {
-      const assetId = Number(key.slice(prefix.length))
-      claims.push({
-        accountId, holder, poolAddress, marketKey, reservePresent: true, assetId,
-        supplied: reserve.supplied, debt: reserve.debt,
-        totalCollateralBase: 0n, totalDebtBase: 0n, availableBorrowsBase: 0n,
-        liquidationThreshold: 0, ltv: 0n, healthFactor: 0n,
-        blockHeight: 0, blockTimestamp: '1970-01-01 00:00:00',
-      })
-    }
-  }
-  return claims
-}
-
-// Position snapshots can be emitted several times in one block. Event-derived
-// observations order by their event index; a periodic full-block observation is
-// state after all events and therefore wins the same-block tie. Ingest time only
-// resolves a replay of the same stable observation identity.
-//
-// Current per-(holder, market) state does NOT use this: it reads
-// money_market_latest_positions, which resolves the same ordering at insert time
-// (see 001_tables.sql). What is left here are the per-bucket history passes,
-// which need the winner *within each bucket*, and the account-detail fallback,
-// which needs one winner across a whole alias group — neither is expressible
-// against a single-row-per-key projection.
-function moneyMarketPositionOrderSql(prefix = ''): string {
-  const observation = `${prefix}observation_id`
-  return `tuple(${prefix}block_height,
-    if(startsWith(${observation}, 'money-market-periodic:'), toUInt32(4294967295),
-      toUInt32OrZero(arrayElement(splitByChar(':', ${observation}), 3))),
-    ${observation}, ${prefix}ingested_at)`
-}
-
-// Current aggregate position per (holder, market), one row per key, from the
-// insert-time argMax state in money_market_latest_positions. Re-aggregating raw
-// for this cost 4.65 GiB / 17.8M rows / 3.3 s per call.
-//
-// All nine winning values ride in ONE argMax state, so `position` is provably a
-// single observation's row; fields are addressed by name through
-// mmPositionField. `where` filters the projection's own key columns
-// (`user_address`, `pool_address`) — the configured-market set is extensible at
-// runtime via EXPLORER_MM_MARKETS while the schema is static, so the market
-// filter belongs to the reader, not the view.
-function latestMoneyMarketPositionsSql(where: string): string {
-  return `SELECT user_address AS holder, pool_address AS pool, argMaxMerge(position_state) AS position
-      FROM price_data.money_market_latest_positions
-      WHERE ${where}
-      GROUP BY holder, pool`
-}
-
-// One named field of the winning observation selected by the query above.
-function mmPositionField(field: string): string {
-  return `tupleElement(position, '${field}')`
-}
-
-async function reconstructAllActiveMoneyMarketScaled(
-  contracts: string[],
-  anchorBlock: number,
-): Promise<MoneyMarketScaledHolding[]> {
-  const normalized = [...new Set(contracts.map(contract => contract.toLowerCase()))]
-  if (!normalized.length || !anchorBlock) return []
-  const result = await client.query({
-    query: `SELECT holder,contract,toString(sum(anchor)+sum(delta)) AS scaled
-      FROM (
-        SELECT lower(holder) AS holder,lower(contract_address) AS contract,
-          toInt256(argMax(scaled_balance,updated_at)) AS anchor,toInt256(0) AS delta
-        FROM price_data.atoken_scaled_anchor FINAL
-        WHERE holder!='' AND lower(contract_address) IN {contracts:Array(String)}
-        GROUP BY holder,contract
-        UNION ALL
-        SELECT holder,contract_address AS contract,toInt256(0) AS anchor,
-          sum(scaled_delta) AS delta
-        FROM price_data.atoken_scaled_deltas FINAL
-        WHERE block_height>{anchorBlock:UInt32} AND contract_address IN {contracts:Array(String)}
-        GROUP BY holder,contract
-      )
-      GROUP BY holder,contract HAVING sum(anchor)+sum(delta)>0`,
-    query_params: { contracts: normalized, anchorBlock }, format: 'JSONEachRow',
-  })
-  return (await result.json<{ holder: string; contract: string; scaled: string }>()).map(row => ({
-    holder: row.holder, contract: row.contract, scaled: BigInt(row.scaled),
-  }))
-}
-
-async function loadAllLatestMoneyMarketAggregates(): Promise<LatestMoneyMarketAggregate[]> {
-  const result = await client.query({
-    query: `SELECT holder,pool,
-        toString(${mmPositionField('total_collateral_base')}) AS collateral,
-        toString(${mmPositionField('total_debt_base')}) AS debt,
-        toString(${mmPositionField('available_borrows_base')}) AS available_borrows,
-        toUInt32(${mmPositionField('current_liquidation_threshold')}) AS liquidation_threshold,
-        toString(${mmPositionField('ltv')}) AS ltv,
-        toString(${mmPositionField('health_factor')}) AS health_factor,
-        ${mmPositionField('block_height')} AS latest_block,
-        toString(${mmPositionField('block_timestamp')}) AS latest_timestamp
-      FROM (${latestMoneyMarketPositionsSql(`pool_address IN (${configuredMmPoolsSql()})`)})
-      WHERE ${mmPositionField('total_collateral_base')}>0 OR ${mmPositionField('total_debt_base')}>0`,
-    format: 'JSONEachRow',
-  })
-  return (await result.json<{ holder: string; pool: string; collateral: string; debt: string; available_borrows: string; liquidation_threshold: number; ltv: string; health_factor: string; latest_block: number; latest_timestamp: string }>()).map(row => {
-    const market = MM_MARKET_BY_POOL.get(row.pool)
-    if (!market) throw new Error(`unknown configured money-market pool ${row.pool}`)
-    return {
-      holder: row.holder, poolAddress: row.pool, marketKey: market.key,
-      totalCollateralBase: BigInt(row.collateral || '0'), totalDebtBase: BigInt(row.debt || '0'),
-      availableBorrowsBase: BigInt(row.available_borrows || '0'),
-      liquidationThreshold: Number(row.liquidation_threshold || 0),
-      ltv: BigInt(row.ltv || '0'), healthFactor: BigInt(row.health_factor || '0'),
-      blockHeight: Number(row.latest_block || 0), blockTimestamp: row.latest_timestamp,
-    }
-  })
-}
-
-const MONEY_MARKET_ACCOUNT_VALUES_REFRESH_MS = 5 * 60_000
-let moneyMarketAccountValuesRefreshTimer: ReturnType<typeof setInterval> | null = null
-let moneyMarketAccountValuesRefreshInflight: Promise<'republished' | 'unchanged'> | null = null
-
-export async function moneyMarketAccountValueSnapshotReady(): Promise<boolean> {
-  try {
-    const result = await client.query({
-      query: `WITH current AS (
-          SELECT argMax(snapshot_id,computed_at) AS snapshot_id,
-            argMax(claim_count,computed_at) AS claim_count
-          FROM price_data.money_market_account_value_snapshot_state
-          WHERE snapshot_key='current'
-        )
-        SELECT current.snapshot_id AS snapshot_id,current.claim_count AS claim_count,
-          count(c.account_id) AS stored_count,
-          uniqExact((c.account_id,c.pool_address,c.reserve_present,c.asset_id)) AS unique_count
-        FROM current
-        LEFT JOIN price_data.money_market_account_value_snapshots c ON c.snapshot_id=current.snapshot_id
-        GROUP BY current.snapshot_id,current.claim_count`,
-      format: 'JSONEachRow',
-    })
-    const row = (await result.json<{ snapshot_id: string; claim_count: number; stored_count: string; unique_count: string }>())[0]
-    return Boolean(row?.snapshot_id)
-      && Number(row.claim_count) === Number(row.stored_count)
-      && Number(row.stored_count) === Number(row.unique_count)
-  } catch { return false }
-}
-
-// Checksummed form of one stored money-market claim row: every column of
-// money_market_account_value_snapshots except the generation's own identity
-// (`snapshot_id`, `computed_at`) and the two columns that are pure functions of
-// columns already covered — `holder` (the H160 whose account id this is) and
-// `market_key` (the configured market of `pool_address`).
-export const moneyMarketClaimChecksumFields = (claim: MoneyMarketAccountValueClaim): string =>
-  `${claim.accountId}|${claim.poolAddress}|${claim.reservePresent ? 1 : 0}|${claim.assetId}|${claim.supplied}|${claim.debt}|${claim.totalCollateralBase}|${claim.totalDebtBase}|${claim.availableBorrowsBase}|${claim.liquidationThreshold}|${claim.ltv}|${claim.healthFactor}|${claim.blockHeight}|${claim.blockTimestamp}\n`
 
 // Two price maps are the same account-value generation only if every asset
 // carries the same price and 24h change: the pinned map values the whole
@@ -4955,270 +2748,7 @@ export function samePriceGeneration(a: Map<number, PriceInfo>, b: Map<number, Pr
   return true
 }
 
-async function refreshMoneyMarketAccountValuesUncached(): Promise<'republished' | 'unchanged'> {
-  const [anchorBlock, tokens, indices, aggregates] = await Promise.all([
-    aTokenAnchorBlock(), getMmReserveTokens(), reserveIndicesNow(), loadAllLatestMoneyMarketAggregates(),
-  ])
-  if (!anchorBlock || !tokens.length) throw new Error('money-market anchor or reserve map missing')
-  const holdings = await reconstructAllActiveMoneyMarketScaled(tokens.flatMap(token => [token.aToken, token.vDebt]), anchorBlock)
-  const claims = buildMoneyMarketAccountValueClaims(holdings, tokens, indices, aggregates)
-  if (!claims.length) throw new Error('money-market account value generation is empty')
-
-  const snapshotId = String(Date.now())
-  const now = new Date().toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '')
-  // Hash in the stored table's own order. The claim array's order follows the
-  // unordered ClickHouse reads it was built from, so an order-sensitive digest
-  // would report a changed generation whenever two identical rows swapped.
-  const checksum = createHash('sha256')
-  const ordered = [...claims].sort((a, b) => a.accountId.localeCompare(b.accountId)
-    || a.poolAddress.localeCompare(b.poolAddress)
-    || Number(a.reservePresent) - Number(b.reservePresent)
-    || a.assetId - b.assetId)
-  for (const claim of ordered) checksum.update(moneyMarketClaimChecksumFields(claim))
-  const digest = checksum.digest('hex')
-
-  // Prices and the raw principal below publish as one account-value generation.
-  // The map is reloaded every cycle even when the principal did not move: it is
-  // what the directory's Value column is computed against, and freezing it
-  // would leave a stale value beside a live price everywhere else.
-  const nextAccountValuePrices = new Map(await loadFreshPrices())
-  const pricesMoved = !samePriceGeneration(accountValuePriceMap, nextAccountValuePrices)
-  const pinPrices = (): void => {
-    if (!pricesMoved) return
-    accountValuePriceMap = nextAccountValuePrices
-    accountValueGenerationEpoch++
-  }
-
-  if (await canSkipRepublish(client, {
-    dataTable: 'money_market_account_value_snapshots', stateTable: 'money_market_account_value_snapshot_state',
-    rowCountColumn: 'claim_count', checksum: digest, rowCount: claims.length,
-  })) {
-    // The published generation is the one this cycle computed, so it stays
-    // current: the readiness flag it justified stays set, and every consumer
-    // keyed on the pointer's `computed_at` keeps its still-correct entry.
-    setMoneyMarketAccountValuesReady()
-    pinPrices()
-    return 'unchanged'
-  }
-  const batchSize = 1_000
-  for (let offset = 0; offset < claims.length; offset += batchSize) {
-    await client.insert({
-      table: 'price_data.money_market_account_value_snapshots',
-      values: claims.slice(offset,offset + batchSize).map(claim => ({
-        snapshot_id: snapshotId, account_id: claim.accountId, holder: claim.holder,
-        pool_address: claim.poolAddress, market_key: claim.marketKey,
-        reserve_present: claim.reservePresent ? 1 : 0, asset_id: claim.assetId,
-        supplied: claim.supplied.toString(), debt: claim.debt.toString(),
-        total_collateral_base: claim.totalCollateralBase.toString(),
-        total_debt_base: claim.totalDebtBase.toString(), available_borrows_base: claim.availableBorrowsBase.toString(),
-        liquidation_threshold: claim.liquidationThreshold, ltv: claim.ltv.toString(),
-        health_factor: claim.healthFactor.toString(), block_height: claim.blockHeight,
-        block_timestamp: claim.blockTimestamp,
-        computed_at: now,
-      })),
-      format: 'JSONEachRow',
-    })
-  }
-  const verify = await client.query({
-    query: `SELECT count() AS c,uniqExact((account_id,pool_address,reserve_present,asset_id)) AS u
-      FROM price_data.money_market_account_value_snapshots WHERE snapshot_id={snapshotId:String}`,
-    query_params: { snapshotId }, format: 'JSONEachRow',
-  })
-  const counts = (await verify.json<{ c: string; u: string }>())[0]
-  if (Number(counts?.c) !== claims.length || Number(counts?.u) !== claims.length) {
-    throw new Error(`incomplete money-market account value generation ${counts?.c ?? 0}/${claims.length}`)
-  }
-  await client.insert({
-    table: 'price_data.money_market_account_value_snapshot_state',
-    values: [{
-      snapshot_key: 'current', snapshot_id: snapshotId,
-      source_holding_count: holdings.length, source_position_count: aggregates.length,
-      claim_count: claims.length, source_checksum: digest, computed_at: now,
-    }],
-    format: 'JSONEachRow',
-  })
-  // A republished principal is a new account-value generation whether or not
-  // prices moved with it, so the pinned map and the epoch advance together with
-  // it. General Explorer prices may keep refreshing every 30 seconds; account
-  // list and detail stay pinned to this generation.
-  accountValuePriceMap = nextAccountValuePrices
-  accountValueGenerationEpoch++
-  if (!(await moneyMarketAccountValueSnapshotReady())) throw new Error('published money-market account value generation failed parity check')
-  setMoneyMarketAccountValuesReady()
-
-  const parts = await client.query({
-    query: `SELECT DISTINCT partition FROM system.parts
-      WHERE database='price_data' AND table='money_market_account_value_snapshots'
-        AND active AND partition!={snapshotId:String}`,
-    query_params: { snapshotId }, format: 'JSONEachRow',
-  })
-  for (const row of await parts.json<{ partition: string }>()) {
-    await client.command({
-      query: `ALTER TABLE price_data.money_market_account_value_snapshots DROP PARTITION {partition:String}`,
-      query_params: { partition: row.partition },
-    })
-  }
-
-  // v1/v2 payloads use aggregate-oracle MM value and can no longer serve once
-  // both exact LP and reserve-principal generations are available.
-  if (omnipoolAccountClaimsReady) {
-    const legacy = await client.query({
-      query: `SELECT count() AS c FROM price_data.account_directory_snapshots
-        WHERE startsWith(snapshot_key,'v1:') OR startsWith(snapshot_key,'v2:')`,
-      format: 'JSONEachRow',
-    })
-    if (Number((await legacy.json<{ c: string }>())[0]?.c ?? 0)>0) {
-      await client.command({
-        query: `ALTER TABLE price_data.account_directory_snapshots
-          DELETE WHERE startsWith(snapshot_key,'v1:') OR startsWith(snapshot_key,'v2:')`,
-        clickhouse_settings: { mutations_sync: '1' },
-      })
-    }
-  }
-  return 'republished'
-}
-
-export function refreshMoneyMarketAccountValues(): Promise<'republished' | 'unchanged'> {
-  if (moneyMarketAccountValuesRefreshInflight) return moneyMarketAccountValuesRefreshInflight
-  const request = refreshMoneyMarketAccountValuesUncached().finally(() => {
-    if (moneyMarketAccountValuesRefreshInflight===request) moneyMarketAccountValuesRefreshInflight=null
-  })
-  moneyMarketAccountValuesRefreshInflight=request
-  return request
-}
-
-export function startMoneyMarketAccountValuesRefresh(): void {
-  if (moneyMarketAccountValuesRefreshTimer) return
-  moneyMarketAccountValuesRefreshTimer=setInterval(() => {
-    void refreshMoneyMarketAccountValues()
-      .then(outcome => console.info('[accounts] money-market values', { outcome }))
-      .catch(error => console.error('[accounts] money-market value refresh failed',error))
-  },MONEY_MARKET_ACCOUNT_VALUES_REFRESH_MS)
-  moneyMarketAccountValuesRefreshTimer.unref()
-}
-
-function usdBase8(value: number): string {
-  return Number.isFinite(value) && value > 0 ? BigInt(Math.round(value * 1e8)).toString() : '0'
-}
-
-function maxBase8(a: string, b: string): string {
-  try {
-    return BigInt(b || '0') > BigInt(a || '0') ? b : a
-  } catch {
-    return a || '0'
-  }
-}
-
-function reserveUsdTotal(reserves: MmReserve[], prices: Map<number, PriceInfo>, side: 'supplied' | 'debt'): number {
-  return reserves.reduce((sum, r) => {
-    const raw = side === 'supplied' ? r.supplied : r.debt
-    if (raw === '0' || r.assetId < 0) return sum
-    const cachedUsd = side === 'supplied' ? r.suppliedUsd : r.debtUsd
-    return sum + (cachedUsd ?? usdValue(prices, r.assetId, raw, r.decimals) ?? 0)
-  }, 0)
-}
-
-// Aave's aggregate collateral value uses its oracle even when the explorer has
-// no standalone price for the reserve (currently stHDX). If exactly one supplied
-// reserve is unpriced, the aggregate's unexplained remainder is that row's value;
-// surfacing it avoids a misleading dash without inventing a cross-asset split.
-export function valueSingleUnpricedSupply(reserves: MmReserve[], collateralBase: string): MmReserve[] {
-  const supplied = reserves.filter(reserve => reserve.supplied !== '0')
-  const unpriced = reserves.filter(reserve => reserve.supplied !== '0' && reserve.suppliedUsd == null)
-  // The aggregate excludes non-collateral supply. Without per-user collateral
-  // flags we can infer the remainder only when this is the sole supplied asset.
-  if (supplied.length !== 1 || unpriced.length !== 1) return reserves
-  const aggregateUsd = Number(collateralBase || '0') / 1e8
-  const pricedUsd = reserves.reduce((sum, reserve) => sum + (reserve.suppliedUsd ?? 0), 0)
-  const remainder = aggregateUsd - pricedUsd
-  if (!(remainder > 0) || !Number.isFinite(remainder)) return reserves
-  return reserves.map(reserve => reserve === unpriced[0] ? { ...reserve, suppliedUsd: remainder } : reserve)
-}
-
-function attachMmReserves(pos: MoneyMarketPosition, reserves: MmReserve[], prices: Map<number, PriceInfo>): MoneyMarketPosition {
-  // Reserve balances capture all supplied aTokens, including assets that are not
-  // enabled as collateral. Keep that display total separate: overwriting Aave's
-  // eligible collateral would understate current LTV and liquidation risk.
-  const valuedReserves = valueSingleUnpricedSupply(reserves, pos.totalCollateralBase)
-  const suppliedBase = usdBase8(reserveUsdTotal(valuedReserves, prices, 'supplied'))
-  const debtBase = usdBase8(reserveUsdTotal(valuedReserves, prices, 'debt'))
-  return {
-    ...pos,
-    totalSuppliedBase: maxBase8(pos.totalSuppliedBase ?? pos.totalCollateralBase, suppliedBase),
-    totalDebtBase: maxBase8(pos.totalDebtBase, debtBase),
-    reserves: valuedReserves,
-  }
-}
-
-function moneyMarketFromReserves(marketKey: string, reserves: MmReserve[], prices: Map<number, PriceInfo>): MoneyMarketPosition {
-  const market = MM_MARKET_BY_KEY.get(marketKey)
-  const suppliedBase = usdBase8(reserveUsdTotal(reserves, prices, 'supplied'))
-  const debtBase = usdBase8(reserveUsdTotal(reserves, prices, 'debt'))
-  return {
-    ...(market ? moneyMarketFields(market) : {
-      marketKey, market: marketKey, role: 'supplemental' as const, defiSimSupported: false, stakingBacked: false,
-    }),
-    blockHeight: 0, timestamp: new Date().toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ''),
-    totalCollateralBase: '0', totalSuppliedBase: suppliedBase, totalDebtBase: debtBase, availableBorrowsBase: '0',
-    liquidationThreshold: '0', ltv: '0', healthFactor: debtBase !== '0' ? 'unknown' : 'inf',
-    reserves,
-  }
-}
-
-// The H160 that holds an account's money-market position: the explicit EVM address
-// for EVM accounts, else the first-20-bytes of the AccountId (Hydration's default
-// AccountId→EVM mapping). Mirrors the derivation in getAddress.
-function mmH160ForAccount(accountId: string): string | null {
-  const evm = evmFromAccountId(accountId)
-  if (evm) return evm
-  return ACCOUNT_RE.test(accountId) ? '0x' + accountId.slice(2, 42) : null
-}
-
-// Reverse of evmFromAccountId: an EVM H160 → the truncated AccountId32 form
-// (0x45544800 + h160 + zeros) the chain uses for EVM accounts. accountRef then
-// renders this as the H160 again. Money-market events index users by H160, so
-// this is how a supplier's address surfaces as a displayable account.
-function accountIdFromH160(h160: string): string | null {
-  if (!/^0x[0-9a-fA-F]{40}$/.test(h160)) return null
-  return '0x45544800' + h160.slice(2).toLowerCase() + '0000000000000000'
-}
-
-// aToken holders (money-market suppliers, from indexed data)
-// aTokens (aPRIME 1043, aDOT 1001, …) are Aave scaled-balance receipts held EVM-side;
-// they never hit substrate Tokens.Accounts. Per-holder balances are reconstructed from
-// the anchor + indexed Mint/Burn/BalanceTransfer deltas (reconstructHolderScaled) and
-// scaled by the reserve's current liquidityIndex — no per-request RPC. Module/pallet
-// accounts are excluded from the displayed list. Returns HolderRow[] ranked by balance.
-async function getATokenHolders(aTokenAssetId: number, limit: number, viewerFold?: ViewerFold): Promise<HolderRow[]> {
-  const underlyingId = ATOKEN_UNDERLYING_ID[aTokenAssetId]
-  if (underlyingId == null) return []
-  // The reconstruction is viewer-independent, so it is what gets cached; the
-  // (cheap, in-memory) grouping runs per call so a viewer's fold can regroup
-  // the same held balances without its own copy of the heavy work.
-  const held = await cached(`explorer:atoken-held:${aTokenAssetId}`, 30000, async () => {
-    const b0 = await aTokenAnchorBlock()
-    if (!b0) return []  // anchor not established yet → pending (never a wrong event-only sum)
-    const reserve = (await getATokenReserves()).find(entry => entry.assetId === aTokenAssetId)
-    if (!reserve) return []
-    const scaled = await reconstructHolderScaled(reserve.token.aToken, b0)
-    return scaled
-      .filter(s => !s.holder.startsWith('0x6d6f646c'))   // exclude module/pallet accounts from the list
-      .map(s => ({ h160: s.holder, bal: (s.scaled * reserve.liquidityIndex) / ATOKEN_RAY }))
-      .filter(h => h.bal > 0n)
-  })
-  return groupATokenHolderRows(held, viewerFoldRefFor(viewerFold), accountIdFromH160).slice(0, limit)
-}
-
 interface HolderBalanceClaim { accountId: string; bal: bigint; lastBlock: number; memberKey?: string }
-
-// Keep the on-chain custody row for any share balance that cannot be assigned
-// to reconstructed aToken holders. This is deliberately a subtraction, not a
-// fallback estimate: attributed claims replace the same custody balance, while
-// an incomplete historical holder anchor remains visible under its real
-// Supply & Borrow account instead of silently disappearing from total supply.
-export function unattributedCustodyBalance(custody: bigint, attributed: bigint): bigint {
-  return custody > attributed ? custody - attributed : 0n
-}
 
 // Combine wallet and receipt-token claims by their canonical displayed account,
 // then collapse tagged members exactly once. This is the shared beneficial-owner
@@ -5274,238 +2804,6 @@ export function groupHolderBalanceClaims(
     .map(({ bal: _bal, ...row }, index) => ({ ...row, rank: index + 1 }))
 }
 
-async function getFoldedDisplayAssetHolders(displayAssetId: number, shareAssetIds: number[], viewerFold?: ViewerFold): Promise<HolderRow[]> {
-  // Claims (viewer-independent) are the cached unit; grouping runs per call —
-  // same split as getATokenHolders above, for the same per-viewer fold reason.
-  const claims = await cached(`explorer:folded-display-claims:${displayAssetId}`, 30000, async (): Promise<HolderBalanceClaim[]> => {
-    const normalizedShareIds = [...new Set(shareAssetIds.filter(id => SHARE_TOKEN_UNDERLYING_ID[id] === displayAssetId))]
-    if (!normalizedShareIds.length) return []
-    const sourceIds = [displayAssetId, ...normalizedShareIds]
-    const [tokens, indices, b0] = await Promise.all([getMmReserveTokens(), reserveIndicesNow(), aTokenAnchorBlock()])
-    const shareSet = new Set(normalizedShareIds)
-    const reserveTokens = tokens.filter(token => {
-      const reserveId = assetIdFromMmAddress(token.asset)
-      const market = MM_MARKET_BY_KEY.get(token.marketKey)
-      return reserveId != null && shareSet.has(reserveId) && !market?.stakingBacked &&
-        (indices.get(`${token.poolProxy.toLowerCase()}:${token.asset.toLowerCase()}`)?.liq ?? 0n) > 0n
-    })
-
-    const directPromise = client.query({
-      query: `SELECT account_id,asset_id,toString(latest_bal) AS balance,last_block FROM (
-                SELECT account_id,asset_id,
-                  toUInt256OrZero(argMaxMerge(total_state)) AS latest_bal,
-                  maxMerge(last_block_state) AS last_block
-                FROM price_data.account_asset_latest_balances
-                WHERE asset_id IN ({assetIds:Array(String)})
-                GROUP BY account_id,asset_id
-              ) WHERE latest_bal > 0`,
-      query_params: { assetIds: sourceIds.map(String) }, format: 'JSONEachRow',
-    })
-    const reconstructedPromise = b0 > 0
-      ? Promise.all(reserveTokens.map(async token => ({
-          token,
-          holders: await reconstructHolderScaled(token.aToken, b0),
-        })))
-      : Promise.resolve([])
-    const [directRes, reconstructed] = await Promise.all([directPromise, reconstructedPromise])
-
-    // The aToken contract is the on-chain custodian of supplied pool shares. Its
-    // direct Tokens balance is replaced only to the extent that the indexed
-    // holder anchor + deltas can assign that balance to beneficial owners.
-    const tokenByCustody = new Map<string, MmReserveToken>()
-    for (const token of reserveTokens) {
-      const reserveId = assetIdFromMmAddress(token.asset)
-      const custody = accountIdFromH160(token.aToken)
-      if (reserveId == null || !custody) continue
-      tokenByCustody.set(`${reserveId}:${custody.toLowerCase()}`, token)
-    }
-
-    const claims: HolderBalanceClaim[] = []
-    const custodyByContract = new Map<string, HolderBalanceClaim>()
-    for (const row of await directRes.json<{ account_id: string; asset_id: string; balance: string; last_block: number }>()) {
-      const sourceId = Number(row.asset_id)
-      const raw = rescaleRaw(row.balance, asset(sourceId).decimals, asset(displayAssetId).decimals)
-      const bal = BigInt(raw || '0')
-      if (bal <= 0n) continue
-      const custodyToken = tokenByCustody.get(`${sourceId}:${row.account_id.toLowerCase()}`)
-      if (custodyToken) {
-        custodyByContract.set(custodyToken.aToken.toLowerCase(), {
-          accountId: row.account_id, bal, lastBlock: Number(row.last_block),
-        })
-      } else {
-        claims.push({ accountId: row.account_id, bal, lastBlock: Number(row.last_block) })
-      }
-    }
-    for (const { token, holders } of reconstructed) {
-      const reserveId = assetIdFromMmAddress(token.asset)
-      if (reserveId == null) continue
-      const liquidityIndex = indices.get(`${token.poolProxy.toLowerCase()}:${token.asset.toLowerCase()}`)?.liq ?? 0n
-      let attributed = 0n
-      for (const holder of holders) {
-        const accountId = accountIdFromH160(holder.holder)
-        if (!accountId) continue
-        const actual = holder.scaled > 0n ? (holder.scaled * liquidityIndex) / ATOKEN_RAY : 0n
-        const raw = rescaleRaw(actual.toString(), asset(reserveId).decimals, asset(displayAssetId).decimals)
-        const bal = BigInt(raw || '0')
-        if (bal > 0n) {
-          attributed += bal
-          claims.push({ accountId, bal, lastBlock: 0 })
-        }
-      }
-      const custody = custodyByContract.get(token.aToken.toLowerCase())
-      if (custody) {
-        const residual = unattributedCustodyBalance(custody.bal, attributed)
-        if (residual > 0n) claims.push({ ...custody, bal: residual })
-        custodyByContract.delete(token.aToken.toLowerCase())
-      }
-    }
-    // If the pinned holder anchor is not established yet, retain the entire
-    // real custody balance. An unavailable reconstruction must never turn a
-    // known on-chain holder into zero.
-    claims.push(...custodyByContract.values())
-    return claims
-  })
-  return groupHolderBalanceClaims(claims, viewerFoldRefFor(viewerFold))
-}
-
-// Turn per-H160 aToken balances into display rows. Holders resolving (via
-// accountRef → resolveDisplayAccountId) to a TAGGED account collapse into one
-// tag group row — matching the substrate-side holders query, where e.g. all
-// stableswap pools fold into a single "Stableswap Pool" row. Untagged holders
-// stay individual. Rows are ranked by balance after grouping.
-export function groupATokenHolderRows(
-  held: { h160: string; bal: bigint }[],
-  refFor: (accountId: string) => AccountRef,
-  toAccountId: (h160: string) => string | null,
-): HolderRow[] {
-  const claims: HolderBalanceClaim[] = []
-  for (const holder of held) {
-    const accountId = toAccountId(holder.h160)
-    if (accountId) claims.push({ accountId, bal: holder.bal, lastBlock: 0, memberKey: holder.h160 })
-  }
-  return groupHolderBalanceClaims(claims, refFor)
-}
-
-// Rank a health factor for "riskiest first" sorting: lower = more at risk; 'inf'
-// (pure suppliers / no debt) sorts last.
-function hfRank(hf: string): number {
-  return hf === 'inf' ? Infinity : Number(hf) / 1e18
-}
-
-// Aggregate live money-market positions across a set of H160 addresses (the members
-// of a tag) into ONE position PER MARKET. Within a market, sums collateral/debt/
-// available across members, collateral-weights LTV/liquidation-threshold, recomputes
-// a combined health factor, and merges per-asset reserves. Markets stay SEPARATE
-// (isolated pools have independent health factors). Returns [] when no member holds
-// any position. Reuses the same per-H160 indexed reads the account view uses.
-async function aggregateMoneyMarket(members: { h160: string; simAccount: string }[]): Promise<MoneyMarketPosition[]> {
-  const byH160 = new Map<string, string>()
-  for (const member of members) {
-    if (/^0x[0-9a-fA-F]{40}$/.test(member.h160) && ACCOUNT_RE.test(member.simAccount)) {
-      if (!byH160.has(member.h160.toLowerCase())) byH160.set(member.h160.toLowerCase(), member.simAccount)
-    }
-  }
-  if (!byH160.size) return []
-  const perMember = await Promise.all([...byH160].map(async ([h, simAccount]) => ({ h, simAccount, positions: await getMoneyMarketPositions(h), reserves: await getMoneyMarketReserves(h) })))
-  interface Acc {
-    key: string; label: string; role: 'primary' | 'supplemental'; defiSimSupported: boolean; stakingBacked: boolean
-    collateral: bigint; supplied: bigint; debt: bigint; avail: bigint; liqWeighted: bigint; ltvWeighted: bigint
-    lastBlock: number; ts: string; simAccount?: string; simRank: number; worstHealthFactor: string; reserves: Map<number, MmReserve>
-  }
-  const acc = new Map<string, Acc>()
-  for (const { simAccount, positions, reserves } of perMember) {
-    for (const pos of positions) {
-      let a = acc.get(pos.marketKey)
-      if (!a) {
-        a = {
-          key: pos.marketKey, label: pos.market, role: pos.role, defiSimSupported: pos.defiSimSupported,
-          stakingBacked: pos.stakingBacked ?? false, collateral: 0n, supplied: 0n, debt: 0n, avail: 0n,
-          liqWeighted: 0n, ltvWeighted: 0n, lastBlock: 0, ts: '', simRank: Infinity,
-          worstHealthFactor: 'inf', reserves: new Map(),
-        }
-        acc.set(pos.marketKey, a)
-      }
-      const c = BigInt(pos.totalCollateralBase || '0')
-      a.collateral += c; a.supplied += BigInt((pos.totalSuppliedBase ?? pos.totalCollateralBase) || '0'); a.debt += BigInt(pos.totalDebtBase || '0'); a.avail += BigInt(pos.availableBorrowsBase || '0')
-      a.liqWeighted += c * BigInt(pos.liquidationThreshold || '0')   // basis-point ratios — collateral-weighted
-      a.ltvWeighted += c * BigInt(pos.ltv || '0')
-      if (pos.blockHeight > a.lastBlock) a.lastBlock = pos.blockHeight
-      if (!a.ts) a.ts = pos.timestamp
-      const rank = hfRank(pos.healthFactor)
-      if (rank < a.simRank || (a.simAccount == null && (c > 0n || BigInt(pos.totalDebtBase || '0') > 0n))) {
-        a.simAccount = defiSimTargetForAccountId(simAccount)
-        a.simRank = rank
-        a.worstHealthFactor = pos.healthFactor
-      }
-    }
-    for (const r of reserves) {
-      const a = acc.get(r.marketKey ?? 'core'); if (!a) continue
-      const ex = a.reserves.get(r.assetId)
-      if (ex) {
-        ex.supplied = (BigInt(ex.supplied) + BigInt(r.supplied)).toString()
-        ex.debt = (BigInt(ex.debt) + BigInt(r.debt)).toString()
-        ex.suppliedUsd = ex.suppliedUsd == null && r.suppliedUsd == null ? null : (ex.suppliedUsd ?? 0) + (r.suppliedUsd ?? 0)
-        ex.debtUsd = ex.debtUsd == null && r.debtUsd == null ? null : (ex.debtUsd ?? 0) + (r.debtUsd ?? 0)
-        ex.collateral = ex.collateral || r.collateral
-      } else a.reserves.set(r.assetId, { ...r })
-    }
-  }
-  const out: MoneyMarketPosition[] = []
-  for (const a of acc.values()) {
-    const liqThr = a.collateral > 0n ? (a.liqWeighted / a.collateral).toString() : '0'
-    const ltv = a.collateral > 0n ? (a.ltvWeighted / a.collateral).toString() : '0'
-    const mergedReserves = valueSingleUnpricedSupply(
-      [...a.reserves.values()].sort((x, y) => (y.suppliedUsd ?? y.debtUsd ?? 0) - (x.suppliedUsd ?? x.debtUsd ?? 0)),
-      a.collateral.toString(),
-    )
-    const reserveSuppliedBase = usdBase8(mergedReserves.reduce((sum, reserve) => sum + (reserve.suppliedUsd ?? 0), 0))
-    out.push({
-      marketKey: a.key, market: a.label, role: a.role, defiSimSupported: a.defiSimSupported, stakingBacked: a.stakingBacked,
-      blockHeight: a.lastBlock, timestamp: a.ts || new Date().toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ''),
-      totalCollateralBase: a.collateral.toString(), totalSuppliedBase: maxBase8(a.supplied.toString(), reserveSuppliedBase), totalDebtBase: a.debt.toString(), availableBorrowsBase: a.avail.toString(),
-      liquidationThreshold: liqThr, ltv, healthFactor: a.worstHealthFactor,
-      ...(a.simAccount ? { simAccount: a.simAccount } : {}),
-      reserves: mergedReserves,
-    })
-  }
-  return orderMoneyMarkets(out)
-}
-
-// Fold supplied aToken collateral into the wallet balances list (it IS the
-// account's aToken holding, e.g. aDOT, which never hits substrate balances).
-// Shared by the account and tag views so both surface MM collateral identically.
-// Returns the USD value actually folded into balances so the caller can detect a
-// shortfall (per-reserve reconstruction unavailable) and still count collateral.
-function applyMmCollateralToBalances(balances: AddressBalance[], moneyMarket: Pick<MoneyMarketPosition, 'blockHeight' | 'reserves'> | null, prices: Map<number, PriceInfo>): number {
-  let foldedUsd = 0
-  for (const r of moneyMarket?.reserves ?? []) {
-    if (r.supplied === '0' || r.assetId < 0) continue
-    const valueUsd = usdValue(prices, r.assetId, r.supplied, r.decimals)
-    foldedUsd += valueUsd ?? 0
-    const existing = balances.find(b => b.asset.assetId === r.assetId)
-    if (existing) { existing.total = r.supplied; existing.free = r.supplied; existing.reserved = '0'; existing.valueUsd = valueUsd }
-    else balances.push({ asset: asset(r.assetId), total: r.supplied, free: r.supplied, reserved: '0', lastBlock: moneyMarket?.blockHeight ?? 0, valueUsd })
-  }
-  balances.sort((x, y) => (y.valueUsd ?? 0) - (x.valueUsd ?? 0))
-  return foldedUsd
-}
-
-// The collateral USD that must be added to a portfolio total ON TOP of the spot
-// balances. Per-reserve reconstruction can be unavailable even when an aggregate
-// snapshot exists; in that case no aToken balance gets folded into `balances`,
-// so portfolioUsd would omit the
-// collateral entirely and the header (portfolioUsd − debt) goes deeply negative
-// for a borrower (cf. #14). The aggregate totalCollateralBase is already USD
-// (base-8), so when the folded reserve value falls short of it, count the
-// remainder. We never DOUBLE-count: if reserves folded the full collateral in,
-// the shortfall is ~0.
-function mmCollateralShortfallUsd(moneyMarket: MoneyMarketPosition | null, foldedUsd: number): number {
-  if (!moneyMarket) return 0
-  const aggCollateralUsd = Number(moneyMarket.totalCollateralBase || '0') / 1e8
-  if (!Number.isFinite(aggCollateralUsd) || aggCollateralUsd <= 0) return 0
-  return Math.max(0, aggCollateralUsd - foldedUsd)
-}
-
 // Omnipool LP positions (NFT-based, read from indexed state)
 // Omnipool liquidity is held as position NFTs, not fungible Tokens.Accounts
 // balances, so it never appears in the balances query. Maintained aggregate
@@ -5515,77 +2813,10 @@ function mmCollateralShortfallUsd(moneyMarket: MoneyMarketPosition | null, folde
 export interface LpPosition { positionId: string; asset: AssetRef; amount: string; hubAmount?: string; shares: string; valueUsd: number | null; venue: string }
 export interface DecodedPosition { assetId: number; amount: bigint; shares: bigint; priceNum: bigint; priceDen: bigint }
 
-// Omnipool state (per-asset reserve/hub/shares) for LP withdraw value
-// Reads the latest per-block stableswap/omnipool snapshot (raw_block_snapshots →
-// omnipool.assets[]). Used by the omnipool remove-liquidity math below.
-export interface OmnipoolAssetState { reserve: bigint; hub: bigint; shares: bigint }
-let omniState = new Map<number, OmnipoolAssetState>()
-let omniStateAt = 0
-async function loadOmnipoolState(): Promise<Map<number, OmnipoolAssetState>> {
-  if (omniState.size && Date.now() - omniStateAt < 30_000) return omniState
-  try {
-    const res = await client.query({
-      query: `SELECT JSONExtractRaw(payload_json, 'omnipool') AS o
-              FROM price_data.raw_block_snapshots
-              WHERE block_height = (SELECT max(block_height) FROM price_data.raw_block_snapshots)
-              LIMIT 1`,
-      format: 'JSONEachRow',
-    })
-    const row = (await res.json<{ o: string }>())[0]
-    const assets = (safeJson(row?.o) as { assets?: { asset_id: number; reserve: string; hub_reserve: string; shares: string }[] } | null)?.assets ?? []
-    const m = new Map<number, OmnipoolAssetState>()
-    for (const a of assets) m.set(a.asset_id, { reserve: BigInt(a.reserve), hub: BigInt(a.hub_reserve), shares: BigInt(a.shares) })
-    if (m.size) { omniState = m; omniStateAt = Date.now() }
-  } catch { /* keep last good */ }
-  return omniState
-}
 // Omnipool remove-liquidity (full position) → (asset out, hub/LRNA out), mirroring
 // the node's calculate_remove_liquidity_state_changes (withdrawalFee = 0). Verified
 // bit-exact against the official indexer's per-position liquidityAmount.
 export const OMNI_FIXED = 10n ** 18n
-export function omnipoolRemoveLiquidity(st: OmnipoolAssetState, pos: DecodedPosition): { liquidity: bigint; hub: bigint } {
-  const { reserve: R, hub: Q, shares: S } = st
-  if (S <= 0n || pos.priceDen === 0n) return { liquidity: 0n, hub: 0n }
-  const price = pos.priceNum * OMNI_FIXED / pos.priceDen
-  const pxr = (price * R) / OMNI_FIXED + 1n
-  const lt = Q * OMNI_FIXED < price * R
-  const gt = Q * OMNI_FIXED > price * R
-  const deltaB = lt ? ((pxr - Q) * pos.shares) / (pxr + Q) + 1n : 0n
-  const deltaShares = pos.shares - deltaB
-  const liquidity = (R * deltaShares) / S
-  const hub = gt ? ((Q * (Q - pxr)) / (Q + pxr) * deltaShares) / S : 0n
-  return { liquidity, hub }
-}
-const LRNA_ASSET_ID = 1   // hub asset (H2O / LRNA), 12 decimals
-// Value a decoded omnipool position (asset leg + LRNA/hub leg) in USD.
-function valueOmnipoolPosition(pos: DecodedPosition, st: OmnipoolAssetState, prices: Map<number, PriceInfo>): { amount: bigint; hub: bigint; valueUsd: number | null } {
-  const { liquidity, hub } = omnipoolRemoveLiquidity(st, pos)
-  const a = asset(pos.assetId)
-  const assetUsd = usdValue(prices, pos.assetId, liquidity.toString(), a.decimals)
-  const lrnaPx = prices.get(LRNA_ASSET_ID)?.price
-  const hubUsd = lrnaPx != null ? Number(hub) / 10 ** (asset(LRNA_ASSET_ID).decimals) * lrnaPx : 0
-  const valueUsd = assetUsd == null ? null : assetUsd + hubUsd
-  return { amount: liquidity, hub, valueUsd }
-}
-
-// Raw withdraw legs for the positions economically owned at a single historical chart
-// bucket. Dedupes by positionId so a position is valued exactly once regardless of whether
-// it is held bare or farmed; skips positions with no pool state (never fabricates a zero
-// leg) or non-positive shares. Returns raw integer legs — callers apply the bucket's
-// event-time price. Shared by the historical value path (see valueOmnipoolPrincipalHistory).
-export interface HistoricalOwnedPosition { positionId: string; assetId: number; state: DecodedPosition; pool: OmnipoolAssetState | undefined }
-export function omnipoolLegsForBucket(positions: HistoricalOwnedPosition[]): { positionId: string; assetId: number; liquidity: bigint; hub: bigint }[] {
-  const out: { positionId: string; assetId: number; liquidity: bigint; hub: bigint }[] = []
-  const seen = new Set<string>()
-  for (const { positionId, assetId, state, pool } of positions) {
-    if (seen.has(positionId)) continue
-    seen.add(positionId)
-    if (!pool || state.shares <= 0n) continue
-    const { liquidity, hub } = omnipoolRemoveLiquidity(pool, state)
-    out.push({ positionId, assetId, liquidity, hub })
-  }
-  return out
-}
 
 // XYK LP redeemable reserve legs for `shares` of a pool with raw reserves `reserveA/B` and
 // `totalShares` outstanding — amountX = floor(reserveX * shares / totalShares). Integer/
@@ -5594,340 +2825,6 @@ export function omnipoolLegsForBucket(positions: HistoricalOwnedPosition[]): { p
 export function xykShareLegs(shares: bigint, reserveA: bigint, reserveB: bigint, totalShares: bigint): { amountA: bigint; amountB: bigint } {
   if (totalShares <= 0n || shares <= 0n) return { amountA: 0n, amountB: 0n }
   return { amountA: (reserveA * shares) / totalShares, amountB: (reserveB * shares) / totalShares }
-}
-
-// Current open omnipool positions owned by a set of accounts, reconstructed from
-// indexed events (no per-request RPC): NFT ownership from Uniques.Issued/Transferred/
-// Burned (bare = collection 1337; farm deposits = collection 2584 → positionId via
-// OmnipoolLiquidityMining.SharesDeposited/Redeposited), position state (assetId, shares,
-// amount, price) from the latest Omnipool.PositionCreated/PositionUpdated. `raw_events`
-// is complete from genesis, so current state is exact. Event `price` is FixedU128
-// (= priceNum/priceDen · 1e18), so priceDen = OMNI_FIXED reproduces the storage rational.
-interface DecodedLpPosition { positionId: string; dec: DecodedPosition; venue: 'Omnipool' | 'Omnipool Farm' }
-async function reconstructOmnipoolPositions(accounts: string[]): Promise<DecodedLpPosition[]> {
-  const accs = [...new Set(accounts.map(a => a.toLowerCase()))].filter(a => /^0x[0-9a-f]{64}$/.test(a))
-  if (!accs.length) return []
-  return cached(`explorer:lp-recon:${accountValueGenerationEpoch}:${accs.sort().join(',')}`, 15000, async () => {
-    // Fast lookup on the maintained aggregate tables (schema 042): nft_owner_latest
-    // (current NFT owner), omnipool_position_latest (latest position state),
-    // farm_deposit_latest (deposit → position). Empty '' owner = burned/withdrawn.
-    const res = await client.query({
-      query: `
-        WITH
-        own AS (SELECT collection, item, argMaxMerge(owner) AS owner FROM price_data.nft_owner_latest GROUP BY collection, item),
-        posn AS (SELECT position_id, argMaxMerge(asset_id) AS asset_id, argMaxMerge(shares) AS shares, argMaxMerge(amount) AS amount, argMaxMerge(price) AS price FROM price_data.omnipool_position_latest GROUP BY position_id),
-        dep AS (SELECT deposit_id, argMaxMerge(position_id) AS position_id FROM price_data.farm_deposit_latest GROUP BY deposit_id)
-        SELECT 'Omnipool' AS venue, own.item AS positionId, posn.asset_id AS assetId, posn.shares AS shares, posn.amount AS amount, posn.price AS price
-        FROM own INNER JOIN posn ON own.item = posn.position_id
-        WHERE own.collection = '1337' AND own.owner IN {accs:Array(String)}
-        UNION ALL
-        SELECT 'Omnipool Farm' AS venue, dep.position_id AS positionId, posn.asset_id, posn.shares, posn.amount, posn.price
-        FROM own INNER JOIN dep ON own.item = dep.deposit_id INNER JOIN posn ON dep.position_id = posn.position_id
-        WHERE own.collection = '2584' AND own.owner IN {accs:Array(String)}`,
-      query_params: { accs }, format: 'JSONEachRow',
-    })
-    const rows = await res.json<{ venue: 'Omnipool' | 'Omnipool Farm'; positionId: string; assetId: number; shares: string; amount: string; price: string }>()
-    return rows.map(r => ({
-      positionId: r.positionId, venue: r.venue,
-      dec: { assetId: r.assetId, amount: BigInt(r.amount || '0'), shares: BigInt(r.shares || '0'), priceNum: BigInt(r.price || '0'), priceDen: OMNI_FIXED } as DecodedPosition,
-    }))
-  })
-}
-
-export interface OwnedDecodedLpPosition extends DecodedLpPosition { accountId: string }
-export interface OmnipoolAccountClaim {
-  positionId: string
-  accountId: string
-  assetId: number
-  amount: bigint
-  hubAmount: bigint
-  venue: 'Omnipool' | 'Omnipool Farm'
-}
-
-// One row per economically owned position. An active farm has both a collection
-// 1337 NFT held by the LM pallet and a collection 2584 deposit NFT held by the
-// user; exclude that custody NFT and keep only the deposit owner so a position
-// can never be counted as both bare and farmed.
-// Exported for poolService's per-asset LP ranking, which caches one shared
-// generation of this (60s SWR) and groups it per (asset, owner).
-export async function reconstructAllOmnipoolPositions(): Promise<OwnedDecodedLpPosition[]> {
-  const res = await client.query({
-    query: `
-      WITH
-      own AS (
-        SELECT collection, item, argMaxMerge(owner) AS owner
-        FROM price_data.nft_owner_latest GROUP BY collection, item
-      ),
-      posn AS (
-        SELECT position_id, argMaxMerge(asset_id) AS asset_id,
-          argMaxMerge(shares) AS shares, argMaxMerge(amount) AS amount,
-          argMaxMerge(price) AS price
-        FROM price_data.omnipool_position_latest GROUP BY position_id
-      ),
-      dep AS (
-        SELECT deposit_id, argMaxMerge(position_id) AS position_id
-        FROM price_data.farm_deposit_latest GROUP BY deposit_id
-      ),
-      farm AS (
-        SELECT dep.position_id AS position_id, own.owner AS owner
-        FROM own INNER JOIN dep ON own.item = dep.deposit_id
-        WHERE own.collection = '2584' AND own.owner != ''
-      )
-      SELECT 'Omnipool' AS venue, own.owner AS accountId, own.item AS positionId,
-        posn.asset_id AS assetId, posn.shares AS shares, posn.amount AS amount,
-        posn.price AS price
-      FROM own
-      INNER JOIN posn ON own.item = posn.position_id
-      LEFT JOIN farm ON farm.position_id = own.item
-      WHERE own.collection = '1337' AND own.owner != '' AND farm.position_id = ''
-      UNION ALL
-      SELECT 'Omnipool Farm' AS venue, farm.owner AS accountId,
-        farm.position_id AS positionId, posn.asset_id AS assetId,
-        posn.shares AS shares, posn.amount AS amount, posn.price AS price
-      FROM farm INNER JOIN posn ON farm.position_id = posn.position_id`,
-    format: 'JSONEachRow',
-  })
-  const rows = await res.json<{
-    venue: 'Omnipool' | 'Omnipool Farm'; accountId: string; positionId: string
-    assetId: number; shares: string; amount: string; price: string
-  }>()
-  return rows.map(row => ({
-    positionId: row.positionId,
-    // Resolve EVM pots/bindings while building the background generation. Doing
-    // this here avoids another request-time pass over raw_account_aliases.
-    accountId: resolveDisplayAccountId(row.accountId.toLowerCase()),
-    venue: row.venue,
-    dec: {
-      assetId: row.assetId,
-      amount: BigInt(row.amount || '0'),
-      shares: BigInt(row.shares || '0'),
-      priceNum: BigInt(row.price || '0'),
-      priceDen: OMNI_FIXED,
-    },
-  }))
-}
-
-// Shared exact claim builder for the detail page's withdrawal semantics and the
-// directory snapshot. Missing pool state or duplicate position identities abort
-// publication rather than silently undervaluing/double-counting the directory.
-export function buildOmnipoolAccountClaims(
-  positions: OwnedDecodedLpPosition[],
-  state: Map<number, OmnipoolAssetState>,
-): OmnipoolAccountClaim[] {
-  const seen = new Set<string>()
-  return positions.map(position => {
-    if (seen.has(position.positionId)) throw new Error(`duplicate current Omnipool position ${position.positionId}`)
-    seen.add(position.positionId)
-    const assetState = state.get(position.dec.assetId)
-    if (!assetState) throw new Error(`missing current Omnipool state for asset ${position.dec.assetId}`)
-    const { liquidity, hub } = omnipoolRemoveLiquidity(assetState, position.dec)
-    return {
-      positionId: position.positionId,
-      accountId: position.accountId,
-      assetId: position.dec.assetId,
-      amount: liquidity,
-      hubAmount: hub,
-      venue: position.venue,
-    }
-  })
-}
-
-const OMNIPOOL_ACCOUNT_CLAIMS_REFRESH_MS = 5 * 60_000
-let omnipoolAccountClaimsRefreshTimer: ReturnType<typeof setInterval> | null = null
-let omnipoolAccountClaimsRefreshInflight: Promise<'republished' | 'unchanged'> | null = null
-
-export async function omnipoolAccountClaimsSnapshotReady(): Promise<boolean> {
-  try {
-    const result = await client.query({
-      query: `
-        WITH current AS (
-          SELECT argMax(snapshot_id, computed_at) AS snapshot_id,
-            argMax(source_position_count, computed_at) AS source_count,
-            argMax(claim_count, computed_at) AS claim_count
-          FROM price_data.omnipool_account_claim_snapshot_state
-          WHERE snapshot_key = 'current'
-        )
-        SELECT current.snapshot_id AS snapshot_id, current.source_count AS source_count,
-          current.claim_count AS claim_count, count(c.position_id) AS stored_count,
-          uniqExact(c.position_id) AS unique_count
-        FROM current
-        LEFT JOIN price_data.omnipool_account_claim_snapshots c
-          ON c.snapshot_id = current.snapshot_id
-        GROUP BY current.snapshot_id, current.source_count, current.claim_count`,
-      format: 'JSONEachRow',
-    })
-    const row = (await result.json<{
-      snapshot_id: string; source_count: number; claim_count: number
-      stored_count: string; unique_count: string
-    }>())[0]
-    return Boolean(row?.snapshot_id)
-      && Number(row.source_count) === Number(row.claim_count)
-      && Number(row.claim_count) === Number(row.stored_count)
-      && Number(row.stored_count) === Number(row.unique_count)
-  } catch { return false }
-}
-
-// Checksummed form of one stored claim row: every column of
-// omnipool_account_claim_snapshots except the generation's own identity
-// (`snapshot_id`, `computed_at`).
-export const omnipoolClaimChecksumFields = (claim: OmnipoolAccountClaim): string =>
-  `${claim.positionId}|${claim.accountId}|${claim.assetId}|${claim.amount}|${claim.hubAmount}|${claim.venue}\n`
-
-async function refreshOmnipoolAccountClaimsUncached(): Promise<'republished' | 'unchanged'> {
-  const [positions, state] = await Promise.all([
-    reconstructAllOmnipoolPositions(),
-    loadOmnipoolState(),
-  ])
-  const claims = buildOmnipoolAccountClaims(positions, state)
-  if (claims.length !== positions.length) throw new Error('Omnipool claim/source count mismatch')
-
-  const snapshotId = String(Date.now())
-  const now = new Date().toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '')
-  // Hash the CLAIMS, not the positions they came from: a claim is the position
-  // valued against current pool state, so two identical position sets under
-  // different reserves publish different withdrawal amounts. Hashing the
-  // sources would call that "unchanged" and freeze the directory's LP column.
-  const checksum = createHash('sha256')
-  for (const claim of [...claims].sort((a, b) => a.positionId.localeCompare(b.positionId))) {
-    checksum.update(omnipoolClaimChecksumFields(claim))
-  }
-  const digest = checksum.digest('hex')
-  if (await canSkipRepublish(client, {
-    dataTable: 'omnipool_account_claim_snapshots', stateTable: 'omnipool_account_claim_snapshot_state',
-    rowCountColumn: 'claim_count', checksum: digest, rowCount: claims.length,
-  })) {
-    // The published generation is the one this cycle computed, so it stays
-    // current: the readiness flag it justified stays set and no consumer keyed
-    // on the pointer's `computed_at` is invalidated.
-    setOmnipoolAccountClaimsReady()
-    return 'unchanged'
-  }
-
-  // Bounded batches make a failed refresh cheap to retry. The state marker is
-  // deliberately written last, so partial generations are never request-visible.
-  const batchSize = 1_000
-  for (let offset = 0; offset < claims.length; offset += batchSize) {
-    await client.insert({
-      table: 'price_data.omnipool_account_claim_snapshots',
-      values: claims.slice(offset, offset + batchSize).map(claim => ({
-        snapshot_id: snapshotId,
-        position_id: claim.positionId,
-        account_id: claim.accountId,
-        asset_id: claim.assetId,
-        amount: claim.amount.toString(),
-        hub_amount: claim.hubAmount.toString(),
-        venue: claim.venue,
-        computed_at: now,
-      })),
-      format: 'JSONEachRow',
-    })
-  }
-
-  const verify = await client.query({
-    query: `SELECT count() AS c, uniqExact(position_id) AS u
-      FROM price_data.omnipool_account_claim_snapshots
-      WHERE snapshot_id = {snapshotId:String}`,
-    query_params: { snapshotId }, format: 'JSONEachRow',
-  })
-  const counts = (await verify.json<{ c: string; u: string }>())[0]
-  if (Number(counts?.c) !== claims.length || Number(counts?.u) !== claims.length) {
-    throw new Error(`incomplete Omnipool claim generation ${counts?.c ?? 0}/${claims.length}`)
-  }
-
-  await client.insert({
-    table: 'price_data.omnipool_account_claim_snapshot_state',
-    values: [{
-      snapshot_key: 'current', snapshot_id: snapshotId,
-      source_position_count: positions.length, claim_count: claims.length,
-      source_checksum: digest, computed_at: now,
-    }],
-    format: 'JSONEachRow',
-  })
-  if (!(await omnipoolAccountClaimsSnapshotReady())) throw new Error('published Omnipool claim generation failed parity check')
-  setOmnipoolAccountClaimsReady()
-  accountValueGenerationEpoch++
-
-  // A completed generation is self-contained. Drop every superseded/orphaned
-  // partition so retries and regular refreshes leave no unused snapshot data.
-  const parts = await client.query({
-    query: `SELECT DISTINCT partition FROM system.parts
-      WHERE database = 'price_data' AND table = 'omnipool_account_claim_snapshots'
-        AND active AND partition != {snapshotId:String}`,
-    query_params: { snapshotId }, format: 'JSONEachRow',
-  })
-  for (const row of await parts.json<{ partition: string }>()) {
-    await client.command({
-      query: `ALTER TABLE price_data.omnipool_account_claim_snapshots DROP PARTITION {partition:String}`,
-      query_params: { partition: row.partition },
-    })
-  }
-
-  // v1 directory payloads were computed without Omnipool claims. Remove them
-  // only after v2's complete claim generation is published; the count guard
-  // keeps periodic refreshes from creating empty mutations.
-  const legacy = await client.query({
-    query: `SELECT count() AS c FROM price_data.account_directory_snapshots
-      WHERE startsWith(snapshot_key, 'v1:')`,
-    format: 'JSONEachRow',
-  })
-  if (Number((await legacy.json<{ c: string }>())[0]?.c ?? 0) > 0) {
-    await client.command({
-      query: `ALTER TABLE price_data.account_directory_snapshots
-        DELETE WHERE startsWith(snapshot_key, 'v1:')`,
-      clickhouse_settings: { mutations_sync: '1' },
-    })
-  }
-  return 'republished'
-}
-
-export function refreshOmnipoolAccountClaims(): Promise<'republished' | 'unchanged'> {
-  if (omnipoolAccountClaimsRefreshInflight) return omnipoolAccountClaimsRefreshInflight
-  const request = refreshOmnipoolAccountClaimsUncached().finally(() => {
-    if (omnipoolAccountClaimsRefreshInflight === request) omnipoolAccountClaimsRefreshInflight = null
-  })
-  omnipoolAccountClaimsRefreshInflight = request
-  return request
-}
-
-export function startOmnipoolAccountClaimsRefresh(): void {
-  if (omnipoolAccountClaimsRefreshTimer) return
-  omnipoolAccountClaimsRefreshTimer = setInterval(() => {
-    void refreshOmnipoolAccountClaims()
-      .then(outcome => console.info('[accounts] Omnipool claims', { outcome }))
-      .catch(error => console.error('[accounts] Omnipool claim refresh failed', error))
-  }, OMNIPOOL_ACCOUNT_CLAIMS_REFRESH_MS)
-  omnipoolAccountClaimsRefreshTimer.unref()
-}
-
-// Bare Omnipool LP positions (NFTs the account itself owns — collection 1337).
-// Farmed positions live under the LM pallet, so they never appear here and are
-// surfaced separately by getFarmingPositions (no double-count). Valued at the
-// current withdraw value (asset + hub legs).
-async function getOmnipoolPositions(accounts: string[]): Promise<LpPosition[]> {
-  if (!accounts.length) return []
-  const [recon, prices, st] = await Promise.all([reconstructOmnipoolPositions(accounts), ensureAccountValuePrices(), loadOmnipoolState()])
-  const out: LpPosition[] = []
-  for (const { positionId, dec } of recon.filter(r => r.venue === 'Omnipool')) {
-    const state = st.get(dec.assetId); if (!state) continue
-    const { amount, hub, valueUsd } = valueOmnipoolPosition(dec, state, prices)
-    out.push({ positionId, asset: asset(dec.assetId), amount: amount.toString(), hubAmount: hub > 0n ? hub.toString() : undefined, shares: dec.shares.toString(), valueUsd, venue: 'Omnipool' })
-  }
-  return out.sort((x, y) => (y.valueUsd ?? 0) - (x.valueUsd ?? 0))
-}
-
-// Omnipool liquidity-mining farm deposits (collection 2584). Each deposit NFT maps
-// to an underlying omnipool position; value = that position's withdraw value, exactly
-// like a bare position. (XYK farms, collection 5389, are negligible and not yet valued.)
-async function getFarmingPositions(accounts: string[]): Promise<LpPosition[]> {
-  if (!accounts.length) return []
-  const [recon, prices, st] = await Promise.all([reconstructOmnipoolPositions(accounts), ensureAccountValuePrices(), loadOmnipoolState()])
-  const out: LpPosition[] = []
-  for (const { positionId, dec } of recon.filter(r => r.venue === 'Omnipool Farm')) {
-    const state = st.get(dec.assetId); if (!state) continue
-    const { amount, hub, valueUsd } = valueOmnipoolPosition(dec, state, prices)
-    out.push({ positionId, asset: asset(dec.assetId), amount: amount.toString(), hubAmount: hub > 0n ? hub.toString() : undefined, shares: dec.shares.toString(), valueUsd, venue: 'Omnipool Farm' })
-  }
-  return out.sort((x, y) => (y.valueUsd ?? 0) - (x.valueUsd ?? 0))
 }
 
 // Current XYK pool state (reserves from the latest snapshot, total supply from the latest
@@ -5994,117 +2891,6 @@ async function getXykPositions(accounts: string[], balances: AddressBalance[]): 
     }
   }
   return out.sort((x, y) => (y.valueUsd ?? 0) - (x.valueUsd ?? 0))
-}
-
-// Historical Omnipool principal for the value-history chart: for every position the account
-// economically owned at each bucket (bare or farmed), the raw withdraw legs from its TRUE
-// per-block state — not current shares, never request-time snapshot JSON. Account-bounded:
-// ownership intervals by account, position state by referenced positions, pool state by
-// referenced assets. Callers apply the bucket's event-time price to the raw legs.
-// See the value-history path in getAccountHistory.
-export interface OmnipoolHistoryLeg { assetId: number; liquidity: bigint; hub: bigint }
-export interface OmnipoolPrincipalHistory { legsByBucket: OmnipoolHistoryLeg[][]; assetIds: number[]; fromBucket: number | null }
-export async function loadOmnipoolPrincipalHistory(accounts: string[], minb: number, bucket: number, n: number): Promise<OmnipoolPrincipalHistory> {
-  const empty: OmnipoolPrincipalHistory = { legsByBucket: Array.from({ length: n + 1 }, () => []), assetIds: [], fromBucket: null }
-  const accs = [...new Set(accounts.map(a => a.toLowerCase()))].filter(a => /^0x[0-9a-f]{64}$/.test(a))
-  if (!accs.length) return empty
-  const maxb = minb + bucket * n
-  const bucketEndBlock = (b: number) => Math.min(maxb, minb + (b + 1) * bucket - 1)
-
-  // 1) Ownership intervals overlapping the range (account-bounded).
-  const ivRes = await client.query({
-    query: `SELECT position_id, valid_from_block, valid_to_block
-            FROM price_data.omnipool_position_owner_intervals FINAL
-            WHERE account_id IN {accs:Array(String)}
-              AND valid_from_block <= ${maxb}
-              AND (valid_to_block = 0 OR valid_to_block >= ${minb})`,
-    query_params: { accs }, format: 'JSONEachRow',
-  })
-  const intervals = await ivRes.json<{ position_id: string; valid_from_block: number; valid_to_block: number }>()
-  if (!intervals.length) return empty
-  const positionIds = [...new Set(intervals.map(i => i.position_id))]
-
-  // 2) Position state events for those positions (position-bounded); forward-fill the
-  //    latest active state to each bucket end, dropping the position once destroyed.
-  const stRes = await client.query({
-    query: `SELECT position_id, block_height, event_kind, asset_id, amount_raw, shares_raw, price_raw, active
-            FROM price_data.omnipool_position_state_events FINAL
-            WHERE position_id IN {pids:Array(String)}
-            ORDER BY position_id, block_height, event_index`,
-    query_params: { pids: positionIds }, format: 'JSONEachRow',
-  })
-  const stRows = await stRes.json<{ position_id: string; block_height: number; event_kind: string; asset_id: number; amount_raw: string; shares_raw: string; price_raw: string; active: number }>()
-  const eventsByPosition = new Map<string, typeof stRows>()
-  for (const r of stRows) { if (!eventsByPosition.has(r.position_id)) eventsByPosition.set(r.position_id, []); eventsByPosition.get(r.position_id)!.push(r) }
-  const stateByPosition = new Map<string, (DecodedPosition | null)[]>()
-  const assetByPosition = new Map<string, number>()
-  for (const pid of positionIds) {
-    const evs = eventsByPosition.get(pid) ?? []
-    const series: (DecodedPosition | null)[] = new Array(n + 1).fill(null)
-    let cursor = 0
-    let last: DecodedPosition | null = null
-    for (let b = 0; b <= n; b++) {
-      const be = bucketEndBlock(b)
-      while (cursor < evs.length && evs[cursor].block_height <= be) {
-        const e = evs[cursor]
-        if (e.event_kind === 'destroyed' || e.active === 0) last = null
-        else { last = { assetId: e.asset_id, amount: BigInt(e.amount_raw || '0'), shares: BigInt(e.shares_raw || '0'), priceNum: BigInt(e.price_raw || '0'), priceDen: OMNI_FIXED }; assetByPosition.set(pid, e.asset_id) }
-        cursor++
-      }
-      series[b] = last
-    }
-    stateByPosition.set(pid, series)
-  }
-
-  // 3) Pool state per (asset, bucket): the latest snapshot at/before each bucket end,
-  //    forward-filled (b = -1 carries the pre-range state). Asset-bounded.
-  const assetIds = [...new Set([...assetByPosition.values()])]
-  const poolByAssetBucket = new Map<number, (OmnipoolAssetState | undefined)[]>()
-  if (assetIds.length) {
-    const poolRes = await client.query({
-      query: `SELECT asset_id,
-                toInt32(greatest(-1, least(${n}, intDiv(toInt64(block_height) - ${minb}, ${bucket})))) AS b,
-                argMax(reserve_raw, block_height) AS reserve,
-                argMax(hub_reserve_raw, block_height) AS hub_reserve,
-                argMax(shares_raw, block_height) AS shares
-              FROM price_data.omnipool_pool_state_history
-              WHERE asset_id IN {aids:Array(Int32)} AND block_height <= ${maxb}
-              GROUP BY asset_id, b ORDER BY asset_id, b`,
-      query_params: { aids: assetIds }, format: 'JSONEachRow',
-    })
-    const poolRows = await poolRes.json<{ asset_id: number; b: number; reserve: string; hub_reserve: string; shares: string }>()
-    const byAsset = new Map<number, Map<number, OmnipoolAssetState>>()
-    for (const r of poolRows) {
-      if (!byAsset.has(r.asset_id)) byAsset.set(r.asset_id, new Map())
-      byAsset.get(r.asset_id)!.set(r.b, { reserve: BigInt(r.reserve || '0'), hub: BigInt(r.hub_reserve || '0'), shares: BigInt(r.shares || '0') })
-    }
-    for (const aid of assetIds) {
-      const perBucket = byAsset.get(aid) ?? new Map<number, OmnipoolAssetState>()
-      const series: (OmnipoolAssetState | undefined)[] = new Array(n + 1).fill(undefined)
-      let last: OmnipoolAssetState | undefined = perBucket.get(-1)
-      for (let b = 0; b <= n; b++) { if (perBucket.has(b)) last = perBucket.get(b); series[b] = last }
-      poolByAssetBucket.set(aid, series)
-    }
-  }
-
-  // 4) Per bucket: positions active at the bucket end (dedup by positionId), raw legs.
-  const legsByBucket: OmnipoolHistoryLeg[][] = Array.from({ length: n + 1 }, () => [])
-  let fromBucket: number | null = null
-  for (let b = 0; b <= n; b++) {
-    const be = bucketEndBlock(b)
-    const owned: HistoricalOwnedPosition[] = []
-    for (const iv of intervals) {
-      if (iv.valid_from_block <= be && (iv.valid_to_block === 0 || iv.valid_to_block > be)) {
-        const state = stateByPosition.get(iv.position_id)?.[b] ?? null
-        if (!state) continue
-        owned.push({ positionId: iv.position_id, assetId: state.assetId, state, pool: poolByAssetBucket.get(state.assetId)?.[b] })
-      }
-    }
-    const legs = omnipoolLegsForBucket(owned)
-    if (legs.length && fromBucket === null) fromBucket = b
-    legsByBucket[b] = legs.map(l => ({ assetId: l.assetId, liquidity: l.liquidity, hub: l.hub }))
-  }
-  return { legsByBucket, assetIds, fromBucket }
 }
 
 // Historical XYK principal for the value-history chart (Phase 2). For the account's LP holdings
@@ -6234,325 +3020,8 @@ export async function loadXykPrincipalHistory(accounts: string[], candidateAsset
   return { lpAssetIds, underlyingAssetIds, stateByLp, farmSharesByLp }
 }
 
-// active DCA schedules (reconstructed from indexed events, no RPC)
-// A DCA schedule is active if it has a DCA.Scheduled event and is not since
-// Completed/Terminated. DCA.Scheduled carries the full order (assetIn/Out, per-trade
-// amount, totalAmount, period); progress is summed from DCA.TradeExecuted and the
-// next slot from DCA.ExecutionPlanned. totalAmount "0" = open-ended (no remaining).
-export interface ActiveDca {
-  id: number; assetIn: AssetRef; assetOut: AssetRef; direction: string
-  amountPerTrade: string; totalAmount: string; filledAmount: string; remainingAmount: string | null
-  executionsDone: number; period: number; nextExecutionBlock: number | null
-  // Seconds this order actually waits between trades, the median of its own most
-  // recent gaps. `period` is a block count and block time is not a constant — the
-  // chain has run at 12s, runs at ~6s and is heading for 2s — so a duration
-  // derived from a fixed seconds-per-block would be wrong for anything but today.
-  // Null until an order has executed twice; the caller then falls back to the
-  // chain's measured current block time.
-  periodSeconds: number | null
-  // What one trade and the whole budget are worth at CURRENT prices — both are
-  // amounts the schedule will still spend, so today's price is the right one
-  // (unlike an execution, which is valued at the price it traded at).
-  valueUsd: number | null; budgetUsd: number | null
-  // Owner's spendable balance of the sold asset, on open-ended orders only. Those
-  // have no budget to run out of — they run until the wallet does — so the
-  // balance is the only thing that can date their end. Null for budgeted orders,
-  // where totalAmount already bounds them.
-  fundingBalance: string | null
-  // That balance at current prices — the open-ended stand-in for budgetUsd, so
-  // an order with no budget can still be ranked and read in dollars.
-  fundingUsd: number | null
-  scheduleBlock: number; scheduleIndex: number | null
-  // The schedule's owner. Redundant on an account's own page; the asset page
-  // lists schedules across owners, so each row names whose order it is.
-  who: AccountRef
-}
-
-// Spendable balance per (account, asset), for the open-ended DCA orders whose only
-// bound is the wallet behind them. Free rather than total: a reserved balance is
-// not something the scheduler can sell.
-//
-// Tokens.Accounts answers this on its own only for plain substrate assets. An
-// aToken (HUSDC, aDOT, …) is an Aave receipt held EVM-side, and an ERC-20-backed
-// asset (HOLLAR) keeps a separate contract-side pot, so for those the substrate row
-// carries at most the schedule's own named reserve and `free` reads 0. Reading it
-// alone made every open-ended order selling one of them report no funding at all —
-// which dcaProgress then renders as 100% filled, and dcaRunway as no trades left,
-// on an order still holding thousands of tokens.
-//
-// So compose the same three sources the account page composes, through the same
-// fold helpers: what a schedule says it is funded by and what its owner's Balances
-// tab shows then cannot drift apart. Both EVM-side reads are batched across the
-// whole account set rather than issued per owner.
-async function spendableBalances(pairs: { account: string; assetId: number }[]): Promise<Map<string, string>> {
-  const out = new Map<string, string>()
-  if (!pairs.length) return out
-  const accounts = [...new Set(pairs.map(p => p.account))].filter(a => ACCOUNT_RE.test(a))
-  if (!accounts.length) return out
-  // Where an account's EVM-side holdings are indexed: itself if it is already the
-  // ETH-marker truncated form, else the runtime's first-20-bytes truncation.
-  const h160ByAccount = new Map<string, string>(
-    accounts.map(a => [a, (evmFromAccountId(a) ?? '0x' + a.slice(2, 42)).toLowerCase()]),
-  )
-  const h160s = [...new Set(h160ByAccount.values())]
-  const [prices, balanceRows, mmByHolder, erc20ByHolder] = await Promise.all([
-    ensureAccountValuePrices(),
-    client.query({
-      // Every asset the account holds, not just the ones asked for: the fold moves a
-      // held pool share (2-Pool-HUSDC) onto the main asset an order names (HUSDC),
-      // so filtering to the requested ids would drop the row that carries the answer.
-      query: `
-        SELECT account_id, asset_id, toString(t) AS total, toString(f) AS free, toString(rsv) AS reserved, lb AS last_block FROM (
-          SELECT account_id, asset_id,
-            toUInt256OrZero(argMaxMerge(total_state)) AS t,
-            toUInt256OrZero(argMaxMerge(free_state)) AS f,
-            toUInt256OrZero(argMaxMerge(reserved_state)) AS rsv,
-            maxMerge(last_block_state) AS lb
-          FROM price_data.account_asset_latest_balances
-          WHERE account_id IN (${sqlAccountList(accounts)})
-          GROUP BY account_id, asset_id
-        ) WHERE t > 0`,
-      format: 'JSONEachRow',
-    }).then(r => r.json<AggregatedBalanceRow & { account_id: string }>()),
-    mmReservesByHolder(h160s),
-    erc20WalletHoldingsByAccount(h160s),
-  ])
-  const rowsByAccount = new Map<string, AggregatedBalanceRow[]>()
-  for (const r of balanceRows) {
-    (rowsByAccount.get(r.account_id) ?? rowsByAccount.set(r.account_id, []).get(r.account_id)!).push(r)
-  }
-
-  const freeByAccountAsset = new Map<string, { free: string; decimals: number }>()
-  for (const account of accounts) {
-    const h160 = h160ByAccount.get(account)!
-    let balances = foldShareBalances(valueAccountBalances(rowsByAccount.get(account) ?? [], prices))
-    // Supplied collateral IS the account's aToken holding, so fold it in exactly as
-    // the account page does — including skipping the staking-backed market, whose
-    // collateral is HDX that stays locked in the wallet and is already counted.
-    const byMarket = new Map<string, MmReserve[]>()
-    for (const r of mmByHolder.get(h160) ?? []) {
-      const key = r.marketKey ?? 'core'
-      if (MM_MARKET_BY_KEY.get(key)?.stakingBacked) continue
-      ;(byMarket.get(key) ?? byMarket.set(key, []).get(key)!).push(r)
-    }
-    for (const reserves of byMarket.values()) applyMmCollateralToBalances(balances, { blockHeight: 0, reserves }, prices)
-    // The market's reserve is the pool share (2-Pool-HUSDC), not the asset the order
-    // names (HUSDC), so re-fold before reading — same second fold as getAddress.
-    balances = foldShareBalances(balances)
-    balances = mergeErc20Balances(balances, erc20ByHolder.get(h160) ?? [], prices)
-    for (const b of balances) freeByAccountAsset.set(`${account}|${b.asset.assetId}`, { free: b.free, decimals: b.asset.decimals })
-  }
-
-  const resolved = new Set(accounts)
-  for (const p of pairs) {
-    if (!resolved.has(p.account)) continue   // unreadable owner: absent, not zero
-    const display = displayAssetId(p.assetId)
-    const hit = freeByAccountAsset.get(`${p.account}|${display}`)
-    // No row after the fold means the owner holds none of it. That is a knowable
-    // zero — the "unfunded" end of an open-ended order — and a different statement
-    // from the null a caller gets for an owner we could not read at all.
-    if (!hit) { out.set(`${p.account}|${p.assetId}`, '0'); continue }
-    // An order denominated in the share token itself reads a row the fold has already
-    // rescaled to the main asset's decimals; put it back on the order's own scale.
-    out.set(`${p.account}|${p.assetId}`, display === p.assetId
-      ? hit.free
-      : rescaleRaw(hit.free, hit.decimals, asset(p.assetId).decimals))
-  }
-  return out
-}
-
-// How long a DCA order actually waits between trades, measured instead of derived:
-// the median of its most recent gaps between executions. A schedule's `period` is
-// a block count, and a block has been 12s, is ~6s and is heading for 2s, so any
-// fixed seconds-per-block misreads every era but the current one — and an old
-// schedule read at today's block time is off by the whole ratio.
-//
-// The window is the last 20 intervals, which keeps a long-running order on its
-// present cadence rather than an average of every era it has lived through. The
-// median (not the mean) absorbs the retries and late blocks that would otherwise
-// drag a handful of gaps around, and DISTINCT + `gap > 0` absorb a replayed range
-// inserting an execution twice.
-function dcaCadenceQuery(where: string, grouped: boolean): string {
-  const idCol = grouped ? 'id, ' : ''
-  const groupBy = grouped ? 'GROUP BY id' : ''
-  return `
-    SELECT ${idCol}medianExact(gap) AS sec
-    FROM (
-      SELECT ${idCol}arrayJoin(arrayDifference(arraySort(groupArray(t)))) AS gap
-      FROM (
-        SELECT DISTINCT ${idCol}toUInt32(block_timestamp) AS t
-        FROM price_data.dca_events
-        WHERE event_name = 'DCA.TradeExecuted' AND ${where}
-        ORDER BY t DESC
-        LIMIT 21${grouped ? ' BY id' : ''}
-      )
-      ${groupBy}
-    )
-    WHERE gap > 0
-    ${groupBy}`
-}
-
-interface DcaScheduleLink { block: number; idx: number | null }
-async function getDcaScheduleLinks(ids: Array<string | number>): Promise<Map<string, DcaScheduleLink>> {
-  const list = sqlUIntList(ids)
-  const out = new Map<string, DcaScheduleLink>()
-  if (!list) return out
-  const res = await client.query({
-    query: `
-      SELECT toString(id) AS id,
-        argMax(block_height, block_height) AS block,
-        argMax(extrinsic_index, block_height) AS idx
-      FROM price_data.dca_schedules
-      WHERE id IN (${list})
-      GROUP BY id`,
-    format: 'JSONEachRow',
-  })
-  for (const r of await res.json<{ id: string; block: number; idx: number | null }>()) out.set(r.id, { block: r.block, idx: r.idx })
-  return out
-}
-
-// One live schedule as dca_schedules stores it — the shape both active-order
-// surfaces (an account's own orders, an asset's ongoing buys/sells) select
-// before handing to enrichActiveDcas.
-interface ActiveDcaScheduleRow {
-  id: number; who: string; sblock: number; sidx: number | null
-  asset_in: number; asset_out: number; direction: string
-  amt_per: string; total: string; period: number
-}
-
-async function getActiveDcas(accounts: string[]): Promise<ActiveDca[]> {
-  const list = sqlAccountList(accounts)
-  if (list === "''") return []
-  return cached(`explorer:dca-active:${[...accounts].sort().join(',')}`, 15000, async () => {
-    const schedRes = await client.query({
-      query: `SELECT id, who, block_height AS sblock, extrinsic_index AS sidx,
-                asset_in, asset_out, direction, amount_per AS amt_per,
-                total_amount AS total, period
-              FROM price_data.dca_schedules
-              WHERE who IN (${list})
-                AND id NOT IN (
-                  SELECT id FROM price_data.dca_events WHERE event_name IN ('DCA.Completed','DCA.Terminated')
-                )
-              ORDER BY block_height DESC`,
-      format: 'JSONEachRow',
-    })
-    return enrichActiveDcas(await schedRes.json<ActiveDcaScheduleRow>())
-  })
-}
-
-// Everything a live schedule row doesn't carry itself: executions done and
-// filled amount (replay-deduplicated), the next planned block, the measured
-// cadence, current-price valuations, and — for open-ended orders — the owner's
-// spendable balance of the sold asset.
-async function enrichActiveDcas(scheds: ActiveDcaScheduleRow[]): Promise<ActiveDca[]> {
-  if (!scheds.length) return []
-  const prices = await ensurePrices()
-  const ids = scheds.map(s => s.id).join(',')
-  const [exRes, planRes, cadenceRes] = await Promise.all([
-    // Counting and summing rows, so the replacements have to be resolved first —
-    // a re-inserted raw range would otherwise inflate both the executions done and
-    // the amount filled. `max(planned_block)` below is idempotent under a duplicate.
-    client.query({ query: `SELECT id, count() AS n, toString(sum(toUInt256OrZero(amount_in))) AS filled FROM price_data.dca_events FINAL WHERE event_name='DCA.TradeExecuted' AND id IN (${ids}) GROUP BY id`, format: 'JSONEachRow' }),
-    client.query({ query: `SELECT id, max(planned_block) AS nb FROM price_data.dca_events WHERE event_name='DCA.ExecutionPlanned' AND id IN (${ids}) GROUP BY id`, format: 'JSONEachRow' }),
-    client.query({ query: dcaCadenceQuery(`id IN (${ids})`, true), format: 'JSONEachRow' }),
-  ])
-  const exMap = new Map<number, { n: number; filled: string }>()
-  for (const e of await exRes.json<{ id: number; n: number; filled: string }>()) exMap.set(e.id, { n: e.n, filled: e.filled })
-  const planMap = new Map<number, number>()
-  for (const p of await planRes.json<{ id: number; nb: number }>()) planMap.set(p.id, p.nb)
-  const cadenceMap = new Map<number, number>()
-  for (const c of await cadenceRes.json<{ id: number; sec: number }>()) {
-    if (Number(c.sec) > 0) cadenceMap.set(c.id, Number(c.sec))
-  }
-  // Only open-ended orders need it: a budgeted one already knows where it ends.
-  const funds = await spendableBalances(
-    scheds.filter(x => x.total === '0').map(x => ({ account: x.who, assetId: x.asset_in })),
-  )
-  return scheds.map(s => {
-    const filled = exMap.get(s.id)?.filled ?? '0'
-    let remaining: string | null = null
-    try { if (s.total !== '0') remaining = (BigInt(s.total) - BigInt(filled)).toString() } catch { /* keep null */ }
-    const aIn = asset(s.asset_in), aOut = asset(s.asset_out)
-    // For a Buy order the per-trade amount is the OUTPUT (e.g. "buy 80 USDC"); for
-    // a Sell order it's the INPUT ("sell 85 aDOT"). Value it with the matching asset.
-    const perAsset = s.direction === 'Buy' ? aOut : aIn
-    const fundingBalance = s.total === '0' ? funds.get(`${s.who}|${s.asset_in}`) ?? null : null
-    return {
-      id: s.id, assetIn: aIn, assetOut: aOut, direction: s.direction,
-      amountPerTrade: s.amt_per, totalAmount: s.total, filledAmount: filled, remainingAmount: remaining,
-      executionsDone: exMap.get(s.id)?.n ?? 0, period: s.period, nextExecutionBlock: planMap.get(s.id) ?? null,
-      periodSeconds: cadenceMap.get(s.id) ?? null,
-      valueUsd: usdValue(prices, perAsset.assetId, s.amt_per, perAsset.decimals),
-      // The budget is always denominated in the sold asset, whichever leg the
-      // per-trade amount fixes.
-      budgetUsd: s.total === '0' ? null : usdValue(prices, aIn.assetId, s.total, aIn.decimals),
-      fundingBalance,
-      fundingUsd: fundingBalance != null ? usdValue(prices, aIn.assetId, fundingBalance, aIn.decimals) : null,
-      scheduleBlock: s.sblock, scheduleIndex: s.sidx,
-      who: accountRef(s.who),
-    }
-  })
-}
-
-// The asset page's ordering: biggest money first. A budgeted order ranks by its
-// whole plan valued today (budgetUsd); an open-ended one has no plan beyond the
-// wallet behind it, so it ranks by that balance (fundingUsd) instead — the same
-// figure its Budget cell displays in each case. Rows with no dollar value at all
-// (no price feed, unreadable owner) sink below a knowable $0. Ties keep the
-// incoming order (sort is stable), i.e. schedule recency.
-export function compareDcasByBudgetUsdDesc(x: ActiveDca, y: ActiveDca): number {
-  return (y.budgetUsd ?? y.fundingUsd ?? -1) - (x.budgetUsd ?? x.fundingUsd ?? -1)
-}
-
-// The asset page's DCAs tab: every ongoing schedule trading this asset, split by
-// what it does TO the asset — buys acquire it (asset_out), sells dispose of it
-// (asset_in). FINAL because dca_schedules replaces on id (a later event enriches
-// a schedule's row) and an unresolved replacement would list the order twice;
-// the table is tiny (~34k rows), so FINAL stays bounded.
-export interface AssetDcas { buys: ActiveDca[]; sells: ActiveDca[] }
-export async function getAssetDcas(assetId: number): Promise<AssetDcas> {
-  return cached(`explorer:dca-asset:${assetId}`, 15000, async () => {
-    const schedRes = await client.query({
-      query: `SELECT id, who, block_height AS sblock, extrinsic_index AS sidx,
-                asset_in, asset_out, direction, amount_per AS amt_per,
-                total_amount AS total, period
-              FROM price_data.dca_schedules FINAL
-              WHERE (asset_in = {id:UInt32} OR asset_out = {id:UInt32})
-                AND id NOT IN (
-                  SELECT id FROM price_data.dca_events WHERE event_name IN ('DCA.Completed','DCA.Terminated')
-                )
-              ORDER BY block_height DESC`,
-      query_params: { id: assetId }, format: 'JSONEachRow',
-    })
-    const rows = await enrichActiveDcas(await schedRes.json<ActiveDcaScheduleRow>())
-    return {
-      buys: rows.filter(r => r.assetOut.assetId === assetId).sort(compareDcasByBudgetUsdDesc),
-      sells: rows.filter(r => r.assetIn.assetId === assetId).sort(compareDcasByBudgetUsdDesc),
-    }
-  })
-}
-
-// The DCAs tab badge on the asset page. countDistinct resolves the same
-// replacement duplicates FINAL does above, so the badge equals buys + sells.
-async function countAssetDcas(assetId: number): Promise<number> {
-  const res = await client.query({
-    query: `SELECT countDistinct(id) AS n
-            FROM price_data.dca_schedules
-            WHERE (asset_in = {id:UInt32} OR asset_out = {id:UInt32})
-              AND id NOT IN (
-                SELECT id FROM price_data.dca_events WHERE event_name IN ('DCA.Completed','DCA.Terminated')
-              )`,
-    query_params: { id: assetId }, format: 'JSONEachRow',
-  })
-  return Number((await res.json<{ n: string | number }>())[0]?.n ?? 0)
-}
-
 // extrinsic by block-index (design routes #/extrinsic/h-i)
 export async function getExtrinsicAt(height: number, index: number): Promise<ExtrinsicDetail | null> {
-  // Pending first (see getBlock): unfinalized extrinsics answer from memory,
-  // marked so the client keeps refetching until the finalized row lands.
-  const pending = findPendingExtrinsic(height, index)
-  if (pending) return pendingExtrinsicDetail(pending.block, pending.ext)
   return cached(`explorer:extrinsic-at:${height}:${index}`, 10000, async () => {
     const res = await client.query({
       query: `SELECT e.block_height AS block_height, e.extrinsic_index AS extrinsic_index, e.extrinsic_hash AS extrinsic_hash,
@@ -6579,7 +3048,6 @@ export interface EventDetail {
   name: string
   args: unknown
   decoded: boolean
-  evmDecoded?: EvmLogDecode
   phase: string
   extrinsic: ExtrinsicSummary | null
 }
@@ -6597,11 +3065,9 @@ export async function getEventAt(height: number, index: number): Promise<EventDe
     // an Initialization/Finalization (system) event.
     const phase = e.extrinsic_index != null ? `ApplyExtrinsic(${e.extrinsic_index})` : 'Finalization'
     const extrinsic = e.extrinsic_index != null ? await getExtrinsicSummaryAt(e.block_height, e.extrinsic_index) : null
-    const args = safeJson(e.args_json)
-    const evmDecoded = e.event_name === 'EVM.Log' ? await decodeEvmLogArgs(args) : null
     return {
       blockHeight: e.block_height, eventIndex: e.event_index, extrinsicIndex: e.extrinsic_index, timestamp: e.ts,
-      name: e.event_name, args, decoded: e.event_name === 'EVM.Log', ...(evmDecoded ? { evmDecoded } : {}), phase, extrinsic,
+      name: e.event_name, args: safeJson(e.args_json), decoded: false, phase, extrinsic,
     }
   })
 }
@@ -6617,13 +3083,13 @@ async function getExtrinsicSummaryAt(height: number, index: number): Promise<Ext
   return row ? extrinsicSummary(row) : null
 }
 
-// assets registry with prices + total value on Hydration
+// assets registry with prices + total value on chain
 export type ExplorerAssetType = 'Native' | 'Derivative' | 'Token'
 export interface AssetListItem extends AssetRef { price: number | null; change24h: number | null; type: ExplorerAssetType; amountUsd: number | null; holderCount?: number }
 
 function explorerAssetType(asset: AssetRef): ExplorerAssetType {
   if (asset.assetId === 0) return 'Native'
-  return ATOKEN_UNDERLYING_ID[asset.assetId] != null || asset.symbol.startsWith('v') || asset.symbol === 'GDOT'
+  return SHARE_TOKEN_UNDERLYING_ID[asset.assetId] != null || asset.symbol.startsWith('v')
     ? 'Derivative'
     : 'Token'
 }
@@ -6631,7 +3097,6 @@ function explorerAssetType(asset: AssetRef): ExplorerAssetType {
 // Total raw balance per asset across all indexed accounts. Mirrors holder-list
 // balance semantics: use the current latest balance only. Older non-zero
 // observations are historical and must not resurrect current zero-balance holders.
-// ERC-20-backed assets also include their separate ERC-20 wallet table.
 async function getAssetTotals(): Promise<Map<number, bigint>> {
   return cached('explorer:asset-totals', 60000, async () => {
     const res = await client.query({
@@ -6640,20 +3105,13 @@ async function getAssetTotals(): Promise<Map<number, bigint>> {
           SELECT account_id, asset_id, toUInt256OrZero(argMaxMerge(total_state)) AS bal
           FROM price_data.account_asset_latest_balances
           GROUP BY account_id, asset_id
-          UNION ALL
-          -- ERC-20-side holdings (HOLLAR) — separate pot, see erc20WalletService.
-          SELECT account_id, asset_id, toUInt256OrZero(argMax(total, updated_at)) AS bal
-          FROM price_data.erc20_wallet_balances
-          GROUP BY account_id, asset_id
         ) GROUP BY asset_id`,
       format: 'JSONEachRow',
     })
     const m = new Map<number, bigint>()
     for (const r of await res.json<{ asset_id: string; raw: string }>()) m.set(parseInt(r.asset_id, 10), BigInt(r.raw || '0'))
-    for (const [assetId, raw] of await getATokenTotalSupplies()) m.set(assetId, raw)
-    // Pool-share assets are hidden from the directory and displayed as their Giga
-    // underlying. Move—not duplicate—their held total onto that visible id. The
-    // raw total already includes the aToken custody row exactly once.
+    // Pool-share assets are hidden from the directory and displayed as their
+    // underlying. Move—not duplicate—their held total onto that visible id.
     for (const [shareIdText, displayId] of Object.entries(SHARE_TOKEN_UNDERLYING_ID)) {
       const shareId = Number(shareIdText)
       const shareRaw = m.get(shareId) ?? 0n
@@ -6674,10 +3132,6 @@ export async function getAssetHolderCounts(): Promise<Map<number, number>> {
             SELECT account_id, asset_id, toUInt256OrZero(argMaxMerge(total_state)) AS bal
             FROM price_data.account_asset_latest_balances
             GROUP BY account_id, asset_id
-            UNION ALL
-            SELECT account_id, asset_id, toUInt256OrZero(argMax(total, updated_at)) AS bal
-            FROM price_data.erc20_wallet_balances
-            GROUP BY account_id, asset_id
           )
           GROUP BY account_id, asset_id
           HAVING total_bal > 0
@@ -6687,43 +3141,49 @@ export async function getAssetHolderCounts(): Promise<Map<number, number>> {
     })
     const m = new Map<number, number>()
     for (const r of await res.json<{ asset_id: string; n: string | number }>()) m.set(parseInt(r.asset_id, 10), Number(r.n))
-    const knownATokenIds = Object.keys(ATOKEN_UNDERLYING_ID).map(Number)
     const withFolded = (counts: Map<number, number>, folded: Map<number, number>) => {
       for (const [displayId, count] of folded) counts.set(displayId, count)
       return counts
     }
-    const foldedPromise = foldedDisplayHolderCounts()
-      .catch(error => { console.error('[Explorer] folded display holder counts failed:', error); return new Map<number, number>() })
-    try {
-      const b0 = await aTokenAnchorBlock()
-      if (!b0) return withFolded(mergeATokenHolderCounts(m, knownATokenIds, [], new Map()), await foldedPromise)
-      const reserves = await getATokenReserves()
-      const contracts = reserves.map(entry => entry.token.aToken)
-      const countCacheKey = [...contracts].map(contract => contract.toLowerCase()).sort().join(',')
-      const reconstructed = await cached(
-        `explorer:atoken-holder-counts:${b0}:${countCacheKey}`,
-        300000,
-        () => reconstructATokenHolderCounts(client, contracts, b0),
-      )
-      return withFolded(mergeATokenHolderCounts(
-        m,
-        knownATokenIds,
-        reserves.map(entry => ({ assetId: entry.assetId, contract: entry.token.aToken })),
-        reconstructed,
-      ), await foldedPromise)
-    } catch (error) {
-      console.error('[Explorer] aToken holder-count reconstruction failed:', error)
-      return withFolded(mergeATokenHolderCounts(m, knownATokenIds, [], new Map()), await foldedPromise)
-    }
+    return withFolded(m, await foldedDisplayHolderCounts()
+      .catch(error => { console.error('[Explorer] folded display holder counts failed:', error); return new Map<number, number>() }))
   })
 }
 
-// Display assets (GDOT←690, HEURC←10044, …) hold their supply in hidden
-// stableswap-share ids, and a money-market custody row stands in for its suppliers.
-// getAssetTotals already folds those into the display asset, so its holder count has
-// to come from the same folded identity the detail page pages — counting the display
-// id's direct balances alone reports "—" for a $3.7M asset, or names the vault as
-// its one holder.
+// The beneficial holders of a display asset: its own direct balances plus the
+// balances of every hidden pool-share id that displays as it, rescaled onto the
+// display asset's decimals and grouped by canonical account (tagged members
+// collapse into one row, like every other holder surface).
+async function getFoldedDisplayAssetHolders(displayAssetId: number, shareAssetIds: number[]): Promise<HolderRow[]> {
+  const claims = await cached(`explorer:folded-display-claims:${displayAssetId}`, 30000, async (): Promise<HolderBalanceClaim[]> => {
+    const normalizedShareIds = [...new Set(shareAssetIds.filter(id => SHARE_TOKEN_UNDERLYING_ID[id] === displayAssetId))]
+    if (!normalizedShareIds.length) return []
+    const res = await client.query({
+      query: `SELECT account_id,asset_id,toString(latest_bal) AS balance,last_block FROM (
+                SELECT account_id,asset_id,
+                  toUInt256OrZero(argMaxMerge(total_state)) AS latest_bal,
+                  maxMerge(last_block_state) AS last_block
+                FROM price_data.account_asset_latest_balances
+                WHERE asset_id IN ({assetIds:Array(String)})
+                GROUP BY account_id,asset_id
+              ) WHERE latest_bal > 0`,
+      query_params: { assetIds: [displayAssetId, ...normalizedShareIds].map(String) }, format: 'JSONEachRow',
+    })
+    const out: HolderBalanceClaim[] = []
+    for (const row of await res.json<{ account_id: string; asset_id: string; balance: string; last_block: number }>()) {
+      const sourceId = Number(row.asset_id)
+      const bal = BigInt(rescaleRaw(row.balance, asset(sourceId).decimals, asset(displayAssetId).decimals) || '0')
+      if (bal > 0n) out.push({ accountId: row.account_id, bal, lastBlock: Number(row.last_block) })
+    }
+    return out
+  })
+  return groupHolderBalanceClaims(claims, accountRef)
+}
+
+// A display asset holds its supply in hidden pool-share ids. getAssetTotals
+// already folds those into the display asset, so its holder count has to come
+// from the same folded identity the detail page pages — counting the display
+// id's direct balances alone reports "—" for an asset with real holders.
 async function foldedDisplayHolderCounts(): Promise<Map<number, number>> {
   const shareIdsByDisplay = new Map<number, number[]>()
   for (const [shareId, displayId] of Object.entries(SHARE_TOKEN_UNDERLYING_ID)) {
@@ -6737,36 +3197,6 @@ async function foldedDisplayHolderCounts(): Promise<Map<number, number>> {
     if (holders.length) counts.set(displayId, holders.length)
   }))
   return counts
-}
-
-export function mergeATokenHolderCounts(
-  base: Map<number, number>,
-  knownATokenIds: Iterable<number>,
-  active: ReadonlyArray<{ assetId: number; contract: string }>,
-  countsByContract: ReadonlyMap<string, number>,
-): Map<number, number> {
-  const merged = new Map(base)
-  for (const assetId of knownATokenIds) merged.delete(assetId)
-  for (const { assetId, contract } of active) {
-    merged.set(assetId, countsByContract.get(contract.toLowerCase()) ?? 0)
-  }
-  return merged
-}
-
-async function getATokenTotalSupplies(): Promise<Map<number, bigint>> {
-  return cached('explorer:atoken-total-supplies', 30000, async () => {
-    const out = new Map<number, bigint>()
-    const b0 = await aTokenAnchorBlock()
-    if (!b0) return out
-    const entries = await getATokenReserves()
-    const scaledByContract = await reconstructTotalScaled(entries.map(entry => entry.token.aToken), b0)
-    for (const { assetId, token, liquidityIndex } of entries) {
-      const scaledTotal = scaledByContract.get(token.aToken.toLowerCase()) ?? 0n
-      if (scaledTotal <= 0n) continue
-      out.set(assetId, (out.get(assetId) ?? 0n) + (scaledTotal * liquidityIndex) / ATOKEN_RAY)
-    }
-    return out
-  })
 }
 
 // 7-day price samples per asset (oldest→newest) for the assets-list sparkline
@@ -6812,10 +3242,10 @@ async function getWeeklyPriceSamples(): Promise<Map<number, number[]>> {
       for (const [assetId, arr] of m) {
         if (arr.length > SPARKLINE_BUCKETS) m.set(assetId, arr.slice(-SPARKLINE_BUCKETS))
       }
-      // aTokens borrow the (transitively resolved) underlying's sparkline + 7D.
-      for (const aToken of Object.keys(PRICE_ALIAS_ID)) {
-        const u = m.get(priceAssetId(Number(aToken)))
-        if (u && !m.has(Number(aToken))) m.set(Number(aToken), u)
+      // Aliased assets borrow the (transitively resolved) underlying's sparkline + 7D.
+      for (const aliased of Object.keys(PRICE_ALIAS_ID)) {
+        const u = m.get(priceAssetId(Number(aliased)))
+        if (u && !m.has(Number(aliased))) m.set(Number(aliased), u)
       }
     } catch { /* prices may be unavailable */ }
     return m
@@ -6905,14 +3335,6 @@ export interface EventRow {
   name: string
   args: unknown
   decoded: boolean
-  evmDecoded?: EvmLogDecode
-  // false = unfinalized (pending-head layer; may reorg away). Absent = finalized.
-  finalized?: boolean
-  // true = a DRY-RUN projection of what a transaction still in the pool would
-  // emit. blockHeight/extrinsicIndex are 0/null placeholders — `hash` names the
-  // transaction, which is the only thing these events belong to yet.
-  mempool?: boolean
-  hash?: string
 }
 interface EventSourceRow {
   block_height: number
@@ -6931,27 +3353,22 @@ function eventRow(row: EventSourceRow): EventRow {
     timestamp: row.ts,
     name: row.event_name,
     args: safeJson(row.args_json),
-    decoded: row.event_name === 'EVM.Log',
+    decoded: false,
   }
 }
 
-async function uniqueEventRows(rows: EventSourceRow[]): Promise<EventRow[]> {
+function uniqueEventRows(rows: EventSourceRow[]): EventRow[] {
   const seen = new Set<string>()
-  const out = rows.flatMap(row => {
+  return rows.flatMap(row => {
     const key = `${row.block_height}:${row.event_index}`
     if (seen.has(key)) return []
     seen.add(key)
     return [eventRow(row)]
   })
-  // Expanded event rows show their raw args; EVM.Log rows whose contract has a
-  // verified ABI additionally get named params (page-bounded, in-memory).
-  await attachEvmLogDecodes(out)
-  return out
 }
 export async function getRecentEvents(limit: number, from?: string, to?: string, offset = 0, filters: EventListFilters = {}): Promise<EventRow[]> {
   const tw = timeWindow(from, to)
-  const livePage0 = offset === 0 && !tw && !filters.event?.trim()
-  const settled = await cached(`explorer:events:${await liveFeedTag(Boolean(tw), datedWindowIsClosed(to))}:${limit}:${offset}:${from ?? ''}:${to ?? ''}:${filterKey(filters)}`, tw ? 30000 : LIVE_CACHE_MS, async () => {
+  return cached(`explorer:events:${await liveHeadTag(Boolean(tw), datedWindowIsClosed(to))}:${limit}:${offset}:${from ?? ''}:${to ?? ''}:${filterKey(filters)}`, tw ? 30000 : LIVE_CACHE_MS, async () => {
     const eventFilter = filters.event?.trim() ? textNameFilter('event_name', 'eventName') : ''
     const rows = await withFeedWindow(tw, limit, offset + limit, async (bound) => {
       // A page cut by OFFSET reads every skipped row too, and args_json is ZSTD(6) —
@@ -6986,50 +3403,12 @@ export async function getRecentEvents(limit: number, from?: string, to?: string,
       })
       return res.json<EventSourceRow>()
     })
-    const finalizedRows = await uniqueEventRows(rows)
-    // Page 0 of the plain live feed leads with the unfinalized events; filtered
-    // and dated views stay finalized-only (see the extrinsics feed).
-    if (livePage0) {
-      const pending = pendingBlocksDesc(finalizedRows[0]?.blockHeight ?? 0).flatMap(pendingEventRows)
-      if (pending.length) return [...pending, ...finalizedRows].slice(0, limit)
-    }
-    return finalizedRows
+    return uniqueEventRows(rows)
   })
-  // And ahead of those, the events the pool's transactions are PROJECTED to
-  // emit — merged outside the cache, like the other pool merges, so the pool
-  // moving costs no read. They are not chain facts and say so: marked
-  // `mempool`, addressed by transaction hash, no block coordinates.
-  if (!livePage0) return settled
-  const pool = mempoolEventRows().slice(0, poolShare(limit))
-  return pool.length ? [...pool, ...settled].slice(0, limit) : settled
-}
-
-// The projected events of every transaction in the pool, newest transaction
-// first and, within one, in emission order.
-function mempoolEventRows(): EventRow[] {
-  const out: EventRow[] = []
-  for (const tx of mempoolTxs()) {
-    for (const e of tx.events) {
-      out.push({
-        blockHeight: 0,
-        eventIndex: e.eventIndex,
-        extrinsicIndex: null,
-        timestamp: tx.firstSeen,
-        name: e.name,
-        args: e.args,
-        decoded: e.name === 'Evm.Log' || e.name === 'EVM.Log',
-        finalized: false,
-        mempool: true,
-        hash: tx.hash,
-      })
-    }
-  }
-  return out
 }
 
 // trades (swaps)
 export interface TradeRow {
-  dcaScheduleId?: number
   blockHeight: number
   timestamp: string
   eventIndex: number
@@ -7041,9 +3420,7 @@ export interface TradeRow {
   amountOut: string
   valueUsd: number | null
   venue: string
-  dca: boolean
-  // The extrinsic a trade should link to (own extrinsic, or the DCA schedule for
-  // DCA executions which have no per-execution extrinsic). Null → link to block.
+  // The extrinsic a trade should link to. Null → link to block.
   linkBlock: number | null
   linkIndex: number | null
 }
@@ -7191,7 +3568,7 @@ export function swapRouteReps<T extends SwapGroupRow>(rows: T[], prefer: (row: T
 // the same block, so the space belongs in the key. This list must stay identical to
 // the swap-event list in clickhouse/schema/003_materialized_views.sql.
 const HISTOGRAM_SWAP_EVENTS_SQL = `'Router.Executed','Omnipool.SellExecuted','Omnipool.BuyExecuted','Stableswap.SellExecuted','Stableswap.BuyExecuted','XYK.SellExecuted','XYK.BuyExecuted','LBP.SellExecuted','LBP.BuyExecuted'`
-const SWAP_EVENTS = ['Router.Executed', 'Router.RouteExecuted', 'Omnipool.SellExecuted', 'Omnipool.BuyExecuted', 'Stableswap.SellExecuted', 'Stableswap.BuyExecuted', 'XYK.SellExecuted', 'XYK.BuyExecuted', 'LBP.SellExecuted', 'LBP.BuyExecuted']
+const SWAP_EVENTS = ['Router.Executed', 'Router.RouteExecuted', 'XYK.SellExecuted', 'XYK.BuyExecuted', 'LBP.SellExecuted', 'LBP.BuyExecuted']
 // The router's net-trade summary was emitted as Router.RouteExecuted before the
 // pallet renamed it to Router.Executed (block ~4,542,080); both carry the same
 // {assetIn, assetOut, amountIn, amountOut} args and an empty `who`.
@@ -7205,30 +3582,6 @@ function isRouterNet(eventName: string): boolean {
 // so a multi-hop swap shows as ONE net trade, not one per leg.
 const ROUTER_PALLET_ACCT = '0x6d6f646c726f7574657265780000000000000000000000000000000000000000'
 const NOT_ROUTER_HOP = `AND JSONExtractString(args_json,'who') != '${ROUTER_PALLET_ACCT}'`
-// DCA keeper-fee legs: a DCA execution swaps the owner's reserved funds directly
-// (outside the router) to pay its per-execution fee, emitting an AMM *Executed
-// with who=<owner> and no extrinsic. The user's real trade is the paired
-// Router.Executed net summary, so these owner-attributed pallet-internal legs are
-// internal plumbing that must not surface as standalone "Swap" rows. The three
-// pallet-internal swap kinds are disjoint on (extrinsic_index, who): a signed
-// user swap has an extrinsic; a router hop / pool leg has a 0x6d6f646c pallet
-// `who`; the DCA net trade is Router.Executed with an empty `who`. Only the
-// fee leg is pallet-internal AND attributed to a real account — so that triple
-// uniquely identifies it. Kept as a pure fn so the SQL filter and the emit-time
-// guard share one definition (and it's unit-testable).
-export function isDcaFeeLegSwap(extrinsicIndex: number | null, who: string): boolean {
-  return extrinsicIndex == null && who !== '' && !who.startsWith('0x6d6f646c')
-}
-const NOT_DCA_FEE_LEG = `AND NOT (extrinsic_index IS NULL AND JSONExtractString(args_json,'who') != '' AND JSONExtractString(args_json,'who') NOT LIKE '0x6d6f646c%')`
-// Before the router event rename (block 4,542,080) the AMM legs of a DCA
-// execution ran with the owner's account — including module pots (treasury
-// buyback DCAs), which the who-based fee-leg triple can't catch. In that era a
-// DCA execution always emits the Router.RouteExecuted net summary, so hide
-// unsigned non-net hops in blocks where a DCA trade actually executed; pot
-// hook swaps in DCA-free blocks keep surfacing as their own trades.
-const ROUTER_NET_RENAME_BLOCK = 4_542_080
-const NOT_LEGACY_DCA_HOP = `AND NOT (extrinsic_index IS NULL AND block_height < ${ROUTER_NET_RENAME_BLOCK} AND event_name NOT IN (${ROUTER_NET_EVENTS_SQL}) AND block_height IN (SELECT block_height FROM price_data.dca_events WHERE event_name = 'DCA.TradeExecuted' AND block_height < ${ROUTER_NET_RENAME_BLOCK}))`
-const HOLLAR_ASSET_ID = 222
 function positiveAccountVolumes(rows: Array<{ account_id: string; volume_usd: number }>): Map<string, number> {
   const volumes = new Map<string, number>()
   for (const row of rows) {
@@ -7252,462 +3605,8 @@ async function tradingVolumeByAccount(accounts: string[]): Promise<Map<string, n
   })
   return positiveAccountVolumes(await res.json<{ account_id: string; volume_usd: number }>())
 }
-// Liquidations are globally rare (a few thousand events), so the collateral is
-// always valued at its block-time price — cheap even for the unfiltered
-// accounts-list sort.
-//
-// The legs come from the money_market_liquidation_calls projection rather than
-// raw_money_market_events: that table is ordered (block_height, event_index,
-// event_name), so `event_name = 'LiquidationCall'` sits on the third key column
-// behind no prefix and prunes nothing — each read scanned all 10.70M rows and
-// decompressed the ZSTD(6) decoded_args_json to reach 8,842 legs. The projection
-// is account-first, holds only those legs, and carries the decoded collateral
-// amount, so nothing here reads decoded_args_json.
-//
-// FINAL, unlike the set-semantic dust/liquidation-extrinsic projections: this one
-// is summed, so an unmerged replay duplicate would double a leg. It is bounded by
-// the account prefix when scoped and by the table's own size (8,842 rows) when not.
-// The configured-market and known-asset filters stay here rather than in the view —
-// MM_MARKETS is runtime-extensible and the asset registry is runtime state.
-function liquidationVolumeCtes(accountFilter = ''): string {
-  const accountWhere = accountFilter ? `AND account_id IN (${accountFilter})` : ''
-  const assetExpr = mmAssetIdSql('asset_address')
-  return `
-            liquidation_legs AS (
-              SELECT
-                account_id,
-                ${assetExpr} AS asset_id,
-                block_timestamp AS block_time,
-                liquidated_collateral_amount AS amount
-              FROM price_data.money_market_liquidation_calls FINAL
-              WHERE lower(pool_address) IN (${configuredMmPoolsSql()})
-                AND ${mmAssetKnownSql('asset_address')}
-                ${accountWhere}
-            ),
-            ${historicalVolumeSql('liquidation_legs', 'liquidation_volume_raw')}`
-}
-async function liquidationVolumeByAccount(accounts: string[]): Promise<Map<string, number>> {
-  const safe = [...new Set(accounts.map(a => a.toLowerCase()).filter(a => ACCOUNT_RE.test(a)))]
-  if (!safe.length) return new Map()
-  const list = sqlAccountList(safe)
-  const res = await client.query({
-    query: `
-      WITH
-        ${liquidationVolumeCtes(list)}
-      SELECT account_id, toFloat64(sum(volume_usd)) AS volume_usd
-      FROM liquidation_volume_raw
-      GROUP BY account_id`,
-    format: 'JSONEachRow',
-  })
-  return positiveAccountVolumes(await res.json<{ account_id: string; volume_usd: number }>())
-}
-// Protocol revenue EARNED FROM an account (trade fees it paid, its liquidation
-// penalties, its attributed borrow interest, its network fees) — the account
-// grain of price_data.account_revenue (clickhouse/schema/008_revenue.sql),
-// summed across streams. Same freshness contract as the derived table: the
-// live tail (up to ~2h) surfaces on the /revenue dashboard, not here.
-async function revenueByAccount(accounts: string[]): Promise<Map<string, number>> {
-  const safe = [...new Set(accounts.map(a => a.toLowerCase()).filter(a => ACCOUNT_RE.test(a)))]
-  if (!safe.length) return new Map()
-  const list = sqlAccountList(safe)
-  const res = await client.query({
-    query: `
-      SELECT account AS account_id, toFloat64(sum(revenue_usd)) AS volume_usd
-      FROM price_data.account_revenue
-      WHERE account IN (${list})
-      GROUP BY account_id`,
-    format: 'JSONEachRow',
-  })
-  return positiveAccountVolumes(await res.json<{ account_id: string; volume_usd: number }>())
-}
-
-/**
- * Protocol revenue attributed to an activity. The unit is the EXTRINSIC: fees,
- * penalties and liquidator profit for one user action land on several event
- * indices inside it, so the extrinsic is the smallest thing whose revenue adds
- * up. `lpUsd` is the share that went to liquidity providers rather than the
- * protocol — on a routed trade it is often the larger half, and showing only the
- * protocol slice would understate what the action generated.
- */
-export interface ActivityRevenue {
-  protocolUsd: number
-  lpUsd: number
-  streams: { stream: string; usd: number }[]
-}
-
-export const revenueKey = (blockHeight: number, extrinsicIndex: number | null): string =>
-  `${blockHeight}:${extrinsicIndex ?? 'b'}`
-
-/**
- * Revenue for a page of rows in ONE query. `revenue_events` is
- * ORDER BY (block_height, event_index, …) and partitioned by month, so scoping
- * to the page's blocks prunes on the primary key; the join to `raw_events` maps
- * each revenue event to the extrinsic that caused it. Events with no extrinsic
- * (on-initialize hooks) are the BLOCK's revenue and are keyed separately, never
- * folded into an extrinsic that did not earn them.
- */
-export async function revenueByExtrinsic(
-  keys: readonly { blockHeight: number; extrinsicIndex: number | null }[],
-): Promise<Map<string, ActivityRevenue>> {
-  const blocks = [...new Set(keys.map(k => k.blockHeight).filter(b => Number.isFinite(b) && b > 0))]
-  const out = new Map<string, ActivityRevenue>()
-  if (!blocks.length) return out
-  const res = await client.query({
-    query: `
-      SELECT r.block_height AS block_height, e.extrinsic_index AS extrinsic_index, r.stream AS stream,
-             toFloat64(sumIf(r.amount_usd, ${PROTOCOL_REVENUE_PREDICATE_SQL})) AS protocol_usd,
-             toFloat64(sumIf(r.amount_usd, r.dest = 'lp')) AS lp_usd
-      FROM price_data.revenue_events AS r
-      INNER JOIN (
-        SELECT block_height, event_index, extrinsic_index
-        FROM price_data.raw_events
-        WHERE block_height IN ({blocks:Array(UInt32)})
-      ) AS e ON e.block_height = r.block_height AND e.event_index = r.event_index
-      WHERE r.block_height IN ({blocks:Array(UInt32)})
-      GROUP BY block_height, extrinsic_index, stream`,
-    query_params: { blocks },
-    format: 'JSONEachRow',
-  })
-  collectRevenueRows(out, await res.json())
-  return out
-}
-
-interface RevenueSumRow {
-  block_height: number
-  extrinsic_index: number | null
-  stream: string
-  protocol_usd: number
-  lp_usd: number
-}
-
-// Folds per-(extrinsic, stream) sums into one entry per extrinsic. Shared so the
-// booked read and the recomputed tail can never disagree on shape or ordering.
-function collectRevenueRows(out: Map<string, ActivityRevenue>, rows: readonly RevenueSumRow[]): void {
-  for (const row of rows) {
-    const key = revenueKey(Number(row.block_height), row.extrinsic_index == null ? null : Number(row.extrinsic_index))
-    const entry = out.get(key) ?? { protocolUsd: 0, lpUsd: 0, streams: [] }
-    entry.protocolUsd += Number(row.protocol_usd) || 0
-    entry.lpUsd += Number(row.lp_usd) || 0
-    const usd = Number(row.protocol_usd) || 0
-    if (usd > 0) entry.streams.push({ stream: row.stream, usd })
-    out.set(key, entry)
-  }
-  for (const entry of out.values()) entry.streams.sort((a, b) => b.usd - a.usd)
-}
-
-// The newest of THESE blocks whose event rows are visible. Deliberately not
-// indexedRawHead: that reads raw_ingestion_state, which names a block before its
-// event rows land (the same skew that let a notification lane advance past unseen
-// blocks). Revenue recomputed for a block whose events are not in yet would read as
-// a real $0.00, so coverage stops here and those rows keep their dash.
-//
-// Scoped to the page's own blocks rather than a cached global head: a shared head
-// cached even briefly goes stale within a block or two, and every block past it
-// loses its revenue for no reason. Restricted to the block set this is primary-key
-// pruned and exact.
-async function visibleEventHeadWithin(blocks: readonly number[]): Promise<number> {
-  if (!blocks.length) return 0
-  const res = await client.query({
-    query: 'SELECT max(block_height) AS head FROM price_data.raw_events WHERE block_height IN ({blocks:Array(UInt32)})',
-    query_params: { blocks: [...blocks] },
-    format: 'JSONEachRow',
-  })
-  return Number((await res.json<{ head: number | null }>())[0]?.head ?? 0)
-}
-
-// ClickHouse DateTime literal (UTC) for the tail window's upper bound.
-function revenueTailAnchor(): string {
-  return new Date(Date.now() + 60_000).toISOString().slice(0, 19).replace('T', ' ')
-}
-
-/**
- * How far `revenue_events` has been booked. The model is filled by a
- * partition-incremental derivation, so it trails the chain head (measured ~1000
- * blocks). Readers need the watermark to tell "earned nothing" from "not booked
- * yet" — without it a fresh row reads as $0, which is a wrong number rather than
- * a missing one.
- */
-async function revenueBookedThroughBlock(): Promise<number> {
-  return cached('explorer:revenue-watermark', 60_000, async () => {
-    const res = await client.query({
-      query: 'SELECT max(block_height) AS head FROM price_data.revenue_events',
-      format: 'JSONEachRow',
-    })
-    return Number((await res.json<{ head: number | null }>())[0]?.head ?? 0)
-  })
-}
-
-/**
- * Attaches revenue per extrinsic. Within the booked range the field is ALWAYS
- * set, zeros included, so its presence means "this is what the action earned".
- * Above the watermark it is left absent, meaning "not booked yet" — never zero.
- */
-// Anything carrying a block + extrinsic and a slot to hold the answer: an activity
-// row, or a single trade/extrinsic detail.
-export interface RevenueBearing {
-  blockHeight: number
-  extrinsicIndex: number | null
-  eventIndex?: number | null
-  revenue?: ActivityRevenue
-}
-
-// `revenue_events` is derived and trails the raw head, so "no row" is ambiguous —
-// earned nothing, or not booked yet. The watermark disambiguates: at or below it,
-// absence is a real zero; above it, the field stays absent so the UI shows a dash
-// rather than asserting $0.00.
-export function attachRevenue(
-  rows: readonly RevenueBearing[],
-  map: ReadonlyMap<string, ActivityRevenue>,
-  bookedThrough: number,
-): void {
-  if (!bookedThrough) return
-  // Revenue belongs to the EXTRINSIC, but an extrinsic can produce several rows — a
-  // liquidation seizes collateral AND swaps it, yielding a LiquidationCall row and a
-  // trade row. Reporting it on both showed each liquidation twice with the figure
-  // duplicated, and made the internal collateral swap look like a swap that earned it.
-  // So it goes to the extrinsic's earliest row: the cause, not its consequences.
-  const owner = new Map<string, RevenueBearing>()
-  for (const row of rows) {
-    if (row.blockHeight > bookedThrough) continue
-    const key = revenueKey(row.blockHeight, row.extrinsicIndex)
-    const held = owner.get(key)
-    if (!held || (row.eventIndex ?? Infinity) < (held.eventIndex ?? Infinity)) owner.set(key, row)
-  }
-  for (const [key, row] of owner) {
-    row.revenue = map.get(key) ?? { protocolUsd: 0, lpUsd: 0, streams: [] }
-  }
-}
-
-// Every revenue stream but one is a pure function of a single event, so the rows
-// for a narrow block set can be recomputed instead of waited for. `hollar_borrow`
-// is the exception and is excluded here: it is an accrual with no event behind it
-// (every row sits at block 0), so it can never belong to an activity row.
-const EVENTFUL_REVENUE_STREAMS = REVENUE_STREAMS.filter(
-  (s): s is EventfulRevenueStream => s !== 'hollar_borrow',
-)
-
-/** The streams the read-time tail recomputes. Asserted in revenueTailStreams.test.ts. */
-export function eventfulRevenueStreams(): readonly EventfulRevenueStream[] {
-  return EVENTFUL_REVENUE_STREAMS
-}
-
-// The stream builders bind an anchored time window. The block set is what actually
-// prunes the read, so the window only has to be wide enough to contain the unbooked
-// tail — it is a bound, not a filter we rely on.
-const REVENUE_TAIL_WINDOW_HOURS = 6
-
-// The derivation publishes only up to an hour boundary, so the newest ~1-2h of
-// blocks are unbooked. Recomputing those blocks per event measured identical to the
-// booked figures, stream by stream, so a live row shows its real revenue rather than
-// a dash until the next partition rewrite.
-export function blocksNeedingRevenueTail(
-  rows: readonly { blockHeight: number }[],
-  bookedThrough: number,
-): number[] {
-  const blocks = new Set<number>()
-  for (const row of rows) {
-    if (!Number.isFinite(row.blockHeight) || row.blockHeight <= 0) continue
-    if (row.blockHeight > bookedThrough) blocks.add(row.blockHeight)
-  }
-  return [...blocks].sort((a, b) => a - b)
-}
-
-// How far a page may claim revenue coverage. The recomputed blocks, but never past
-// the events the recomputation reads: the feed leads raw_events, and a block whose
-// events are not visible yet produces no rows — which downstream is indistinguishable
-// from "earned nothing". Clamping keeps those rows on their dash.
-export function revenueCoverageThrough(
-  bookedThrough: number,
-  tailBlocks: readonly number[],
-  visibleEventHead: number,
-): number {
-  if (!tailBlocks.length) return bookedThrough
-  const highest = tailBlocks[tailBlocks.length - 1]
-  return Math.max(bookedThrough, Math.min(highest, visibleEventHead))
-}
-
-// Same shape as revenueByExtrinsic, but computed from raw events rather than read
-// from the derived table.
-//
-// One query per stream, run concurrently, rather than a single UNION ALL: the
-// streams cost wildly different amounts (hsm_revenue alone was 185ms of a 440ms
-// union while matching nothing), and unioned they add up instead of overlapping.
-// Skipping the streams whose events are absent would be faster still, but nothing
-// exports a stream's source event names — hardcoding them here would drift
-// silently the first time a stream's SQL changed, and a silently-missing stream is
-// exactly the failure this feature cannot have.
-async function revenueTailByExtrinsic(blocks: readonly number[]): Promise<Map<string, ActivityRevenue>> {
-  const out = new Map<string, ActivityRevenue>()
-  if (!blocks.length) return out
-  const query_params = { blocks: [...blocks], anchor: revenueTailAnchor(), hours: REVENUE_TAIL_WINDOW_HOURS }
-  const perStream = await Promise.all(EVENTFUL_REVENUE_STREAMS.map(async stream => {
-    const res = await client.query({
-      query: `
-        SELECT r.block_height AS block_height, e.extrinsic_index AS extrinsic_index, r.stream AS stream,
-               toFloat64(sumIf(r.amount_usd, ${PROTOCOL_REVENUE_PREDICATE_SQL})) AS protocol_usd,
-               toFloat64(sumIf(r.amount_usd, r.dest = 'lp')) AS lp_usd
-        FROM (${buildRevenueEventRowsSql(stream, 'block_height IN ({blocks:Array(UInt32)})')}) AS r
-        INNER JOIN (
-          SELECT block_height, event_index, extrinsic_index
-          FROM price_data.raw_events
-          WHERE block_height IN ({blocks:Array(UInt32)})
-        ) AS e ON e.block_height = r.block_height AND e.event_index = r.event_index
-        GROUP BY block_height, extrinsic_index, stream`,
-      query_params,
-      format: 'JSONEachRow',
-    })
-    return res.json<RevenueSumRow>()
-  }))
-  for (const rows of perStream) collectRevenueRows(out, rows)
-  return out
-}
-
-export async function applyActivityRevenue(rows: readonly RevenueBearing[]): Promise<void> {
-  if (!rows.length) return
-  const [map, bookedThrough] = await Promise.all([
-    revenueByExtrinsic(rows.map(r => ({ blockHeight: r.blockHeight, extrinsicIndex: r.extrinsicIndex }))),
-    revenueBookedThroughBlock(),
-  ])
-  // Blocks past the derivation's hour boundary get the same figures computed from
-  // their own events, so a live row reports real revenue instead of a dash. A
-  // failure here is not worth failing the page over: the rows simply fall back to
-  // the dash they would have shown anyway.
-  const tailBlocks = blocksNeedingRevenueTail(rows, bookedThrough)
-  let coveredThrough = bookedThrough
-  if (tailBlocks.length) {
-    try {
-      const [tail, visibleHead] = await Promise.all([
-        revenueTailByExtrinsic(tailBlocks),
-        visibleEventHeadWithin(tailBlocks),
-      ])
-      for (const [key, entry] of tail) map.set(key, entry)
-      // Only as far as the events are visible: the live feed runs ahead of
-      // raw_events, and those blocks would otherwise report a confident $0.00.
-      coveredThrough = revenueCoverageThrough(bookedThrough, tailBlocks, visibleHead)
-    } catch (error) {
-      console.warn('[explorer] revenue tail recompute unavailable', { blocks: tailBlocks.length }, (error as Error).message)
-    }
-  }
-  attachRevenue(rows, map, coveredThrough)
-}
 
 // ---- protocol revenue breakdown (the Protocol Revenue detail tab) ----
-
-export interface RevenueBreakdownAsset { asset: AssetRef; usd: number }
-export interface RevenueBreakdownStream {
-  stream: string
-  usd: number
-  assets: RevenueBreakdownAsset[]
-  // The folded tail past the top assets, so a long-tail trader's stream row
-  // still adds up without shipping hundreds of dust lines.
-  otherUsd: number
-  otherCount: number
-}
-export interface RevenueBreakdown {
-  totalUsd: number
-  streams: RevenueBreakdownStream[]
-}
-
-const REVENUE_BREAKDOWN_ASSETS_SHOWN = 12
-
-// Fold the two sources into the response shape. STREAM TOTALS come from
-// account_revenue — the exact rows the header's "Protocol revenue" stat sums,
-// so the tab's total can never disagree with it. ASSET sub-rows come from the
-// per-event grain, which only the eventful streams have: the borrow streams
-// (hollar_borrow, asset_reserve) are attributed to borrowers pro-rata by the
-// revenue job and carry no per-account events, so hollar_borrow shows its one
-// asset by definition and asset_reserve stays a single line. Streams sorted by
-// revenue, assets sorted by revenue with the tail aggregated.
-// Exported for tests; the SQL below feeds it.
-export function foldRevenueBreakdown(
-  totals: { stream: string; usd: number }[],
-  rows: { stream: string; asset_id: number; usd: number }[],
-): RevenueBreakdown {
-  const byStream = new Map<string, { stream: string; asset_id: number; usd: number }[]>()
-  for (const row of rows) {
-    if (!(row.usd > 0)) continue
-    const list = byStream.get(row.stream)
-    if (list) list.push(row)
-    else byStream.set(row.stream, [row])
-  }
-  const streams: RevenueBreakdownStream[] = []
-  for (const total of totals) {
-    if (!(total.usd > 0)) continue
-    const list = byStream.get(total.stream) ?? (total.stream === 'hollar_borrow'
-      ? [{ stream: total.stream, asset_id: HOLLAR_ASSET_ID, usd: total.usd }]
-      : [])
-    list.sort((a, b) => b.usd - a.usd)
-    const shown = list.slice(0, REVENUE_BREAKDOWN_ASSETS_SHOWN)
-    const tail = list.slice(REVENUE_BREAKDOWN_ASSETS_SHOWN)
-    streams.push({
-      stream: total.stream,
-      usd: total.usd,
-      assets: shown.map(r => ({ asset: assetDescriptor(r.asset_id), usd: r.usd })),
-      otherUsd: tail.reduce((s, r) => s + r.usd, 0),
-      otherCount: tail.length,
-    })
-  }
-  streams.sort((a, b) => b.usd - a.usd)
-  return { totalUsd: streams.reduce((s, st) => s + st.usd, 0), streams }
-}
-
-// Where the protocol revenue this account (or group) generated came from:
-// per stream, and inside each stream per asset (see foldRevenueBreakdown for
-// the two sources and why). Same up-to-~2h derived-table freshness as the
-// header stat. ~0.34s cold on the heaviest account (1.5M revenue rows), held
-// for five minutes.
-async function scopedRevenueBreakdown(accounts: string[], cacheKey: string): Promise<RevenueBreakdown> {
-  const safe = [...new Set(accounts.map(a => a.toLowerCase()).filter(a => ACCOUNT_RE.test(a)))]
-  if (!safe.length) return { totalUsd: 0, streams: [] }
-  return cached(`explorer:${cacheKey}`, 5 * 60_000, async () => {
-    const list = sqlAccountList(safe)
-    const [totalsRes, rowsRes] = await Promise.all([
-      client.query({
-        query: `
-          SELECT stream, toFloat64(sum(revenue_usd)) AS usd
-          FROM price_data.account_revenue
-          WHERE account IN (${list})
-          GROUP BY stream`,
-        format: 'JSONEachRow',
-      }),
-      client.query({
-        query: `
-          SELECT stream, asset_id, toFloat64(sum(amount_usd)) AS usd
-          FROM price_data.revenue_events FINAL
-          WHERE account IN (${list}) AND ${PROTOCOL_REVENUE_PREDICATE_SQL}
-          GROUP BY stream, asset_id
-          HAVING usd > 0`,
-        format: 'JSONEachRow',
-      }),
-    ])
-    const totals = await totalsRes.json<{ stream: string; usd: number }>()
-    const rows = await rowsRes.json<{ stream: string; asset_id: number; usd: number }>()
-    return foldRevenueBreakdown(totals, rows)
-  })
-}
-
-export async function getAddressRevenueBreakdown(addressInput: string): Promise<RevenueBreakdown | null> {
-  const resolved = await resolveRelatedAccounts(addressInput)
-  if (!resolved) return null
-  // Same account set as the header stat (revenueByAccount via getAddress):
-  // the related substrate accounts plus each one's truncated-H160 alias.
-  const accounts = [...resolved.related, ...[...resolved.related].map(evmAccountForm).filter((a): a is string => a != null)]
-  return scopedRevenueBreakdown(accounts, `account-revbd:${resolved.norm.accountId}`)
-}
-
-export async function getTagRevenueBreakdown(tagId: string): Promise<RevenueBreakdown | null> {
-  const members = tagMembers(tagId)
-  if (!members) return null
-  const accounts = [...members, ...members.map(evmAccountForm).filter((a): a is string => a != null)]
-  return scopedRevenueBreakdown(accounts, `tag-revbd:${tagId}`)
-}
-
-export async function getListTagRevenueBreakdown(listId: string, tagId: string, members: string[]): Promise<RevenueBreakdown> {
-  const valid = listTagMembers(members)
-  if (!valid.length) return { totalUsd: 0, streams: [] }
-  const accounts = [...valid, ...valid.map(evmAccountForm).filter((a): a is string => a != null)]
-  return scopedRevenueBreakdown(accounts, `list-tag-revbd:${listTagScope(listId, tagId, valid)}`)
-}
 
 // One trade per extrinsic (or per event for pallet-internal swaps), summarizing
 // all hops/legs. A routed swap emits Router.Executed (net in→out) plus per-hop
@@ -7731,7 +3630,6 @@ async function getRecentTrades(limit: number, from?: string, to?: string, offset
     const amountFilter = eventValueFilterSql(assetOutExpr, amountOutExpr, 'block_timestamp',
       postUsdFilter ? { ...filters, min: undefined, unit: undefined } : filters, prices, 'trade_price')
     const notRouterHop = `AND who != '${ROUTER_PALLET_ACCT}'`
-    const notDcaFeeLeg = `AND NOT (extrinsic_index IS NULL AND who != '' AND who NOT LIKE '0x6d6f646c%') ${NOT_LEGACY_DCA_HOP}`
     const want = offset + limit
     // Several swap events can collapse into one user trade (a batch extrinsic's
     // swaps, an old multi-hop route), so the scan over-fetches. Measured over the
@@ -7753,7 +3651,7 @@ async function getRecentTrades(limit: number, from?: string, to?: string, offset
             amount_out AS amount_out
           FROM price_data.${swapTable}
           ${amountFilter.joinSql}
-          WHERE ${bound} AND event_name IN (${names}) ${notRouterHop} ${notDcaFeeLeg}
+          WHERE ${bound} AND event_name IN (${names}) ${notRouterHop}
             ${tokenRefsFilter}
             ${tokenFilter}
             ${amountFilter.predicateSql}
@@ -7765,61 +3663,25 @@ async function getRecentTrades(limit: number, from?: string, to?: string, offset
     }
     const buildRows = async (rows: RawSwapEventRow[], maxRows?: number): Promise<TradeRow[]> => {
       if (!rows.length) return []
-      // DCA: executions are unsigned (block hooks) and the AMM `who` is a pallet
-      // account. DCA.TradeExecuted carries the real owner + schedule id (match on
-      // block+amountIn); DCA.Scheduled maps id → its scheduling extrinsic for links.
-      const dcaBlocks = [...new Set(rows.map(r => r.block_height))]
-      const dcaRows: { block_height: number; event_index: number; who: string; id: string; amount_in: string }[] = []
-      const dcaChunks = await mapChunksConcurrently(dcaBlocks, 2_000, CHUNK_QUERY_CONCURRENCY, async chunk => {
-        const dcaRes = await client.query({
-          query: `SELECT block_height, event_index, who, toString(id) AS id, amount_in
-                  FROM price_data.dca_events
-                  WHERE event_name='DCA.TradeExecuted' AND block_height IN {dcaBlocks:Array(UInt32)}`,
-          query_params: { dcaBlocks: chunk },
-          format: 'JSONEachRow',
-        })
-        return dcaRes.json<{ block_height: number; event_index: number; who: string; id: string; amount_in: string }>()
-      })
-      for (const rows of dcaChunks) dcaRows.push(...rows)
-      // Same-block executions with the same per-trade amount are common (popular
-      // round DCA sizes), so (block, amountIn) alone collides across schedules.
-      // Keep every candidate and claim by adjacency: DCA.TradeExecuted follows
-      // its swap's events, so the swap claims the nearest candidate after its
-      // own event index and consumes it — two swaps can never share one.
-      const dcaExecutions = adjacencyClaimIndex(
-        dcaRows.map(d => ({ ...d, event_index: Number(d.event_index) })),
-        d => `${d.block_height}:${d.amount_in}`,
-        d => d.event_index,
-      )
-      const claimDca = (block: number, amountIn: string, eventIndex: number) =>
-        dcaExecutions.claimAfter(`${block}:${amountIn}`, eventIndex)
-      const dcaIds = [...new Set(dcaRows.map(d => d.id))].filter(Boolean)
-      const schedById = await getDcaScheduleLinks(dcaIds)
-
       // One row per route, represented by its Router.Executed net summary rather than
       // an individual AMM hop event.
       const pairs = rows.map(r => [r.block_height, r.extrinsic_index] as [number, number | null])
-      const [signers, liqExt] = await Promise.all([actorsFor(pairs), liquidationExtrinsics(pairs)])
+      const signers = await actorsFor(pairs)
       const out: TradeRow[] = []
       for (const rep of swapRouteReps(rows)) {
         if (maxRows != null && out.length >= maxRows) break
-        if (isDcaFeeLegSwap(rep.extrinsic_index, rep.who)) continue
-        if (rep.extrinsic_index != null && liqExt.has(`${rep.block_height}:${rep.extrinsic_index}`)) continue
         const venue = rep.event_name.split('.')[0]
         const signer = rep.extrinsic_index != null ? signers.get(`${rep.block_height}:${rep.extrinsic_index}`) : undefined
-        const dcaHit = rep.extrinsic_index == null ? claimDca(rep.block_height, rep.amount_in, rep.event_index) : undefined
-        const sched = dcaHit ? schedById.get(dcaHit.id) : undefined
-        const actor = signer ?? dcaHit?.who ?? (rep.who && ACCOUNT_RE.test(rep.who) ? rep.who : null)
+        const actor = signer ?? (rep.who && ACCOUNT_RE.test(rep.who) ? rep.who : null)
         const aOut = asset(rep.asset_out)
         out.push({
           blockHeight: rep.block_height, timestamp: rep.ts, eventIndex: rep.event_index, extrinsicIndex: rep.extrinsic_index,
           who: actor ? accountRef(actor) : null,
           assetIn: asset(rep.asset_in), assetOut: aOut, amountIn: rep.amount_in, amountOut: rep.amount_out,
           valueUsd: usdValue(prices, aOut.assetId, rep.amount_out, aOut.decimals),
-          venue: venue === 'Router' ? 'Router' : venue, dca: !!dcaHit,
-          dcaScheduleId: dcaHit ? Number(dcaHit.id) || undefined : undefined,
-          linkBlock: sched ? sched.block : rep.extrinsic_index != null ? rep.block_height : null,
-          linkIndex: sched ? sched.idx : rep.extrinsic_index,
+          venue: venue === 'Router' ? 'Router' : venue,
+          linkBlock: rep.extrinsic_index != null ? rep.block_height : null,
+          linkIndex: rep.extrinsic_index,
         })
       }
       await attachHookSwapActors(out)
@@ -7887,8 +3749,6 @@ export function parseTradeLimit(callName: string, args: Record<string, unknown>)
   switch (callName) {
     case 'Router.sell': case 'Router.sell_all': return minReceived(s(args.minAmountOut))
     case 'Router.buy': return maxPaid(s(args.maxAmountIn))
-    case 'Omnipool.sell': case 'Stableswap.sell': return minReceived(s(args.minBuyAmount))
-    case 'Omnipool.buy': case 'Stableswap.buy': return maxPaid(s(args.maxSellAmount))
     case 'XYK.sell': return minReceived(s(args.maxLimit) ?? s(args.minBought))
     case 'XYK.buy': return maxPaid(s(args.maxLimit) ?? s(args.maxSold))
     default: return null
@@ -7947,8 +3807,6 @@ export interface TradeDetail {
   // and `extrinsicTip`, whose tip slot it carries as `tipAmount`.
   feePayment?: FeePayment
   route: TradeHop[]
-  dca: boolean
-  revenue?: ActivityRevenue
 }
 
 function tradeHopFee(name: string, args: Record<string, unknown>, outId: number): TradeHop['fee'] {
@@ -7957,13 +3815,11 @@ function tradeHopFee(name: string, args: Record<string, unknown>, outId: number)
     const amt = sv(args.feeAmount); const fa = Number(args.feeAsset)
     return amt && Number.isFinite(fa) ? { amount: amt, asset: asset(fa) } : null
   }
-  const amt = name.startsWith('Omnipool.') ? sv(args.assetFeeAmount) : sv(args.fee)
+  const amt = sv(args.fee)
   return amt ? { amount: amt, asset: asset(outId) } : null
 }
 
-function syntheticRoutePool(assetInId: number, assetOutId: number): string {
-  if (ATOKEN_UNDERLYING_ID[assetInId] === assetOutId || ATOKEN_UNDERLYING_ID[assetOutId] === assetInId) return 'Aave'
-  if (assetInId === HOLLAR_ASSET_ID || assetOutId === HOLLAR_ASSET_ID) return 'Hollar'
+function syntheticRoutePool(): string {
   return 'Router'
 }
 
@@ -8015,7 +3871,7 @@ async function inferredRouterRoute(height: number, eventIndex: number, netAmts: 
   const first = route[0]
   if (first.assetIn.assetId !== netAmts.assetIn) {
     route.unshift({
-      pool: syntheticRoutePool(netAmts.assetIn, first.assetIn.assetId),
+      pool: syntheticRoutePool(),
       poolId: null,
       assetIn: asset(netAmts.assetIn),
       assetOut: first.assetIn,
@@ -8027,7 +3883,7 @@ async function inferredRouterRoute(height: number, eventIndex: number, netAmts: 
   const last = route[route.length - 1]
   if (last.assetOut.assetId !== netAmts.assetOut) {
     route.push({
-      pool: syntheticRoutePool(last.assetOut.assetId, netAmts.assetOut),
+      pool: syntheticRoutePool(),
       poolId: null,
       assetIn: last.assetOut,
       assetOut: asset(netAmts.assetOut),
@@ -8135,12 +3991,8 @@ export async function getTradeDetail(height: number, index: number, routeEvent?:
         return payment ? { feePayment: payment } : {}
       })(),
       route,
-      dca: callName.startsWith('DCA.'),
     }
-    await Promise.all([
-      applyHistoricalUsd([detail], d => ({ assetId: d.assetOut.assetId, decimals: d.assetOut.decimals, raw: d.amountOut, ts: d.timestamp })),
-      applyActivityRevenue([detail]),
-    ])
+    await applyHistoricalUsd([detail], d => ({ assetId: d.assetOut.assetId, decimals: d.assetOut.decimals, raw: d.amountOut, ts: d.timestamp }))
     return detail
   })
 }
@@ -8213,13 +4065,9 @@ export async function getTradeDetailByEvent(height: number, eventIndex: number):
       extrinsicFee: null,
       extrinsicTip: null,
       route,
-      dca: !!dca,
     }
     await attachHookSwapActors([detail])
-    await Promise.all([
-      applyHistoricalUsd([detail], d => ({ assetId: d.assetOut.assetId, decimals: d.assetOut.decimals, raw: d.amountOut, ts: d.timestamp })),
-      applyActivityRevenue([detail]),
-    ])
+    await applyHistoricalUsd([detail], d => ({ assetId: d.assetOut.assetId, decimals: d.assetOut.decimals, raw: d.amountOut, ts: d.timestamp }))
     return detail
   })
 }
@@ -8378,36 +4226,6 @@ async function signersFor(pairs: [number, number | null][]): Promise<Map<string,
   return out
 }
 
-// The subset of (block, extrinsic) pairs whose extrinsic dispatched a liquidation. A
-// liquidation repays the debt by swapping the seized collateral via the router (emitting
-// a Router.Executed that the trade builders would otherwise surface as a standalone
-// trade attributed to the liquidator). The liquidation is already represented by its
-// LiquidationCall (mm) row, so callers skip these extrinsics when building trade rows.
-// Bounded by the caller's pairs (small IN list), like signersFor.
-//
-// Reads the liquidation_extrinsics projection rather than raw_events for the same reason
-// accountSwapTradeArm does: an event_name predicate on raw_events prunes no granules, so
-// the pair lookup dragged args_json in with it. No FINAL and no DISTINCT: the rows land
-// in a Set, so an unmerged ReplacingMergeTree duplicate cannot change the answer.
-async function liquidationExtrinsics(pairs: [number, number | null][]): Promise<Set<string>> {
-  const out = new Set<string>()
-  const keys = [...new Set(pairs.filter(([, i]) => i != null).map(([h, i]) => `${h}:${i}`))]
-  if (!keys.length) return out
-  const chunks = await mapChunksConcurrently(keys, 5_000, CHUNK_QUERY_CONCURRENCY, async chunk => {
-    const tuples = chunk.map(k => { const [h, i] = k.split(':'); return `(${h},${i})` }).join(',')
-    const res = await client.query({
-      query: `SELECT block_height, extrinsic_index FROM price_data.liquidation_extrinsics
-              WHERE (block_height, extrinsic_index) IN (${tuples})`,
-      format: 'JSONEachRow',
-    })
-    return res.json<{ block_height: number; extrinsic_index: number }>()
-  })
-  for (const rows of chunks) {
-    for (const r of rows) out.add(`${r.block_height}:${r.extrinsic_index}`)
-  }
-  return out
-}
-
 // The subset of (block, extrinsic) pairs whose call is a genuine token-transfer
 // call. Used to keep only real donations to the treasury pot on a transfer feed:
 // a transfer *to* py/trsry emitted by any other call (a batch/swap fee, a
@@ -8433,66 +4251,9 @@ async function transferCallExtrinsics(pairs: [number, number | null][]): Promise
   return out
 }
 
-// Which of these extrinsics settled an OTC order.
-//
-// A fill moves both sides in one extrinsic, and the fill row it belongs to is
-// attributed to the account that CALLED it — the taker. The maker never signs and
-// OTC.Filled names only the filler, so on the maker's own feed the fill is absent and
-// its two legs, which every other surface correctly folds away, were left standing as
-// a pair of unrelated transfers. The extrinsic settling an order is a fact about the
-// extrinsic, not about whose feed is being built, so the legs are read as plumbing for
-// both parties.
-//
-// Bounded exactly like transferCallExtrinsics above: the pairs come from the page's
-// own transfer rows and every read is a primary-key lookup.
-async function otcSettlementExtrinsics(pairs: [number, number | null][]): Promise<Set<string>> {
-  const out = new Set<string>()
-  const keys = [...new Set(pairs.filter(([, i]) => i != null).map(([h, i]) => `${h}:${i}`))]
-  if (!keys.length) return out
-  const chunks = await mapChunksConcurrently(keys, 5_000, CHUNK_QUERY_CONCURRENCY, async chunk => {
-    const tuples = chunk.map(k => { const [h, i] = k.split(':'); return `(${h},${i})` }).join(',')
-    const res = await client.query({
-      query: `SELECT DISTINCT block_height, extrinsic_index FROM ${otcActivityTable()}
-              WHERE (block_height, assumeNotNull(extrinsic_index)) IN (${tuples})
-                AND event_name IN (${sqlEventNameList([...OTC_FILL_EVENTS])})
-                AND extrinsic_index IS NOT NULL`,
-      format: 'JSONEachRow',
-    })
-    return res.json<{ block_height: number; extrinsic_index: number }>()
-  })
-  for (const rows of chunks) {
-    for (const r of rows) out.add(`${r.block_height}:${r.extrinsic_index}`)
-  }
-  return out
-}
-
-// Map (block_height, event_index) → extrinsic_index, so balance-observation
-// activity rows can link to their originating extrinsic (h-i) rather than the block.
-async function extrinsicIndexFor(pairs: [number, number | null][]): Promise<Map<string, number>> {
-  const out = new Map<string, number>()
-  const keys = [...new Set(pairs.filter(([, e]) => e != null).map(([h, e]) => `${h}:${e}`))]
-  if (!keys.length) return out
-  // Chunked like every sibling ref lookup: a widened candidate window carries tens
-  // of thousands of money-market events, and one IN-list of all of them exceeds
-  // ClickHouse's max_query_size — which failed the whole window rather than this
-  // lookup, so the account's total went from "counted deeper" to "not counted".
-  const chunks = await mapChunksConcurrently(keys, 5_000, CHUNK_QUERY_CONCURRENCY, async chunk => {
-    const tuples = chunk.map(k => { const [h, e] = k.split(':'); return `(${h},${e})` }).join(',')
-    const res = await client.query({
-      query: `SELECT block_height, event_index, extrinsic_index FROM price_data.raw_events WHERE (block_height, event_index) IN (${tuples}) AND extrinsic_index IS NOT NULL`,
-      format: 'JSONEachRow',
-    })
-    return res.json<{ block_height: number; event_index: number; extrinsic_index: number }>()
-  })
-  for (const rows of chunks) {
-    for (const r of rows) out.set(`${r.block_height}:${r.event_index}`, r.extrinsic_index)
-  }
-  return out
-}
-
 // unified activity
 export interface ActivityRow {
-  type: 'transfer' | 'trade' | 'xcm' | 'liquidity' | 'mm' | 'dca' | 'staking' | 'vote' | 'otc'
+  type: 'transfer' | 'trade' | 'xcm' | 'liquidity' | 'vote'
   blockHeight: number
   timestamp: string
   eventIndex?: number | null
@@ -8511,13 +4272,7 @@ export interface ActivityRow {
   // `assetB`). Token filters match against these too, so a pool-side asset the
   // row does not display still keeps its row.
   assetRefs?: number[]
-  /** Protocol revenue the row's EXTRINSIC generated (absent when it generated none). */
-  revenue?: ActivityRevenue
-  liqAction?: 'Add' | 'Remove' | 'Create' | 'Claim' | 'ClaimReferral' | 'Destroy'   // Create = pool creation; Destroy = pool closure (no value); Claim = LM reward claim; ClaimReferral = referral-program reward claim
-  mmAction?: string          // money-market: Supply/Borrow/Repay/Withdraw/LiquidationCall
-  mmMarketKey?: string       // absent for legacy/unknown pools; `core` is primary
-  mmMarket?: string          // display label; UI only calls out supplemental markets
-  stakingAction?: string
+  liqAction?: 'Add' | 'Remove' | 'Create' | 'Claim' | 'Destroy'   // Create = pool creation; Destroy = pool closure (no value); Claim = LM reward claim
   votePallet?: string
   // Referendum identity for the row's link, plus the off-chain title. Set only for
   // ConvictionVoting/Democracy rows: Council and Technical Committee votes are not
@@ -8546,7 +4301,6 @@ export interface ActivityRow {
     emoji?: string; emojiName?: string; emojiUrl?: string
     tag?: { id: string; name: string; color: string; icon: string; memberCount?: number } | null
     identity?: { display: string; verified: boolean } | null
-    profile?: { name: string; avatarVersion: number } | null
   }
   xcmDir?: 'in' | 'out'      // xcm: transfer direction relative to Hydration
   fromChain?: string         // xcm inbound: origin chain name
@@ -8559,192 +4313,9 @@ export interface ActivityRow {
   // Origin-chain extrinsic of an inbound transfer (explorer deep link) —
   // resolved with fromAccount from the crosschain journey index.
   fromTxUrl?: string | null
-  // Destination-chain transaction, once the journey lands there — the far end's
-  // counterpart to fromTxUrl (Basescan/Solscan/Etherscan, per chain).
-  destTxUrl?: string | null
-  // How the transfer crossed, when it crossed a bridge rather than only XCM
-  // ('Snowbridge', 'Wormhole', 'Basejump'). Resolved from the journey index with
-  // fromChain, and deliberately not versioned: Snowbridge v1 and v2 differ in the
-  // hops they take, not in being Snowbridge, and a version we cannot always
-  // determine is not a fact worth showing a reader.
-  bridge?: string | null
-  dca?: boolean
-  dcaStatus?: 'failed'
-  dcaError?: string
-  // The owning DCA schedule (links execution rows to the schedule page).
-  dcaScheduleId?: number
-  // Explicit link target (DCA executions link to the schedule extrinsic).
+  // Explicit link target for rows whose own extrinsic is not the one to open.
   linkBlock?: number | null
   linkIndex?: number | null
-  otcAction?: 'Place' | 'Pull' | 'Fill'
-  otcOrderId?: number
-  otcPartial?: boolean            // fill came from OTC.PartiallyFilled
-  otcPartiallyFillable?: boolean  // Placed order property
-  otcFee?: string                 // fills; denominated in assetOut
-  // false = unfinalized (pending-head layer; may reorg away). Absent = finalized.
-  finalized?: boolean
-  // true = still in the transaction pool, values are a dry-run PROJECTION.
-  mempool?: boolean
-  // The pool transaction's hash (mempool rows only) — their identity while no
-  // block-height/event-index coordinates exist yet.
-  hash?: string
-}
-
-type BasicRowBase = {
-  blockHeight: number; timestamp: string; eventIndex: number; extrinsicIndex: number | null
-  linkBlock: null; linkIndex: null; finalized: false
-}
-
-// BASIC unfinalized activity rows for page 0 of the plain live feed: trades
-// folded from Broadcast swaps and plain transfers (see pendingActivity.ts for
-// the deliberate scope). Valued at CURRENT prices — a pending row lives ~40
-// seconds, so event-time and now coincide for practical purposes. A token
-// filter or token-unit floor cannot be honoured against pending rows, so those
-// views stay finalized-only rather than silently widening; a USD floor applies
-// directly. `aboveHeight` fences the seam against the newest finalized row.
-function basicActivityRow(a: PendingActivity, prices: Awaited<ReturnType<typeof ensurePrices>>, type: string, min: number | undefined): ActivityRow | null {
-  if (type !== 'all' && type !== a.kind) return null
-  const base = {
-    blockHeight: a.blockHeight,
-    timestamp: a.timestamp,
-    eventIndex: a.eventIndex,
-    extrinsicIndex: a.extrinsicIndex,
-    // Trade/transfer detail pages need the finalized row — pending rows
-    // carry no link target and the client keeps them non-navigable.
-    linkBlock: null,
-    linkIndex: null,
-    finalized: false as const,
-  }
-  if (a.kind === 'mm') {
-    const mm = basicMmRow(a, prices, base)
-    return mm && (min == null || (mm.valueUsd != null && mm.valueUsd >= min)) ? mm : null
-  }
-  if (a.kind === 'xcm') {
-    const x = basicXcmRow(a, prices, base)
-    return min == null || (x.valueUsd != null && x.valueUsd >= min) ? x : null
-  }
-  const row: ActivityRow = a.kind === 'trade'
-    ? {
-        ...base,
-        type: 'trade',
-        who: accountRef(a.swapper),
-        to: null,
-        asset: null,
-        assetIn: asset(a.assetIn),
-        assetOut: asset(a.assetOut),
-        amount: null,
-        amountIn: a.amountIn,
-        amountOut: a.amountOut,
-        valueUsd: usdValue(prices, a.assetIn, a.amountIn, asset(a.assetIn).decimals)
-          ?? usdValue(prices, a.assetOut, a.amountOut, asset(a.assetOut).decimals),
-        assetRefs: [a.assetIn, a.assetOut],
-        dca: false,
-      }
-    : {
-        ...base,
-        type: 'transfer',
-        who: accountRef(a.from),
-        to: accountRef(a.to),
-        asset: asset(a.assetId),
-        assetIn: null,
-        assetOut: null,
-        amount: a.amount,
-        amountIn: null,
-        amountOut: null,
-        valueUsd: usdValue(prices, a.assetId, a.amount, asset(a.assetId).decimals),
-        assetRefs: [a.assetId],
-      }
-  if (min != null && !(row.valueUsd != null && row.valueUsd >= min)) return null
-  return row
-}
-
-// Money market and cross-chain rows read the same two lookups the finalized
-// feed does — the reserve address map and the parachain metadata — so a pool
-// row and the row that replaces it name the same asset and the same chain.
-function basicMmRow(a: Extract<PendingActivity, { kind: 'mm' }>, prices: Awaited<ReturnType<typeof ensurePrices>>, base: BasicRowBase): ActivityRow | null {
-  const assetId = assetIdFromMmAddress(a.assetAddress)
-  if (assetId == null) return null
-  const a0 = asset(assetId)
-  return {
-    ...base,
-    type: 'mm',
-    who: accountRef(h160AccountId(a.who)),
-    to: null,
-    asset: a0,
-    assetIn: null,
-    assetOut: null,
-    amount: a.amount,
-    amountIn: null,
-    amountOut: null,
-    valueUsd: usdValue(prices, assetId, a.amount, a0.decimals),
-    assetRefs: mmReserveAliasIds(assetId),
-    mmAction: a.action,
-  }
-}
-function basicXcmRow(a: Extract<PendingActivity, { kind: 'xcm' }>, prices: Awaited<ReturnType<typeof ensurePrices>>, base: BasicRowBase): ActivityRow {
-  const a0 = asset(a.assetId)
-  // The destination chain when the message named one; a message that only
-  // crosses to the relay says so through its parents, which this layer does not
-  // read — so the row states the leg and leaves the far end to the finalized
-  // classifier rather than inventing it.
-  const meta = a.destParaId != null ? (PARACHAIN_META[a.destParaId] ?? { name: `Parachain ${a.destParaId}` }) : undefined
-  return {
-    ...base,
-    type: 'xcm',
-    xcmDir: 'out',
-    who: accountRef(a.who),
-    to: null,
-    asset: a0,
-    assetIn: null,
-    assetOut: null,
-    amount: a.amount,
-    amountIn: null,
-    amountOut: null,
-    valueUsd: usdValue(prices, a.assetId, a.amount, a0.decimals),
-    assetRefs: [a.assetId],
-    ...(meta ? { destChain: meta.name, destParachainId: a.destParaId } : {}),
-  }
-}
-const BASIC_ACTIVITY_TYPES = new Set(['all', 'trade', 'transfer', 'mm', 'xcm'])
-async function pendingActivityRows(type: string, filters: ValueListFilters, aboveHeight: number): Promise<ActivityRow[]> {
-  if (!BASIC_ACTIVITY_TYPES.has(type)) return []
-  if (filters.token || filters.unit === 'token') return []
-  const prices = await ensurePrices()
-  const rows: ActivityRow[] = []
-  for (const block of pendingBlocksDesc(aboveHeight)) {
-    for (const a of buildPendingActivities(block)) {
-      const row = basicActivityRow(a, prices, type, filters.min)
-      // Every filter decided on the built row applies here too: these rows are
-      // merged in FRONT of the filtered page, so a filter they do not honour
-      // shows up as leaked rows at the top of the feed.
-      if (row && activityRowMatchesFilters(row, filters)) rows.push(row)
-    }
-  }
-  return rows
-}
-
-// Transaction-pool activity rows: the same BASIC classifier over each pool
-// transaction's dry-run projected events (only would-succeed projections make
-// activity claims — see buildMempoolActivities). Same filter contract as
-// pending rows; height 0 plus the transaction hash mark them for the client's
-// special treatment.
-async function mempoolActivityRows(type: string, filters: ValueListFilters): Promise<ActivityRow[]> {
-  if (!BASIC_ACTIVITY_TYPES.has(type)) return []
-  if (filters.token || filters.unit === 'token') return []
-  const activities = buildMempoolActivities(mempoolTxs())
-  if (!activities.length) return []
-  const prices = await ensurePrices()
-  const rows: ActivityRow[] = []
-  for (const a of activities) {
-    const row = basicActivityRow(a, prices, type, filters.min)
-    if (row && activityRowMatchesFilters(row, filters)) rows.push({ ...row, mempool: true, hash: a.hash })
-  }
-  return rows
-}
-
-function moneyMarketActivityFields(poolAddress: string | null | undefined): Pick<ActivityRow, 'mmMarketKey' | 'mmMarket'> {
-  const market = poolAddress ? MM_MARKET_BY_POOL.get(poolAddress.toLowerCase()) : undefined
-  return market ? { mmMarketKey: market.key, mmMarket: market.label } : {}
 }
 
 // The order every activity surface presents: newest block first, and within a
@@ -8762,15 +4333,14 @@ export function compareActivityRowsNewestFirst(a: ActivityRow, b: ActivityRow): 
     || (b.eventIndex ?? -1) - (a.eventIndex ?? -1)
     || (b.extrinsicIndex ?? -1) - (a.extrinsicIndex ?? -1)
     || activityKindRank(a) - activityKindRank(b)
-    || (b.dcaScheduleId ?? -1) - (a.dcaScheduleId ?? -1)
 }
 // A stable numeric rank per row family, so a tie on (block, event, extrinsic)
 // still resolves identically every time the feed is built.
 const ACTIVITY_KIND_RANK: Record<string, number> = {
-  trade: 0, otc: 1, liquidity: 2, mm: 3, xcm: 4, staking: 5, vote: 6, transfer: 7,
+  trade: 0, liquidity: 1, xcm: 2, vote: 3, transfer: 4,
 }
 function activityKindRank(r: ActivityRow): number {
-  return ACTIVITY_KIND_RANK[r.type] ?? 8
+  return ACTIVITY_KIND_RANK[r.type] ?? 5
 }
 
 // Pair rows that belong together by ADJACENCY rather than by a shared key, when the
@@ -8807,7 +4377,7 @@ export function adjacencyClaimIndex<T>(items: T[], keyOf: (item: T) => string, i
 
 // Whether the explorer can put a NAME to this account — the same four things
 // that make it show one instead of bare hex: a system tag ("Treasury",
-// "Kraken"), an on-chain identity, a user profile name, or a verified
+// "Kraken") or an on-chain identity,
 // contract's name. A viewer's OWN tags are deliberately not part of it: they
 // live in the browser, and a server-paged feed cannot honour a predicate only
 // the client can evaluate without handing back ragged pages.
@@ -8825,25 +4395,10 @@ export function rowLevelFilters(filters: ValueListFilters): ValueListFilters {
 
 export function accountIsNamed(who: AccountRef | null | undefined, viewerTagged?: Set<string>): boolean {
   if (!who) return false
-  if (who.tag || who.identity?.display || who.profile?.name || who.contractName) return true
+  if (who.tag || who.identity?.display) return true
   // ...and whatever the VIEWER has named themselves. Their own and subscribed
   // tags are as much a name as a system one to the person reading the page.
   return !!viewerTagged?.has(who.accountId.toLowerCase())
-}
-
-/**
- * The protocol-revenue floor. Deliberately NOT part of activityRowMatchesFilters: that
- * predicate runs inside ~25 per-source builders BEFORE revenue is attached, where every
- * row's figure is absent — so the floor dropped everything, and an account list filtered
- * at $1 came back empty while its rows carried $1.25.
- *
- * Absent still means nobody computed it (the block's events are not queryable yet),
- * which is not the same as "under the floor": a filtered view excludes the unknown
- * rather than asserting it does not qualify.
- */
-export function revenueFloorPasses(row: ActivityRow, minRevenue: number | undefined): boolean {
-  if (minRevenue == null) return true
-  return row.revenue != null && row.revenue.protocolUsd >= minRevenue
 }
 
 export function activityRowMatchesFilters(row: ActivityRow, filters: ValueListFilters): boolean {
@@ -9034,7 +4589,6 @@ async function getRecentLiquidity(limit: number, from?: string, to?: string, off
     const postFilter = hasRowLevelFilter(filters)
     const want = offset + limit
     const fetchPage = async (bound: string, pageLimit: number, pageOffset: number): Promise<ActivityRow[]> => {
-      const routerHop = routerHopLiquiditySql(bound, assetExpr)
       const res = await client.query({
         query: `
           SELECT block_height, toString(block_timestamp) AS ts, event_index, extrinsic_index, event_name,
@@ -9046,12 +4600,10 @@ async function getRecentLiquidity(limit: number, from?: string, to?: string, off
             asset_refs AS asset_refs
           FROM price_data.liquidity_activity
           ${amountFilter.joinSql}
-          ${routerHop.joinSql}
           WHERE ${bound}
             AND event_name IN (${sqlEventNameList(liqEvents)})
             ${tokenRefsFilter}
             AND who NOT LIKE '0x6d6f646c%'
-            ${routerHop.predicateSql}
             ${tokenFilter}
             ${amountFilter.predicateSql}
           ORDER BY block_height DESC, event_index DESC
@@ -9172,9 +4724,6 @@ function externalAccountRef(raw: unknown, meta: XcmNetworkMeta | undefined): Act
       emoji: icon.emoji, emojiName: icon.emojiName, emojiUrl: icon.emojiUrl,
       tag: t ? { id: t.tagId, name: t.name, color: t.color, icon: t.icon, memberCount: t.memberCount } : null,
       identity: id ? { display: id.display, verified: id.verified } : null,
-      profile: profileForAccount(resolved),
-      ...(isContractAccount(resolved) ? { isContract: true } : {}),
-      ...contractNameOf(resolved),
     }
   }
   if (h.length === 42) {
@@ -9187,9 +4736,6 @@ function externalAccountRef(raw: unknown, meta: XcmNetworkMeta | undefined): Act
       emoji: icon.emoji, emojiName: icon.emojiName, emojiUrl: icon.emojiUrl,
       tag: t ? { id: t.tagId, name: t.name, color: t.color, icon: t.icon, memberCount: t.memberCount } : null,
       identity: id ? { display: id.display, verified: id.verified } : null,
-      profile: profileForAccount(resolved),
-      ...(isContractAccount(resolved) ? { isContract: true } : {}),
-      ...contractNameOf(resolved),
     }
   }
   return undefined
@@ -9502,7 +5048,7 @@ export function isBridgePlumbingSwap(extrinsicSentXcm: boolean): boolean {
 // covered by getRecentXcm. Same precedence as emitsExecutedOutboundXcm — the legacy arm
 // wins the 1,248 both-marker extrinsics — reached from the other direction.
 const executedXcmExtrinsicKey = (blockHeight: number, extrinsicIndex: number | null): string =>
-  `${blockHeight}:${extrinsicIndex ?? ''}`
+  `${blockHeight}:${extrinsicIndex ?? 'b'}`
 export function executedXcmSendExtrinsics(markerExts: readonly string[], legacyExts: readonly string[]): Set<string> {
   const legacy = new Set(legacyExts)
   return new Set(markerExts.filter(key => !legacy.has(key)))
@@ -10243,85 +5789,6 @@ async function getRecentXcmIn(limit: number, from?: string, to?: string, account
   })
 }
 
-// Parachains whose native accounts are AccountKey20 (EVM) — a 32-byte source
-// account reported for them cannot be a real account there, so no pill.
-const EVM_PARACHAINS = new Set([2004, 3369]) // Moonbeam, Mythos
-
-// Chain badge + account pill for one END of a journey (either side). A journey
-// may pass through intermediate hops (Solana → Wormhole → Moonbeam → Hydration,
-// Ethereum → Snowbridge → AssetHub → Hydration): our chain only sees the
-// adjacent hop, while the real counterparty account lives on the journey's own
-// end chain — so the badge and the account ENCODING follow that chain (SS58
-// for substrate, H160 for EVM, base58 for Solana). Returns null for unknown
-// consensus systems (row keeps its local hop display).
-function externalChainRef(urnStr: string, account: string, formatted?: string): { chain: string; paraId: number | null; account?: ActivityRow['destAccount'] } | null {
-  const urn = /^urn:ocn:([a-z0-9-]+):([0-9a-zA-Zx]+)$/.exec(urnStr)
-  if (!urn) return null
-  const [, consensus, chainId] = urn
-  const h = hexString(account)
-  if (consensus === 'polkadot') {
-    const paraId = Number(chainId)
-    if (paraId === 0) return { chain: RELAY_XCM_NETWORK.name, paraId: null, account: externalAccountRef(account, RELAY_XCM_NETWORK) }
-    const meta = PARACHAIN_META[paraId] ?? { name: `Parachain ${paraId}` }
-    const acct = externalAccountRef(account, meta)
-    return { chain: meta.name, paraId, account: acct && EVM_PARACHAINS.has(paraId) && acct.kind !== 'AccountKey20' ? undefined : acct }
-  }
-  if (consensus === 'solana') {
-    let acct: ActivityRow['destAccount']
-    if (h?.length === 66) {
-      // The API already renders this in the chain's own encoding; only fall back to
-      // encoding it here when it did not.
-      let address = formatted || h
-      if (!formatted) { try { address = base58Encode(hexToU8a(h)) } catch { /* keep hex */ } }
-      const resolved = resolveDisplayAccountId(h)
-      const icon = accountIcon(resolved)
-      const t = tagForAccount(resolved)
-      const id = identityForAccount(resolved)
-      acct = {
-        kind: 'AccountId32', accountId: resolved, raw: h, address, subscanUrl: `https://solscan.io/account/${encodeURIComponent(address)}`,
-        emoji: icon.emoji, emojiName: icon.emojiName, emojiUrl: icon.emojiUrl,
-        tag: t ? { id: t.tagId, name: t.name, color: t.color, icon: t.icon, memberCount: t.memberCount } : null,
-        identity: id ? { display: id.display, verified: id.verified } : null,
-      }
-    }
-    return { chain: 'Solana', paraId: null, account: acct }
-  }
-  if (consensus === 'ethereum') {
-    const meta = EVM_CHAIN_META[chainId]
-    let acct: ActivityRow['destAccount']
-    if (h?.length === 42) {
-      const resolved = resolveDisplayAccountId(h160AccountId(h))
-      const icon = accountIcon(resolved)
-      const t = tagForAccount(resolved)
-      const id = identityForAccount(resolved)
-      acct = {
-        kind: 'AccountKey20', accountId: resolved, raw: h, address: h,
-        // Per chain: an address on Base does not resolve on etherscan.
-        subscanUrl: meta ? `${meta.explorer}/address/${encodeURIComponent(h)}` : null,
-        emoji: icon.emoji, emojiName: icon.emojiName, emojiUrl: icon.emojiUrl,
-        tag: t ? { id: t.tagId, name: t.name, color: t.color, icon: t.icon, memberCount: t.memberCount } : null,
-        identity: id ? { display: id.display, verified: id.verified } : null,
-      }
-    }
-    return { chain: ocnChainName(urnStr) ?? 'Ethereum', paraId: null, account: acct }
-  }
-  // Chains with no account model here (Sui) still name their end of the journey; the
-  // formatted address is shown without a link rather than being dropped.
-  const chain = ocnChainName(urnStr)
-  if (!chain) return null
-  return { chain, paraId: null, account: formatted ? plainExternalAccount(formatted) : undefined }
-}
-
-// An address on a chain this app does not model: displayed as the API rendered it,
-// with no explorer link and no local identity, because neither can be trusted here.
-function plainExternalAccount(address: string): ActivityRow['destAccount'] {
-  return { kind: 'AccountId32', accountId: '', raw: '', address, subscanUrl: null }
-}
-
-function activityRowTimestampMs(r: ActivityRow): number {
-  return Date.parse(r.timestamp.replace(' ', 'T') + (r.timestamp.endsWith('Z') ? '' : 'Z')) || Date.now()
-}
-
 // Attach the source of inbound XCM rows (Ocelloids journey lookup by message
 // topic id — see xcmJourneyService). Unmatched rows keep their hop-chain badge
 // without a source pill.
@@ -10386,187 +5853,6 @@ export function originTxExplorerUrl(urnStr: string, txHash: string | null): stri
   return null
 }
 
-// Our own chain, as the crosschain index names it. A journey with Hydration at an
-// end says nothing about a counterparty there — it names us.
-const HYDRATION_JOURNEY_URN = 'urn:ocn:polkadot:2034'
-
-// A message topic id travels with every leg that carries it, so the journey a row's
-// id resolves to is not always the leg the row represents: it can be one that STARTED
-// here. Reading its origin end then puts Hydration on both sides of the arrow and
-// pins a local account to a remote pill — the mirror of the guard applyXcmOutDests
-// already applies to its own side.
-export function journeyStartedHere(src: Pick<XcmJourneySource, 'origin'>): boolean {
-  return src.origin === HYDRATION_JOURNEY_URN
-}
-
-// Whether a Hydration-origin journey is the extrinsic-less row's OWN send rather than
-// some other row's. The HOLLAR AssetHub round trip is the case: an inbound message
-// makes Hydration send one straight back, and the crosschain index records that leg
-// with Hydration as the origin and the real counterparty at the DESTINATION end.
-// A journey a local extrinsic signed cannot be it — the rows this decides for have no
-// extrinsic, so their own send carries neither an origin account nor an origin tx.
-export function journeyIsOwnRemoteSend(
-  src: Pick<XcmJourneySource, 'origin' | 'destination' | 'from' | 'originTx'>,
-): boolean {
-  return journeyStartedHere(src) && !src.from && !src.originTx
-    && !!src.destination && src.destination !== HYDRATION_JOURNEY_URN
-}
-
-async function applyXcmInSources(rows: ActivityRow[]): Promise<void> {
-  const inRows = rows.filter(r => r.type === 'xcm' && r.xcmDir === 'in' && r.messageId && !r.fromAccount)
-  if (!inRows.length) return
-  const sources = await xcmJourneySourcesFor(inRows.map(r => ({
-    messageId: r.messageId!,
-    timestampMs: activityRowTimestampMs(r),
-    bridge: looksBridged(r),
-  })))
-  for (const r of inRows) {
-    const src = sources.get(r.messageId!)
-    if (!src) continue
-    // A journey that started here is not this arrival's leg — sharing a topic id only
-    // says the two travelled together. Its far end is where we SENT something, which
-    // is not where this row came from, so the row keeps its own hop-chain badge.
-    if (journeyStartedHere(src)) continue
-    const origin = externalChainRef(src.origin, src.from, src.fromFormatted)
-    if (!origin) continue
-    r.fromChain = origin.chain
-    r.fromParachainId = origin.paraId
-    r.fromAccount = origin.account
-    r.fromTxUrl = originTxExplorerUrl(src.origin, src.originTx)
-    r.bridge = bridgeLabel(src.originProtocol)
-  }
-}
-
-// A cheap local guess that an inbound hop began outside this consensus system: the
-// asset it credited is native to another ecosystem, so SOMETHING bridged it here
-// at some point. Used only to aim the enrichment budget and widen its search window
-// — a bridged asset held on AssetHub and forwarded from there is indistinguishable
-// from a fresh bridge arrival at this end, so this can never stand in for the origin
-// the journey index reports.
-function looksBridged(r: ActivityRow): boolean {
-  const ecosystem = r.asset?.origin?.ecosystem
-  return !!ecosystem && ecosystem !== 'polkadot'
-}
-
-// Remote-initiated outbound rows (HOLLAR-class): the transfer was initiated FROM
-// the destination chain, so there's no local extrinsic and applyXcmOutDests
-// (extrinsic-hash keyed) can't reach them — but they carry the triggering
-// inbound message's id, whose journey resolves the counterparty account AND
-// origin extrinsic on that chain (same lookup as inbound sources). Without this
-// the row shows only a bare destination chain: no account pill, no Subscan link.
-async function applyXcmOutRemoteSources(rows: ActivityRow[]): Promise<void> {
-  const remoteRows = rows.filter(r => r.type === 'xcm' && r.xcmDir === 'out' && r.extrinsicIndex == null && r.messageId && !r.destAccount)
-  if (!remoteRows.length) return
-  const sources = await xcmJourneySourcesFor(remoteRows.map(r => ({
-    messageId: r.messageId!, timestampMs: activityRowTimestampMs(r), bridge: looksBridged(r),
-  })))
-  for (const r of remoteRows) {
-    const src = sources.get(r.messageId!)
-    if (!src) continue
-    if (journeyStartedHere(src)) {
-      // The topic resolved to the send ITSELF, not to the message that triggered it,
-      // so the counterparty — chain, account, and the transaction that received it —
-      // is the journey's destination end. Reading the origin end here named Hydration
-      // as its own destination and left the row with no account pill and no link.
-      if (!journeyIsOwnRemoteSend(src)) continue
-      const dest = externalChainRef(src.destination, src.to, src.toFormatted)
-      if (!dest) continue
-      r.destChain = dest.chain
-      r.destParachainId = dest.paraId
-      if (dest.account) r.destAccount = dest.account
-      r.destTxUrl = originTxExplorerUrl(src.destination, src.destTx) ?? r.destTxUrl
-      // A bridge on this leg acts at the end it leaves for, not the one it left.
-      r.bridge = bridgeLabel(src.originProtocol, src.destProtocol)
-      continue
-    }
-    const other = externalChainRef(src.origin, src.from, src.fromFormatted)
-    if (other) {
-      r.destChain = other.chain
-      r.destParachainId = other.paraId
-      if (other.account) r.destAccount = other.account
-    }
-    r.fromTxUrl = originTxExplorerUrl(src.origin, src.originTx)
-    r.bridge = bridgeLabel(src.originProtocol)
-  }
-}
-
-// Upgrade outbound rows whose transfer continues PAST the first hop: the
-// XTokens dest junction only names the hop + forwarding account (a Wormhole
-// transfer to Solana looks like a Moonbeam transfer to the bridge contract),
-// while the journey knows the real destination. Matched by our own extrinsic
-// hash (= the journey's origin tx). Same-hop journeys and ambiguous matches
-// (an extrinsic batching several journeys) keep the local junction data,
-// which names the beneficiary authoritatively.
-async function applyXcmOutDests(rows: ActivityRow[]): Promise<void> {
-  // A row that already knows its bridge was built complete (Wormhole NTT reads its far
-  // end from our own logs), and the journey index has no key for it anyway — measured,
-  // none of 47 NTT journeys' origin hashes matches an extrinsic or EVM tx hash.
-  const outRows = rows.filter(r => r.type === 'xcm' && r.xcmDir === 'out' && r.extrinsicIndex != null && r.bridge == null)
-  if (!outRows.length) return
-  const pairs = [...new Set(outRows.map(r => `${r.blockHeight}:${r.extrinsicIndex}`))]
-  const tuples = pairs.map(k => { const [h, i] = k.split(':'); return `(${h},${i})` }).join(',')
-  const res = await client.query({
-    query: `SELECT block_height, extrinsic_index, extrinsic_hash FROM price_data.raw_extrinsics WHERE (block_height, extrinsic_index) IN (${tuples})`,
-    format: 'JSONEachRow',
-  })
-  const hashByPair = new Map<string, string>()
-  for (const e of await res.json<{ block_height: number; extrinsic_index: number; extrinsic_hash: string }>()) {
-    if (e.extrinsic_hash) hashByPair.set(`${e.block_height}:${e.extrinsic_index}`, e.extrinsic_hash.toLowerCase())
-  }
-  const keys = outRows
-    .map(r => ({ txHash: hashByPair.get(`${r.blockHeight}:${r.extrinsicIndex}`) ?? '', timestampMs: activityRowTimestampMs(r) }))
-    .filter(k => k.txHash)
-  // Two keys, because neither covers outbound alone. The extrinsic hash is exact but
-  // absent from roughly half of outbound BRIDGE journeys, and those are precisely the
-  // ones whose real destination lies past the sibling we handed the message to. The
-  // topic id is on every one of them, is what this row already carries, and is what
-  // the persisted table is keyed by — so it also survives a restart, which the
-  // hash-keyed map (memory only) does not.
-  const byTopic = await xcmJourneySourcesFor(outRows
-    .filter(r => r.messageId)
-    .map(r => ({ messageId: r.messageId!, timestampMs: activityRowTimestampMs(r), bridge: looksBridged(r) })))
-  const journeys = keys.length ? await xcmJourneysByOriginTx(keys) : new Map()
-  for (const r of outRows) {
-    const hash = hashByPair.get(`${r.blockHeight}:${r.extrinsicIndex}`)
-    const list = hash ? journeys.get(hash) : undefined
-    const topicHit = r.messageId ? byTopic.get(r.messageId) : undefined
-    // Prefer whichever names a destination; the topic hit is the more complete of the
-    // two, since it carries the API's own rendering of the account.
-    const src = topicHit?.destination ? topicHit : (list && list.length === 1 ? list[0] : undefined)
-    if (!src?.destination) continue
-    const dest = externalChainRef(src.destination, src.to, src.toFormatted)
-    // A journey whose destination is Hydration is this row's own arrival, not its
-    // target, and one that merely restates the sibling we already named adds nothing.
-    if (!dest || dest.paraId === 2034 || (dest.paraId != null && dest.paraId === r.destParachainId)) continue
-    r.destChain = dest.chain
-    r.destParachainId = dest.paraId
-    r.destAccount = dest.account ?? r.destAccount
-    r.bridge = bridgeLabel(src.originProtocol, src.destProtocol) ?? r.bridge
-    r.destTxUrl = originTxExplorerUrl(src.destination, src.destTx) ?? r.destTxUrl
-  }
-}
-
-// Remote-side enrichment of a final PAGE of activity rows — at most a page worth
-// of lookups per request; both passes share the journey cache.
-async function applyXcmJourneys(rows: ActivityRow[]): Promise<void> {
-  await applyXcmInSources(rows)
-  await applyXcmOutRemoteSources(rows)
-  await applyXcmOutDests(rows)
-}
-
-// Wormhole Native Token Transfers — the direct route that replaced Moonbeam Routed
-// Liquidity for the venues MRL served. A send burns the token here and mints it on the
-// far chain, with no intermediary parachain, so nothing about it is XCM: no topic id,
-// no destination junction, no sibling. On chain it reads as an ordinary transfer of the
-// asset to the NTT minter registered for it (EVMAccounts.NttMinterSet), followed by a
-// burn from that minter — which is why these arrive in the feed looking like transfers.
-//
-// The far end is NOT resolvable through the crosschain index: measured against the live
-// index, none of 47 NTT journeys' origin hashes matches a Hydration extrinsic hash or an
-// EVM transaction hash, and there is no topic to key on. It IS in our own data, in the
-// manager's TransferSent log, so it is read from there and no other chain is indexed.
-const NTT_TRANSFER_SENT_TOPIC = '0xe54e51e42099622516fa3b48e9733581c9dbdcb771cafb093f745a0532a35982'
-
 // Wormhole's own chain numbering → the URN the rest of this file names chains by, so a
 // destination gets its display name, address encoding and explorer link from
 // externalChainRef rather than a second mapping that could disagree with it.
@@ -10582,441 +5868,6 @@ export const WORMHOLE_CHAIN_URNS: Record<number, string> = {
   30: 'urn:ocn:ethereum:8453',    // Base
 }
 
-export interface NttTransferSent { recipient: string; amount: string; recipientChain: number }
-
-// NttManager.TransferSent(address indexed sender, bytes32 indexed recipient,
-//                         uint256 amount, uint256 fee, uint16 recipientChain, uint64 sequence)
-// The recipient is a bytes32 because it has to hold a Solana or Sui account as easily as
-// an EVM one; narrowing it to 20 bytes happens per destination, not here.
-export function decodeNttTransferSent(topics: string[], data: string): NttTransferSent | null {
-  if (topics[0]?.toLowerCase() !== NTT_TRANSFER_SENT_TOPIC) return null
-  const recipient = topics[2]
-  if (!/^0x[0-9a-fA-F]{64}$/.test(recipient ?? '')) return null
-  const body = (data ?? '').replace(/^0x/, '')
-  if (body.length < 64 * 3) return null
-  const word = (i: number) => body.slice(i * 64, (i + 1) * 64)
-  const amount = BigInt('0x' + word(0)).toString()
-  const recipientChain = Number(BigInt('0x' + word(2)))
-  if (!Number.isInteger(recipientChain) || recipientChain <= 0) return null
-  return { recipient: recipient.toLowerCase(), amount, recipientChain }
-}
-
-// The destination as this file names chains and accounts. An EVM chain takes the low 20
-// bytes of the bytes32; Solana and Sui take all 32, which is what their encodings need.
-export function nttDestination(sent: NttTransferSent): { urn: string; account: string } | null {
-  const urn = WORMHOLE_CHAIN_URNS[sent.recipientChain]
-  if (!urn) return null
-  const evm = urn.startsWith('urn:ocn:ethereum:') || urn === 'urn:ocn:polkadot:2004'
-  return { urn, account: evm ? '0x' + sent.recipient.slice(-40) : sent.recipient }
-}
-
-// Transceiver.ReceivedMessage(bytes32 digest, uint16 emitterChainId, bytes32 emitterAddress,
-//                             uint64 sequence) — all in data, nothing indexed. The second
-// word is the only statement of the source CHAIN on this side. The sending USER is not
-// here or in any other log: it sits in the NTT payload, which is calldata, so an inbound
-// row can name where it came from but never who sent it.
-const NTT_RECEIVED_MESSAGE_TOPIC = '0xf6fc529540981400dc64edf649eb5e2e0eb5812a27f8c81bac2c1d317e71a5f0'
-// NttManager.TransferRedeemed(bytes32 indexed digest) — emitted by the asset's own
-// manager (the registered minter address), which is what ties a redeem to its asset.
-const NTT_TRANSFER_REDEEMED_TOPIC = '0x504e6efe18ab9eed10dc6501a417f5b12a2f7f2b1593aed9b89f9bce3cf29a91'
-
-export function decodeNttReceivedMessage(topics: string[], data: string): { sourceChain: number } | null {
-  if (topics[0]?.toLowerCase() !== NTT_RECEIVED_MESSAGE_TOPIC) return null
-  const body = (data ?? '').replace(/^0x/, '')
-  if (body.length < 64 * 2) return null
-  const sourceChain = Number(BigInt('0x' + body.slice(64, 128)))
-  if (!Number.isInteger(sourceChain) || sourceChain <= 0) return null
-  return { sourceChain }
-}
-
-// The origin chain in the fields an inbound row carries. Same mapping as the outbound
-// destination, so both ends of the bridge are named from one table; an unmapped chain
-// yields nothing rather than a plausible wrong name.
-export function nttOriginChain(sourceChain: number): Pick<ActivityRow, 'fromChain' | 'fromParachainId'> | null {
-  const urn = WORMHOLE_CHAIN_URNS[sourceChain]
-  const chain = urn ? ocnChainName(urn) : null
-  if (!chain) return null
-  const parsed = parseOcnUrn(urn)
-  const paraId = parsed?.consensus === 'polkadot' ? Number(parsed.chainId) : null
-  return { fromChain: chain, fromParachainId: paraId }
-}
-
-// A transfer of an NTT asset TO its registered minter is that asset's outbound send —
-// the feed renders it as a cross-chain row, so the transfer family must neither show
-// nor count it. One shared fragment, mirroring mmStakingPlumbingExclusionSql: applied
-// at every transfer read site AND inside the transfer count arm's candidates, so the
-// rows a page renders and the rows its total counts can never be a different set.
-export function nttMinterLegExclusionSql(minters: Map<number, string>, assetExpr = 'asset_id', toExpr = 'to_account'): string {
-  if (!minters.size) return ''
-  const pairs = [...minters].map(([assetId, account]) => `(${assetId},'${account}')`).join(',')
-  return `AND (toUInt32(${assetExpr}), lower(${toExpr})) NOT IN (${pairs})`
-}
-
-// assetId → the account its NTT minter burns from. Eleven rows today and one per asset
-// ever listed, so it is cached rather than joined into every read; the latest
-// registration for an asset wins, since a manager can be replaced.
-let nttMinterCache: { at: number; byAsset: Map<number, string> } | null = null
-export async function nttMinterAccounts(): Promise<Map<number, string>> {
-  if (nttMinterCache && Date.now() - nttMinterCache.at < 300_000) return nttMinterCache.byAsset
-  const byAsset = new Map<number, string>()
-  try {
-    const res = await client.query({
-      query: `SELECT toUInt32(JSONExtractInt(args_json,'assetId')) AS asset_id,
-                     argMax(lower(JSONExtractString(args_json,'minter')), block_height) AS minter
-              FROM price_data.raw_events WHERE event_name = 'EVMAccounts.NttMinterSet'
-              GROUP BY asset_id`,
-      format: 'JSONEachRow',
-    })
-    for (const r of await res.json<{ asset_id: number; minter: string }>()) {
-      // The minter is an H160, so it takes h160AccountId — evmAccountForm widens a
-      // 32-byte account id and returns null for a 20-byte address.
-      if (/^0x[0-9a-f]{40}$/.test(r.minter)) byAsset.set(Number(r.asset_id), h160AccountId(r.minter).toLowerCase())
-    }
-    nttMinterCache = { at: Date.now(), byAsset }
-  } catch (err) {
-    console.error('[Explorer] NTT minter registry read failed:', err instanceof Error ? err.message : err)
-    return nttMinterCache?.byAsset ?? byAsset
-  }
-  return byAsset
-}
-
-// The bare manager/minter H160 back out of its widened account id — h160AccountId
-// prefixes '45544800' and pads, so bytes 4..24 are the address. The transfer tables
-// hold the widened form; the manager's own logs hold the bare one.
-export function nttMinterH160(account: string): string {
-  return '0x' + account.slice(10, 50)
-}
-
-interface NttSentLog { manager: string; sent: NttTransferSent; claimed?: boolean }
-interface NttExtrinsicLogs {
-  sent: NttSentLog[]
-  redeemed: Set<string>     // manager H160s that logged TransferRedeemed here
-  sourceChains: number[]    // one entry per decoded ReceivedMessage
-}
-
-// The NTT logs of the given `block:extrinsic` pairs, decoded — one bounded
-// primary-key read per 2k pairs. Replays in raw_evm_logs collapse under
-// LIMIT 1 BY the event identity.
-//
-// Pairs safely below the ingested head are memoized across rebuilds: an
-// extrinsic's own log rows are immutable chain history, but the sparse
-// cross-chain arms hand this the SAME full-history candidate list on every
-// head-keyed rebuild, and each cold pair costs a whole granule of the fat
-// `data` column (~150 MiB per feed poll measured). Near-head pairs stay
-// uncached so a block still settling is always re-read.
-const NTT_LOGS_MEMO_MAX = 50_000
-const NTT_LOGS_FINALITY_MARGIN_BLOCKS = 600
-const nttLogsMemo = new Map<string, NttExtrinsicLogs | null>()
-function nttMemoBlock(key: string): number {
-  return Number(key.slice(0, key.indexOf(':')))
-}
-// Callers get a per-call copy of the `sent` wrappers: the outbound builder
-// marks a wrapper `claimed` to pair sends with legs WITHIN one request, and a
-// flag surviving on a shared memo entry would eat the pairing of every later
-// request. `redeemed`/`sourceChains` are only read, so they stay shared.
-function nttLogsCopy(entry: NttExtrinsicLogs): NttExtrinsicLogs {
-  return { sent: entry.sent.map(s => ({ manager: s.manager, sent: s.sent })), redeemed: entry.redeemed, sourceChains: entry.sourceChains }
-}
-async function nttLogsFor(pairs: Iterable<string>): Promise<Map<string, NttExtrinsicLogs>> {
-  const requested = [...new Set(pairs)]
-  const out = new Map<string, NttExtrinsicLogs>()
-  if (!requested.length) return out
-  const memoFloor = (await indexedRawHead()) - NTT_LOGS_FINALITY_MARGIN_BLOCKS
-  const keys: string[] = []
-  for (const key of requested) {
-    const hit = nttLogsMemo.get(key)
-    if (hit === undefined) { keys.push(key); continue }
-    if (hit) out.set(key, nttLogsCopy(hit))
-  }
-  if (!keys.length) return out
-  const chunks = await mapChunksConcurrently(keys, 2_000, CHUNK_QUERY_CONCURRENCY, async chunk => {
-    const tuples = chunk.map(key => {
-      const at = key.indexOf(':')
-      return `(${Number(key.slice(0, at))},${Number(key.slice(at + 1))})`
-    }).join(',')
-    const res = await client.query({
-      query: `SELECT block_height, event_index, extrinsic_index, lower(contract_address) AS contract, topics, data
-              FROM price_data.raw_evm_logs
-              WHERE (block_height, extrinsic_index) IN (${tuples})
-                AND topic0 IN ('${NTT_TRANSFER_SENT_TOPIC}','${NTT_RECEIVED_MESSAGE_TOPIC}','${NTT_TRANSFER_REDEEMED_TOPIC}')
-              LIMIT 1 BY block_height, event_index`,
-      format: 'JSONEachRow',
-    })
-    return res.json<{ block_height: number; event_index: number; extrinsic_index: number; contract: string; topics: string[]; data: string }>()
-  })
-  const fetched = new Map<string, NttExtrinsicLogs>()
-  for (const log of chunks.flat()) {
-    const key = `${log.block_height}:${log.extrinsic_index}`
-    const entry = fetched.get(key) ?? { sent: [], redeemed: new Set<string>(), sourceChains: [] }
-    const topic0 = log.topics[0]?.toLowerCase()
-    if (topic0 === NTT_TRANSFER_REDEEMED_TOPIC) entry.redeemed.add(log.contract)
-    const sent = decodeNttTransferSent(log.topics, log.data)
-    if (sent) entry.sent.push({ manager: log.contract, sent })
-    const received = decodeNttReceivedMessage(log.topics, log.data)
-    if (received) entry.sourceChains.push(received.sourceChain)
-    fetched.set(key, entry)
-  }
-  for (const key of keys) {
-    const entry = fetched.get(key) ?? null
-    if (entry) out.set(key, nttLogsCopy(entry))
-    if (nttMemoBlock(key) > memoFloor) continue
-    if (nttLogsMemo.size >= NTT_LOGS_MEMO_MAX) {
-      // Insertion-ordered Map: dropping the oldest tenth keeps eviction O(1)
-      // amortized without tracking recency.
-      let drop = NTT_LOGS_MEMO_MAX / 10
-      for (const old of nttLogsMemo.keys()) { nttLogsMemo.delete(old); if (--drop <= 0) break }
-    }
-    nttLogsMemo.set(key, entry)
-  }
-  return out
-}
-
-// Outbound NTT sends as cross-chain rows. The send's on-chain trace is an ordinary
-// transfer of the asset TO its registered minter (then a burn from it), so membership
-// is the same `(asset_id, to_account)` predicate the transfer family EXCLUDES by
-// (nttMinterLegExclusionSql) — one rule, two sides, so a leg is always exactly one of
-// the two families. The account-first read model indexes both parties, so the global
-// feed reads the MINTERS' own rows (a primary-key read of just the sends) and an
-// account page reads the viewed accounts'.
-//
-// The far end comes from the manager's TransferSent log, matched per extrinsic by
-// (manager, amount) with claim-once semantics for batched sends; a send whose log is
-// missing or ambiguous keeps an unresolved destination rather than a plausible one.
-async function getRecentNttOut(limit: number, from?: string, to?: string, accounts?: string[], offset = 0, filters: ValueListFilters = {}): Promise<ActivityRow[]> {
-  const tw = timeWindow(from, to)
-  const acctList = accounts && accounts.length ? sqlAccountList(accounts) : null
-  return cached(`explorer:ntt-out:${await liveHeadTag(Boolean(tw), datedWindowIsClosed(to))}:${limit}:${offset}:${from ?? ''}:${to ?? ''}:${acctList ?? ''}:${filterKey(filters)}`, tw ? 30000 : LIVE_CACHE_MS, async () => {
-    if (acctList === "''") return []
-    const minters = await nttMinterAccounts()
-    if (!minters.size) return []
-    const prices = await ensurePrices()
-    const tokenIds = assetIdsForToken(filters.token)
-    const scope = [...minters.keys()].filter(id => tokenIds == null || tokenIds.includes(id))
-    if (!scope.length) return []
-    const pairsSql = scope.map(id => `(${id},'${minters.get(id)!}')`).join(',')
-    const keyList = acctList ?? scope.map(id => `'${minters.get(id)!}'`).join(',')
-    const want = offset + limit
-    const fetchPage = async (pageBound: string, pageLimit: number): Promise<ActivityRow[]> => {
-      const res = await client.query({
-        // The pallet mirrors of one send (Currencies.Transferred over Tokens.Transfer)
-        // collapse to the most specific event, exactly as the transfer feed dedupes —
-        // so the row keeps the (block, eventIndex) identity the leg had as a transfer.
-        query: `SELECT block_height, ts, event_index, extrinsic_index, from_acc, to_acc, amount, asset_id
-                FROM (
-                  SELECT DISTINCT block_height, toString(block_timestamp) AS ts, event_index, extrinsic_index, event_name,
-                    from_account AS from_acc, to_account AS to_acc, amount, asset_id,
-                    multiIf(event_name = 'Currencies.Transferred', 3, event_name = 'Tokens.Transfer', 2, 1) AS priority
-                  FROM price_data.account_transfer_activity
-                  WHERE ${pageBound} AND account IN (${keyList})
-                    AND (asset_id, lower(to_account)) IN (${pairsSql})
-                  ORDER BY block_height DESC, priority DESC, event_index DESC
-                  LIMIT 1 BY block_height, extrinsic_index, asset_id, lower(from_acc), lower(to_acc), amount
-                )
-                ORDER BY block_height DESC, event_index DESC LIMIT {limit:UInt32}`,
-        query_params: { limit: pageLimit }, format: 'JSONEachRow',
-      })
-      const legs = await res.json<{ block_height: number; ts: string; event_index: number; extrinsic_index: number | null; from_acc: string; to_acc: string; amount: string; asset_id: number }>()
-      if (!legs.length) return []
-      const logs = await nttLogsFor(legs.filter(l => l.extrinsic_index != null).map(l => `${l.block_height}:${l.extrinsic_index}`))
-      const out: ActivityRow[] = []
-      for (const leg of legs) {
-        const a = asset(leg.asset_id)
-        const row: ActivityRow = {
-          type: 'xcm', blockHeight: leg.block_height, timestamp: leg.ts, eventIndex: leg.event_index, extrinsicIndex: leg.extrinsic_index,
-          who: leg.from_acc ? accountRef(leg.from_acc) : null, to: null, asset: a, assetIn: null, assetOut: null,
-          amount: leg.amount, amountIn: null, amountOut: null, valueUsd: usdValue(prices, a.assetId, leg.amount, a.decimals),
-          xcmDir: 'out', bridge: 'Wormhole', linkBlock: leg.block_height, linkIndex: leg.extrinsic_index,
-        }
-        const manager = nttMinterH160(minters.get(leg.asset_id) ?? '')
-        const entry = leg.extrinsic_index != null ? logs.get(`${leg.block_height}:${leg.extrinsic_index}`) : undefined
-        const candidates = (entry?.sent ?? []).filter(s => s.manager === manager && !s.claimed)
-        const match = candidates.find(s => s.sent.amount === leg.amount) ?? (candidates.length === 1 ? candidates[0] : undefined)
-        if (match) {
-          match.claimed = true
-          const dest = nttDestination(match.sent)
-          const ref = dest ? externalChainRef(dest.urn, dest.account) : null
-          if (ref) {
-            row.destChain = ref.chain
-            row.destParachainId = ref.paraId
-            row.destAccount = ref.account
-          }
-        }
-        out.push(row)
-      }
-      await applyHistoricalUsd(out, activityHistPick)
-      return out
-    }
-    const rows = await fetchFilteredDeep(
-      tw, want, fetchPage,
-      row => activityRowMatchesFilters(row, filters),
-      row => row.blockHeight, row => row.eventIndex ?? -1,
-      row => `${row.blockHeight}:${row.eventIndex}`,
-    )
-    return rows.slice(offset, offset + limit)
-  })
-}
-
-// Inbound NTT arrivals as cross-chain rows. An arrival is a MINT, not a transfer:
-// the user's tokens appear as a mirrored Currencies.Deposited in the redeem's SIGNED
-// extrinsic (fee refunds are bare Tokens.Deposited, treasury legs go to module
-// accounts — measured across every redeem indexed). A deposit only becomes a row when
-// the same extrinsic carries a TransferRedeemed log from THAT asset's own manager;
-// plain user deposits of the same assets outnumber real redeems ~250:1, so the log is
-// the classification, not an enrichment.
-//
-// The source CHAIN is the transceiver's ReceivedMessage word; the sending USER is in
-// the NTT payload (calldata, never logged), so no source account is shown — a named
-// chain with no pill is honest, an inferred pill would not be.
-async function getRecentNttIn(limit: number, from?: string, to?: string, accounts?: string[], offset = 0, filters: ValueListFilters = {}): Promise<ActivityRow[]> {
-  const tw = timeWindow(from, to)
-  const acctList = accounts && accounts.length ? sqlAccountList(accounts) : null
-  return cached(`explorer:ntt-in:${await liveHeadTag(Boolean(tw), datedWindowIsClosed(to))}:${limit}:${offset}:${from ?? ''}:${to ?? ''}:${acctList ?? ''}:${filterKey(filters)}`, tw ? 30000 : LIVE_CACHE_MS, async () => {
-    if (acctList === "''") return []
-    const minters = await nttMinterAccounts()
-    if (!minters.size) return []
-    const prices = await ensurePrices()
-    const tokenIds = assetIdsForToken(filters.token)
-    const scope = [...minters.keys()].filter(id => tokenIds == null || tokenIds.includes(id))
-    if (!scope.length) return []
-    const want = offset + limit
-    let pageState: { scanned: number; cursor: { blockHeight: number; eventIndex: number } | null } = { scanned: 0, cursor: null }
-    const fetchPage = async (pageBound: string, pageLimit: number): Promise<ActivityRow[]> => {
-      const res = await client.query({
-        query: acctList
-          ? `SELECT block_height, toString(block_timestamp) AS ts, event_index, extrinsic_index, who, asset_id, amount
-             FROM ${xcmEventActivityByAccountTable()}
-             WHERE ${pageBound} AND who IN (${acctList})
-               AND event_name = 'Currencies.Deposited' AND asset_id IN (${scope.join(',')})
-               AND extrinsic_index IS NOT NULL
-               AND NOT match(who, '${RESERVED_ACCOUNT_RE.source}')
-             ORDER BY block_height DESC, event_index DESC LIMIT {limit:UInt32}`
-          : `SELECT block_height, toString(block_timestamp) AS ts, event_index, extrinsic_index, who, asset_id, amount
-             FROM ${xcmEventActivityTable()}
-             WHERE ${pageBound}
-               AND event_name = 'Currencies.Deposited' AND asset_id IN (${scope.join(',')})
-               AND extrinsic_index IS NOT NULL
-               AND NOT match(who, '${RESERVED_ACCOUNT_RE.source}')
-             ORDER BY block_height DESC, event_index DESC LIMIT {limit:UInt32}`,
-        query_params: { limit: pageLimit }, format: 'JSONEachRow',
-      })
-      const candidates = await res.json<{ block_height: number; ts: string; event_index: number; extrinsic_index: number; who: string; asset_id: number; amount: string }>()
-      const last = candidates.at(-1)
-      pageState = { scanned: candidates.length, cursor: last ? { blockHeight: last.block_height, eventIndex: last.event_index } : null }
-      if (!candidates.length) return []
-      const logs = await nttLogsFor(candidates.map(c => `${c.block_height}:${c.extrinsic_index}`))
-      const out: ActivityRow[] = []
-      for (const c of candidates) {
-        const entry = logs.get(`${c.block_height}:${c.extrinsic_index}`)
-        const manager = nttMinterH160(minters.get(c.asset_id) ?? '')
-        if (!entry || !entry.redeemed.has(manager)) continue
-        const a = asset(c.asset_id)
-        // One message names one chain; a batch of redeems from different chains names
-        // none for this row rather than guessing which message minted it.
-        const chains = [...new Set(entry.sourceChains)]
-        const origin = chains.length === 1 ? nttOriginChain(chains[0]) : null
-        out.push({
-          type: 'xcm', blockHeight: c.block_height, timestamp: c.ts, eventIndex: c.event_index, extrinsicIndex: c.extrinsic_index,
-          who: accountRef(c.who), to: null, asset: a, assetIn: null, assetOut: null,
-          amount: c.amount, amountIn: null, amountOut: null, valueUsd: usdValue(prices, a.assetId, c.amount, a.decimals),
-          xcmDir: 'in', bridge: 'Wormhole', ...(origin ?? {}), linkBlock: c.block_height, linkIndex: c.extrinsic_index,
-        })
-      }
-      await applyHistoricalUsd(out, activityHistPick)
-      return out
-    }
-    const rows = await fetchFilteredDeep(
-      tw, want, fetchPage,
-      row => activityRowMatchesFilters(row, filters),
-      row => row.blockHeight, row => row.eventIndex ?? -1,
-      row => `${row.blockHeight}:${row.eventIndex}`,
-      { pageState: () => pageState },
-    )
-    return rows.slice(offset, offset + limit)
-  })
-}
-
-// Global money-market transactions (supply/borrow/repay/withdraw/liquidation) by
-// real users (the routerex pallet's swap-internal MM ops are excluded).
-const MONEY_MARKET_EVENT_NAMES = ['Supply', 'Borrow', 'Repay', 'Withdraw', 'LiquidationCall'] as const
-function moneyMarketEventNames(action?: string): readonly string[] {
-  if (!action) return MONEY_MARKET_EVENT_NAMES
-  return MONEY_MARKET_EVENT_NAMES.includes(action as typeof MONEY_MARKET_EVENT_NAMES[number]) ? [action] : []
-}
-
-async function getRecentMoneyMarket(limit: number, from?: string, to?: string, offset = 0, filters: ValueListFilters = {}, action?: string): Promise<ActivityRow[]> {
-  const eventNames = moneyMarketEventNames(action)
-  if (!eventNames.length) return []
-  const tw = timeWindow(from, to)
-  return cached(`explorer:mm-activity:${await liveHeadTag(Boolean(tw), datedWindowIsClosed(to))}:${limit}:${offset}:${from ?? ''}:${to ?? ''}:${filterKey(filters)}:${action ?? ''}`, tw ? 30000 : LIVE_CACHE_MS, async () => {
-    const prices = await ensurePrices()
-    const tokenIds = assetIdsForToken(filters.token)
-    const reserveFilter = tokenIds == null ? '' : tokenIds.length
-      ? `AND asset_address IN (${mmReserveAddressesForTokens(tokenIds).map(a => `'${a}'`).join(',')})`
-      : 'AND 0'
-    // Min pushes down exactly: mmAssetIdSql maps the reserve address to the
-    // same asset id the row builder resolves, so SQL value == row valueUsd and
-    // no recency-window post-filter is needed — filters see full history via
-    // the withFeedWindow fallback.
-    const mmAmountExpr = `if(event_name='LiquidationCall', JSONExtractString(decoded_args_json,'liquidatedCollateralAmount'), amount)`
-    const amountFilter = eventValueFilterSql(mmAssetIdSql('asset_address'), mmAmountExpr, 'block_timestamp', filters, prices, 'mm_price')
-    const mmEv = await withFeedWindow(tw, limit, offset + limit, async (bound) => {
-      const res = await client.query({
-        query: `SELECT block_height, event_index, toString(block_timestamp) AS ts, event_name, account_id, asset_address, pool_address,
-                  ${mmAmountExpr} AS amount
-                FROM price_data.raw_money_market_events
-                ${amountFilter.joinSql}
-                WHERE ${bound} AND event_name IN (${eventNames.map(n => `'${n}'`).join(',')})
-                  AND lower(ifNull(pool_address, '')) IN (${configuredMmPoolsSql()})
-                  AND user_address NOT LIKE '0x6d6f646c%'
-                  ${mmStakingPlumbingExclusionSql()}
-                  ${reserveFilter}
-                  ${amountFilter.predicateSql}
-                ORDER BY block_height DESC, event_index DESC LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
-        query_params: { limit, offset }, format: 'JSONEachRow',
-      })
-      return res.json<{ block_height: number; event_index: number; ts: string; event_name: string; account_id: string | null; asset_address: string; pool_address: string | null; amount: string }>()
-    })
-    // Resolve the substrate extrinsic behind each EVM-side MM event so rows link/hover.
-    const mmExt = await extrinsicIndexFor(mmEv.map(r => [r.block_height, r.event_index] as [number, number | null]))
-    const out: ActivityRow[] = []
-    for (const r of mmEv) {
-      const aid = assetIdFromMmAddress(r.asset_address)
-      const a = aid != null ? asset(aid) : null
-      const xi = mmExt.get(`${r.block_height}:${r.event_index}`) ?? null
-      out.push({
-        type: 'mm', blockHeight: r.block_height, timestamp: r.ts, eventIndex: r.event_index, extrinsicIndex: xi,
-        who: r.account_id ? accountRef(r.account_id) : null, to: null, asset: a, assetIn: null, assetOut: null,
-        amount: r.amount, amountIn: null, amountOut: null,
-        valueUsd: a ? usdValue(prices, a.assetId, r.amount, a.decimals) : null,
-        assetRefs: a ? mmReserveAliasIds(a.assetId) : undefined,
-        mmAction: r.event_name, ...moneyMarketActivityFields(r.pool_address), linkBlock: r.block_height, linkIndex: xi,
-      })
-    }
-    await applyHistoricalUsd(out, activityHistPick)
-    return out
-  })
-}
-
-export const STAKING_EVENT_NAMES = [
-  'CollatorRewards.CollatorRewarded',
-  'GigaHdx.Staked',
-  'GigaHdx.Unstaked',
-  'GigaHdx.UnstakeCancelled',
-  'GigaHdx.Unlocked',
-  'GigaHdx.MigratedFromLegacy',
-  'GigaHdxRewards.RewardsClaimed',
-  'Staking.PositionCreated',
-  'Staking.StakeAdded',
-  'Staking.Unstaked',
-  'Staking.ForceUnstaked',
-  'Staking.RewardsClaimed',
-]
-interface RawStakingActivityEvent {
-  block_height: number
-  extrinsic_index: number | null
-  event_name: string
-  args_json: string
-}
 function argStr(args: Record<string, unknown>, key: string): string {
   const v = args[key]
   return typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'bigint' ? String(v) : ''
@@ -11027,533 +5878,6 @@ function argInt(args: Record<string, unknown>, ...keys: string[]): number {
     if (Number.isInteger(n)) return n
   }
   return 0
-}
-function stakingActivityKey(row: RawStakingActivityEvent): string | null {
-  if (row.extrinsic_index == null) return null
-  const args = (safeJson(row.args_json) ?? {}) as Record<string, unknown>
-  const who = argStr(args, 'who').toLowerCase()
-  return who ? `${row.block_height}:${row.extrinsic_index}:${who}` : null
-}
-export function suppressGigaCompanionEvents<T extends RawStakingActivityEvent>(rows: T[]): T[] {
-  const migrationKeys = new Set<string>()
-  const rewardKeys = new Set<string>()
-  for (const row of rows) {
-    const key = stakingActivityKey(row)
-    if (!key) continue
-    if (row.event_name === 'GigaHdx.MigratedFromLegacy') migrationKeys.add(key)
-    if (row.event_name === 'GigaHdxRewards.RewardsClaimed') rewardKeys.add(key)
-  }
-  if (!migrationKeys.size && !rewardKeys.size) return rows
-  return rows.filter(row => {
-    if (row.event_name !== 'GigaHdx.Staked' && row.event_name !== 'Staking.ForceUnstaked') return true
-    const key = stakingActivityKey(row)
-    if (!key) return true
-    if (row.event_name === 'GigaHdx.Staked' && rewardKeys.has(key)) return false
-    return !migrationKeys.has(key)
-  })
-}
-export function stakingAmountAndAsset(eventName: string, args: Record<string, unknown>, preferredAssetId?: number): { amount: string; assetId: number; action: string } | null {
-  const wantStHdx = preferredAssetId === 670
-  if (eventName === 'CollatorRewards.CollatorRewarded') {
-    const assetId = Number(args.currency ?? 0)
-    return preferredAssetId != null && preferredAssetId !== assetId ? null : { assetId, amount: argStr(args, 'amount'), action: 'Collator payout' }
-  }
-  if (preferredAssetId != null && preferredAssetId !== 0 && preferredAssetId !== 670) return null
-  if (eventName === 'GigaHdx.Staked') return { assetId: wantStHdx ? 670 : 0, amount: wantStHdx ? argStr(args, 'gigahdx') : argStr(args, 'amount'), action: 'GIGAHDX Stake' }
-  if (eventName === 'GigaHdx.Unstaked') return { assetId: wantStHdx ? 670 : 0, amount: wantStHdx ? argStr(args, 'gigahdxAmount') : argStr(args, 'payout'), action: 'GIGAHDX Unstake' }
-  if (eventName === 'GigaHdx.UnstakeCancelled') return { assetId: wantStHdx ? 670 : 0, amount: wantStHdx ? argStr(args, 'gigahdx') : argStr(args, 'amount'), action: 'GIGAHDX Cancel Unstake' }
-  // Unlocked releases the HDX principal once the unstake period has passed —
-  // it has no stHDX leg, so an stHDX-scoped view drops it (empty amount).
-  if (eventName === 'GigaHdx.Unlocked') return { assetId: 0, amount: wantStHdx ? '' : argStr(args, 'amount'), action: 'GIGAHDX Unlock' }
-  if (eventName === 'GigaHdx.MigratedFromLegacy') return { assetId: wantStHdx ? 670 : 0, amount: wantStHdx ? argStr(args, 'gigahdxReceived') : argStr(args, 'hdxUnlocked'), action: 'GIGAHDX Migrate' }
-  if (eventName === 'GigaHdxRewards.RewardsClaimed') return { assetId: wantStHdx ? 670 : 0, amount: wantStHdx ? argStr(args, 'gigahdxReceived') : argStr(args, 'totalHdx'), action: 'GIGAHDX Reward' }
-  if (preferredAssetId != null && preferredAssetId !== 0) return null
-  if (eventName === 'Staking.PositionCreated') return { assetId: 0, amount: argStr(args, 'stake') || argStr(args, 'amount'), action: 'Stake' }
-  if (eventName === 'Staking.StakeAdded') return { assetId: 0, amount: argStr(args, 'amount') || argStr(args, 'stake'), action: 'Add stake' }
-  // Staking.Unstaked reports the released principal as `unlockedStake` in both
-  // shapes it has had (early blocks add rewards/unlockedRewards); it never
-  // carries `amount` or `stake`, so reading those dropped every unstake row.
-  if (eventName === 'Staking.Unstaked') return { assetId: 0, amount: argStr(args, 'unlockedStake'), action: 'Unstake' }
-  if (eventName === 'Staking.ForceUnstaked') return { assetId: 0, amount: argStr(args, 'paidRewards') || argStr(args, 'stake'), action: 'Force unstake' }
-  if (eventName === 'Staking.RewardsClaimed') return { assetId: 0, amount: argStr(args, 'paidRewards'), action: 'Staking reward' }
-  return null
-}
-
-// Per-event → ActivityRow construction shared by the extrinsic-scoped
-// (getExtrinsicActivity), windowed-feed (getRecentStaking) and block-hook
-// (getBlockHookActivity) staking builders, so all three read
-// STAKING_EVENT_NAMES/stakingAmountAndAsset identically. `who`/`assetId`/`amount`
-// are returned alongside the row so callers can build their own dedup keys.
-function stakingRowFromEvent(
-  e: { block_height: number; ts: string; event_index: number; extrinsic_index: number | null; event_name: string; args_json: string },
-  prices: Map<number, PriceInfo>,
-  opts: { preferredAssetId?: number; signerFallback?: string | null } = {},
-): { row: ActivityRow; who: string; assetId: number; amount: string } | null {
-  const args = (safeJson(e.args_json) ?? {}) as Record<string, unknown>
-  const who = argStr(args, 'who')
-  const parts = stakingAmountAndAsset(e.event_name, args, opts.preferredAssetId)
-  if (!parts?.amount || parts.amount === '0') return null
-  const a = asset(parts.assetId)
-  const row: ActivityRow = {
-    type: 'staking', blockHeight: e.block_height, timestamp: e.ts, eventIndex: e.event_index, extrinsicIndex: e.extrinsic_index,
-    who: who && ACCOUNT_RE.test(who) ? accountRef(who) : opts.signerFallback ? accountRef(opts.signerFallback) : null,
-    to: null, asset: a, assetIn: null, assetOut: null,
-    amount: parts.amount, amountIn: null, amountOut: null, valueUsd: usdValue(prices, a.assetId, parts.amount, a.decimals),
-    stakingAction: parts.action, linkBlock: e.block_height, linkIndex: e.extrinsic_index,
-  }
-  return { row, who, assetId: parts.assetId, amount: parts.amount }
-}
-
-// Staking action label (as shown/filtered in the UI) → source event name.
-const STAKING_ACTION_EVENTS: Record<string, string[]> = {
-  'Stake': ['Staking.PositionCreated'],
-  'Add stake': ['Staking.StakeAdded'],
-  'Unstake': ['Staking.Unstaked'],
-  'Force unstake': ['Staking.ForceUnstaked'],
-  'Staking reward': ['Staking.RewardsClaimed'],
-  'GIGAHDX Stake': ['GigaHdx.Staked'],
-  'GIGAHDX Unstake': ['GigaHdx.Unstaked'],
-  'GIGAHDX Cancel Unstake': ['GigaHdx.UnstakeCancelled'],
-  'GIGAHDX Unlock': ['GigaHdx.Unlocked'],
-  'GIGAHDX Migrate': ['GigaHdx.MigratedFromLegacy'],
-  'GIGAHDX Reward': ['GigaHdxRewards.RewardsClaimed'],
-  'Collator payout': ['CollatorRewards.CollatorRewarded'],
-}
-// SQL mirror of stakingAmountAndAsset for the value push-down: the min-USD
-// filter runs in ClickHouse, so it must read the same per-event amount field the
-// rendered row does or a matching row is filtered away (and vice versa).
-export function stakingAmountSql(gigaAssetId: number): string {
-  const giga = (stHdxField: string, hdxField: string) =>
-    `JSONExtractString(args_json,'${gigaAssetId === 670 ? stHdxField : hdxField}')`
-  return `multiIf(
-      event_name='CollatorRewards.CollatorRewarded', JSONExtractString(args_json,'amount'),
-      event_name='GigaHdx.Staked', ${giga('gigahdx', 'amount')},
-      event_name='GigaHdx.Unstaked', ${giga('gigahdxAmount', 'payout')},
-      event_name='GigaHdx.UnstakeCancelled', ${giga('gigahdx', 'amount')},
-      event_name='GigaHdx.Unlocked', ${gigaAssetId === 670 ? "''" : "JSONExtractString(args_json,'amount')"},
-      event_name='GigaHdx.MigratedFromLegacy', ${giga('gigahdxReceived', 'hdxUnlocked')},
-      event_name='GigaHdxRewards.RewardsClaimed', ${giga('gigahdxReceived', 'totalHdx')},
-      event_name='Staking.PositionCreated', if(JSONHas(args_json,'stake'), JSONExtractString(args_json,'stake'), JSONExtractString(args_json,'amount')),
-      event_name='Staking.StakeAdded', if(JSONHas(args_json,'amount'), JSONExtractString(args_json,'amount'), JSONExtractString(args_json,'stake')),
-      event_name='Staking.Unstaked', JSONExtractString(args_json,'unlockedStake'),
-      event_name='Staking.ForceUnstaked', if(JSONHas(args_json,'paidRewards'), JSONExtractString(args_json,'paidRewards'), JSONExtractString(args_json,'stake')),
-      event_name='Staking.RewardsClaimed', JSONExtractString(args_json,'paidRewards'), '')`
-}
-async function getRecentStaking(limit: number, from?: string, to?: string, accounts?: string[], offset = 0, filters: ValueListFilters = {}, assetId?: number, action?: string): Promise<ActivityRow[]> {
-  const tw = timeWindow(from, to)
-  const acctList = accounts && accounts.length ? sqlAccountList(accounts) : null
-  return cached(`explorer:staking-activity:${await liveHeadTag(Boolean(tw), datedWindowIsClosed(to))}:${limit}:${offset}:${from ?? ''}:${to ?? ''}:${acctList ?? ''}:${assetId ?? ''}:${filterKey(filters)}:${action ?? ''}`, tw ? 30000 : LIVE_CACHE_MS, async () => {
-    const prices = await ensurePrices()
-    const bound = tw ?? '1'
-    const tokenIds = assetIdsForToken(filters.token)
-    // Staking activity can only represent HDX or stHDX. Avoid walking the full
-    // staking history for every unrelated token in the merged activity feed.
-    if (tokenIds != null && !tokenIds.some(id => id === 0 || id === 670)) return []
-    const preferredAssetId = assetId ?? (tokenIds?.length === 1 && tokenIds[0] === 670 ? 670 : undefined)
-    const postFilter = assetId != null || tokenIds != null || action != null || hasRowLevelFilter(filters)
-    const want = offset + limit
-    const scanLimit = postFilter ? Math.max(want * 8, limit + 250) : limit
-    const scanOffset = postFilter ? 0 : offset
-    const selectedNames = action && STAKING_ACTION_EVENTS[action]
-      ? STAKING_ACTION_EVENTS[action]
-      : preferredAssetId === 670
-        ? ['GigaHdx.Staked', 'GigaHdx.Unstaked', 'GigaHdx.UnstakeCancelled', 'GigaHdx.MigratedFromLegacy', 'GigaHdxRewards.RewardsClaimed']
-        : STAKING_EVENT_NAMES
-    // A subordinate-only filter still needs its possible parent events as
-    // classification context. They are removed again after hierarchy folding,
-    // so filtering for "GIGAHDX Stake" does not resurrect reward/migration plumbing.
-    const contextNames = action === 'GIGAHDX Stake'
-      ? ['GigaHdxRewards.RewardsClaimed', 'GigaHdx.MigratedFromLegacy']
-      : action === 'Force unstake' ? ['GigaHdx.MigratedFromLegacy'] : []
-    const sourceNames = [...new Set([...selectedNames, ...contextNames])]
-    const names = sourceNames.map(n => `'${n}'`).join(',')
-    // Account-scoped: prune via the activity index; global: recency window.
-    const accountRefsFilter = acctList && !postFilter
-      ? `AND ${accountActivityRefsSql(accounts!, `event_name IN (${names})`, bound, scanOffset + scanLimit)}`
-      : ''
-    const accountFilter = acctList
-      ? `AND who IN (${acctList})`
-      : ''
-    const gigaAssetId = preferredAssetId === 670 ? 670 : 0
-    const stakingAssetExpr = `multiIf(event_name='CollatorRewards.CollatorRewarded', greatest(0, JSONExtractInt(args_json,'currency')), event_name LIKE 'GigaHdx%', ${gigaAssetId}, 0)`
-    const stakingValueFilter = eventValueFilterSql(stakingAssetExpr, stakingAmountSql(gigaAssetId), 'block_timestamp', filters, prices, 'staking_price')
-    const runStaking = async (b: string, pageLimit: number, pageOffset: number) => {
-      const res = await client.query({
-        query: `SELECT block_height, toString(block_timestamp) AS ts, event_index, extrinsic_index, event_name, args_json
-                FROM price_data.staking_activity FINAL
-                ${stakingValueFilter.joinSql}
-                WHERE ${b} ${accountRefsFilter} AND event_name IN (${names}) ${accountFilter}
-                ${stakingValueFilter.predicateSql}
-                ORDER BY block_height DESC, event_index DESC LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
-        query_params: { limit: pageLimit, offset: pageOffset }, format: 'JSONEachRow',
-      })
-      return res.json<{ block_height: number; ts: string; event_index: number; extrinsic_index: number | null; event_name: string; args_json: string }>()
-    }
-    const buildRows = (raw: { block_height: number; ts: string; event_index: number; extrinsic_index: number | null; event_name: string; args_json: string }[]) => {
-      const out: { row: ActivityRow; key: string }[] = []
-      const seen = new Set<string>()
-      for (const r of suppressGigaCompanionEvents(raw)) {
-        const built = stakingRowFromEvent(r, prices, { preferredAssetId })
-        if (!built) continue
-        if (action != null && built.row.stakingAction !== action) continue
-        const key = `${r.block_height}:${r.extrinsic_index ?? 'e'}:${r.event_name}:${built.who}:${built.assetId}:${built.amount}`
-        if (seen.has(key)) continue
-        seen.add(key)
-        out.push({ row: built.row, key })
-      }
-      return out
-    }
-    if (postFilter) {
-      // Staking values are only computable from built rows (per-event amount
-      // fields, HDX-vs-stHDX perspective) — walk full history in pages until
-      // enough filtered rows exist instead of post-filtering a recency window.
-      let pageState: { scanned: number; cursor: { blockHeight: number; eventIndex: number } | null } = { scanned: 0, cursor: null }
-      const deep = await fetchFilteredDeep(tw, want, async (b, pageLimit) => {
-        const raw = await runStaking(b, pageLimit, 0)
-        const last = raw.at(-1)
-        pageState = {
-          scanned: raw.length,
-          cursor: last ? { blockHeight: last.block_height, eventIndex: last.event_index } : null,
-        }
-        const built = buildRows(raw)
-        await applyHistoricalUsd(built.map(p => p.row), activityHistPick)
-        return built
-      },
-        p => activityRowMatchesFilters(p.row, filters), p => p.row.blockHeight, p => p.row.eventIndex ?? -1, p => p.key,
-        { pageState: () => pageState })
-      return deep.map(p => p.row).slice(offset, offset + limit)
-    }
-    const rawStaking = acctList ? await runStaking(bound, scanLimit, scanOffset) : await withFeedWindow(tw, scanLimit, scanOffset + scanLimit, (b) => runStaking(b, scanLimit, scanOffset))
-    const built = buildRows(rawStaking).map(p => p.row)
-    await applyHistoricalUsd(built, activityHistPick)
-    const filtered = built.filter(r => activityRowMatchesFilters(r, filters))
-    return postFilter ? filtered.slice(offset, offset + limit) : filtered
-  })
-}
-
-// OTC (place / pull / fill)
-// OTC.Placed/Cancelled carry no `who` — the actor is the extrinsic signer
-// (batched via signersFor, the same attribution pattern trades use for their
-// pallet-internal swap events). OTC.Filled/PartiallyFilled carry `who`
-// directly (the taker) but no asset legs of their own — those are resolved
-// from the order's Placed event via ONE batched by-orderId lookup (mirrors
-// getDcaScheduleLinks). Unlike an AMM swap (pool-internal Withdrawn/Deposited,
-// no user-to-user Transfer), a Fill settles genuinely peer-to-peer — real
-// Tokens.Transfer/Currencies.Transferred legs between taker and maker — so
-// extrinsic-scoped builders below also suppress those legs from the Transfers
-// category, else every fill would double as spurious transfer rows.
-const OTC_EVENT_NAMES = ['OTC.Placed', 'OTC.Cancelled', 'OTC.Filled', 'OTC.PartiallyFilled']
-// The two that settle an order, and so move both parties' assets in one extrinsic.
-export const OTC_FILL_EVENTS = ['OTC.Filled', 'OTC.PartiallyFilled'] as const
-const OTC_ACTION_EVENTS: Record<string, string[]> = {
-  Place: ['OTC.Placed'],
-  Pull: ['OTC.Cancelled'],
-  Fill: ['OTC.Filled', 'OTC.PartiallyFilled'],
-}
-// OTC folded under the Trade chip/type: the UI's action dropdown sends the
-// hyphenated `otc-place`/`otc-pull`/`otc-fill` values (alongside trade's own
-// `swap`/`dca`) for both `type=trade` and (API nicety) `type=otc`. Resolve
-// either form down to the raw otcAction label used by OTC_ACTION_EVENTS/row.otcAction.
-const OTC_ACTION_ALIASES: Record<string, string> = { 'otc-place': 'Place', 'otc-pull': 'Pull', 'otc-fill': 'Fill' }
-function resolveOtcAction(action?: string): string | undefined {
-  if (!action) return undefined
-  return OTC_ACTION_ALIASES[action] ?? action
-}
-export interface OtcPlacedLeg { assetIn: number; assetOut: number; amountIn: string; amountOut: string; partiallyFillable: boolean; maker: string | null }
-
-// The order's MAKER — the account that owns it. No OTC event names them: Placed
-// and Cancelled carry no account at all, and Filled/PartiallyFilled name only
-// the taker. What does name them is the reserve the pallet takes at placement:
-// the maker's `assetOut` is reserved immediately before the Placed event in the
-// same block, for exactly `amountOut`.
-//
-// That identity beats the placing extrinsic's signer on both ends. A signer is
-// missing entirely for the 33 governance-dispatched placements (no extrinsic at
-// all, so no signer to fall back to), and it is the wrong account for a
-// multisig placement, where the order belongs to the multisig and the signer is
-// whichever member submitted the final approval. Measured over every order on
-// chain: 1,560 of 1,560 resolve, agreeing with the signer wherever one exists
-// except those two cases.
-const OTC_RESERVE_EVENTS_SQL = `'Tokens.Reserved','Balances.Reserved'`
-// Balances.Reserved is HDX and carries no currencyId of its own.
-const OTC_RESERVE_ASSET_SQL = `if(event_name = 'Balances.Reserved', 0, toUInt32(JSONExtractInt(args_json,'currencyId')))`
-
-// Batched orderId → Placed-event legs and maker, shared by Placed, Cancelled
-// (Pull) and Filled/PartiallyFilled (Fill) row construction — none of them
-// carries asset identity or the order's owner itself, only the order's original
-// Placed event and the reserve beside it do. Missing ids (e.g. a Fill whose
-// Placed row predates the indexed window) are simply absent from the returned
-// map; callers render the row without legs.
-// An order's legs and its owner are fixed the moment it is placed, so a
-// resolved id is memoized below the ingested head exactly like voteCallRowsForTuples'
-// tuples. That matters because the reserve join reads raw_events across every
-// placing block — 58ms for one asset page's worth of orders against ~1ms for the
-// legs alone — and a deep filtered page re-asks for the same ids on every page
-// it walks. Only ids that RESOLVED are kept: an id with no Placed row may simply
-// not be indexed yet.
-const OTC_PLACED_MEMO_MAX = 20_000
-const OTC_PLACED_FINALITY_MARGIN_BLOCKS = 600
-const otcPlacedMemo = new Map<string, OtcPlacedLeg>()
-
-async function getOtcPlacedLegsByOrderId(orderIds: Array<string | number>): Promise<Map<string, OtcPlacedLeg>> {
-  const out = new Map<string, OtcPlacedLeg>()
-  const misses: Array<string | number> = []
-  for (const id of new Set(orderIds.map(String))) {
-    const hit = otcPlacedMemo.get(id)
-    if (hit) out.set(id, hit)
-    else misses.push(id)
-  }
-  const list = sqlUIntList(misses)
-  if (!list) return out
-  // The reserve side is read from raw_events bounded to the placing BLOCKS —
-  // that table is ordered by block height, so this is a primary-key read of a
-  // handful of blocks. (The account-scoped direction below inverts it onto
-  // account_activity_v3 instead, for the same reason in reverse.)
-  const res = await client.query({
-    query: `WITH placed AS (
-              SELECT toUInt32(JSONExtractUInt(args_json,'orderId')) AS order_id, block_height, event_index,
-                     toUInt32(JSONExtractInt(args_json,'assetIn')) AS asset_in,
-                     toUInt32(JSONExtractInt(args_json,'assetOut')) AS asset_out,
-                     JSONExtractString(args_json,'amountIn') AS amount_in,
-                     JSONExtractString(args_json,'amountOut') AS amount_out,
-                     JSONExtractBool(args_json,'partiallyFillable') AS partially_fillable
-              FROM ${otcActivityTable()}
-              WHERE event_name = 'OTC.Placed' AND JSONExtractUInt(args_json,'orderId') IN (${list})
-            )
-            SELECT p.order_id AS order_id, any(p.block_height) AS placed_block,
-                   any(p.asset_in) AS asset_in, any(p.asset_out) AS asset_out,
-                   any(p.amount_in) AS amount_in, any(p.amount_out) AS amount_out,
-                   any(p.partially_fillable) AS partially_fillable,
-                   argMax(r.who, r.event_index) AS maker
-            FROM placed AS p
-            LEFT JOIN (
-              SELECT block_height, event_index, ${OTC_RESERVE_ASSET_SQL} AS asset_id,
-                     JSONExtractString(args_json,'who') AS who, JSONExtractString(args_json,'amount') AS amount
-              FROM price_data.raw_events
-              WHERE event_name IN (${OTC_RESERVE_EVENTS_SQL}) AND block_height IN (SELECT block_height FROM placed)
-            ) AS r
-              ON r.block_height = p.block_height AND r.event_index < p.event_index
-             AND r.asset_id = p.asset_out AND r.amount = p.amount_out
-            GROUP BY p.order_id`,
-    format: 'JSONEachRow',
-  })
-  type Row = { order_id: number; placed_block: number; asset_in: number; asset_out: number; amount_in: string; amount_out: string; partially_fillable: number | boolean; maker: string }
-  const rows = await res.json<Row>()
-  const memoFloor = rows.length ? (await indexedRawHead()) - OTC_PLACED_FINALITY_MARGIN_BLOCKS : 0
-  for (const r of rows) {
-    const leg: OtcPlacedLeg = {
-      assetIn: r.asset_in, assetOut: r.asset_out,
-      amountIn: r.amount_in, amountOut: r.amount_out,
-      partiallyFillable: r.partially_fillable === true || r.partially_fillable === 1,
-      maker: r.maker && ACCOUNT_RE.test(r.maker) ? r.maker : null,
-    }
-    out.set(String(r.order_id), leg)
-    if (r.placed_block > memoFloor) continue
-    if (otcPlacedMemo.size >= OTC_PLACED_MEMO_MAX) {
-      let drop = OTC_PLACED_MEMO_MAX / 10
-      for (const old of otcPlacedMemo.keys()) { otcPlacedMemo.delete(old); if (--drop <= 0) break }
-    }
-    otcPlacedMemo.set(String(r.order_id), leg)
-  }
-  return out
-}
-
-// The orders an account MAKES, found from the account's own side of the same
-// reserve. account_activity_v3 is ordered by account, so this is an
-// account-first read: the maker's reserve rows come back by primary key and the
-// tiny OTC model is matched against them, rather than scanning every placement
-// on chain to ask who owns it.
-//
-// This is what puts a fill on the maker's feed at all. A fill names only the
-// taker, and its settlement legs are suppressed as plumbing on BOTH sides
-// (otcSettlementExtrinsics), so without this the maker's page showed nothing
-// whatsoever for an order of theirs being filled.
-async function otcOrderIdsForAccounts(accounts: string[]): Promise<number[]> {
-  const list = sqlAccountList(accounts)
-  if (list === "''") return []
-  const res = await client.query({
-    query: `SELECT DISTINCT toUInt32(JSONExtractUInt(p.args_json,'orderId')) AS order_id
-            FROM ${otcActivityTable('p')}
-            INNER JOIN (
-              SELECT block_height, event_index, asset_id, amount
-              FROM price_data.account_activity_v3
-              WHERE account IN (${list}) AND event_name IN (${OTC_RESERVE_EVENTS_SQL})
-            ) AS r ON r.block_height = p.block_height
-            WHERE p.event_name = 'OTC.Placed' AND r.event_index < p.event_index
-              AND r.asset_id = toUInt32(JSONExtractInt(p.args_json,'assetOut'))
-              AND toString(r.amount) = JSONExtractString(p.args_json,'amountOut')`,
-    format: 'JSONEachRow',
-  })
-  return (await res.json<{ order_id: number }>()).map(r => r.order_id)
-}
-
-// Per-event → ActivityRow construction shared by every OTC surface (main feed,
-// getExtrinsicActivity, getBlockHookActivity, account/asset activities — mirrors
-// stakingRowFromEvent's factoring). `signerFallback` supplies `who` for
-// Place/Cancelled (no `who` arg on those events, and no signer for the rare
-// hook-context rows); Fill/PartiallyFilled read `who` from args instead.
-export function otcRowFromEvent(
-  e: { block_height: number; ts: string; event_index: number; extrinsic_index: number | null; event_name: string; args_json: string },
-  prices: Map<number, PriceInfo>,
-  placedById: Map<string, OtcPlacedLeg>,
-  opts: { signerFallback?: string | null } = {},
-): ActivityRow | null {
-  const args = (safeJson(e.args_json) ?? {}) as Record<string, unknown>
-  const orderId = argInt(args, 'orderId')
-  const base = {
-    type: 'otc' as const, blockHeight: e.block_height, timestamp: e.ts, eventIndex: e.event_index, extrinsicIndex: e.extrinsic_index,
-    to: null, asset: null, amount: null, otcOrderId: orderId,
-    linkBlock: e.block_height, linkIndex: e.extrinsic_index,
-  }
-  const signerWho = opts.signerFallback && ACCOUNT_RE.test(opts.signerFallback) ? opts.signerFallback : null
-  // The order's owner outranks the signer as the actor on a Place/Pull row: it
-  // is the account whose funds the order holds, it exists for a placement no
-  // extrinsic signed, and for a multisig placement the signer is a member
-  // rather than the account the order belongs to.
-  const orderMaker = placedById.get(String(orderId))?.maker ?? null
-  const makerOrSigner = orderMaker ?? signerWho
-  const makerWho = makerOrSigner ? accountRef(makerOrSigner) : null
-
-  if (e.event_name === 'OTC.Placed') {
-    // Actor pays (locks) the order's assetOut and receives its assetIn —
-    // display flips the order's own perspective to the actor-pays→receives
-    // convention every other trade-like row uses.
-    const aIn = asset(argInt(args, 'assetOut'))
-    const aOut = asset(argInt(args, 'assetIn'))
-    const amountIn = argStr(args, 'amountOut')
-    const amountOut = argStr(args, 'amountIn')
-    return {
-      ...base, who: makerWho, assetIn: aIn, assetOut: aOut, amountIn, amountOut,
-      valueUsd: usdValue(prices, aOut.assetId, amountOut, aOut.decimals) ?? usdValue(prices, aIn.assetId, amountIn, aIn.decimals),
-      otcAction: 'Place', otcPartiallyFillable: args.partiallyFillable === true,
-    }
-  }
-
-  if (e.event_name === 'OTC.Cancelled') {
-    const placed = placedById.get(String(orderId))
-    // Same maker-perspective flip as Place (this is the order being pulled).
-    const aIn = placed ? asset(placed.assetOut) : null
-    const aOut = placed ? asset(placed.assetIn) : null
-    const amountIn = placed ? placed.amountOut : null
-    const amountOut = placed ? placed.amountIn : null
-    return {
-      ...base, who: makerWho, assetIn: aIn, assetOut: aOut, amountIn, amountOut,
-      valueUsd: aOut && amountOut != null
-        ? (usdValue(prices, aOut.assetId, amountOut, aOut.decimals) ?? (aIn && amountIn != null ? usdValue(prices, aIn.assetId, amountIn, aIn.decimals) : null))
-        : null,
-      otcAction: 'Pull',
-    }
-  }
-
-  // OTC.Filled / OTC.PartiallyFilled — asset identity comes from the order
-  // (assetIn/assetOut have no field on these events); amounts are the taker's
-  // own amountIn/amountOut, straight from the event (not flipped).
-  // A fill settles between two accounts, so it names both: `who` is the taker
-  // who called it, `to` the maker whose order it consumed — the same
-  // actor→counterparty shape a transfer row uses, and what lets the maker's own
-  // feed carry the fill at all.
-  const placed = placedById.get(String(orderId))
-  const who = argStr(args, 'who')
-  const aIn = placed ? asset(placed.assetIn) : null
-  const aOut = placed ? asset(placed.assetOut) : null
-  const amountIn = argStr(args, 'amountIn')
-  const amountOut = argStr(args, 'amountOut')
-  return {
-    ...base, to: orderMaker ? accountRef(orderMaker) : null,
-    who: who && ACCOUNT_RE.test(who) ? accountRef(who) : null, assetIn: aIn, assetOut: aOut, amountIn, amountOut,
-    valueUsd: aOut ? (usdValue(prices, aOut.assetId, amountOut, aOut.decimals) ?? (aIn ? usdValue(prices, aIn.assetId, amountIn, aIn.decimals) : null)) : null,
-    otcAction: 'Fill', otcPartial: e.event_name === 'OTC.PartiallyFilled', otcFee: argStr(args, 'fee'),
-  }
-}
-
-interface RawOtcActivityEvent { block_height: number; ts: string; event_index: number; extrinsic_index: number | null; event_name: string; args_json: string }
-// Windowed OTC feed — mirrors getRecentMoneyMarket/getRecentStaking's shape
-// (action→event-name filter, feed-window scan, batched enrichment, post-filter).
-async function getRecentOtc(limit: number, from?: string, to?: string, offset = 0, filters: ValueListFilters = {}, action?: string, accounts?: string[]): Promise<ActivityRow[]> {
-  const tw = timeWindow(from, to)
-  const accountSet = accounts?.length ? new Set(accounts.map(account => account.toLowerCase())) : null
-  return cached(`explorer:otc-activity:${await liveHeadTag(Boolean(tw), datedWindowIsClosed(to))}:${limit}:${offset}:${from ?? ''}:${to ?? ''}:${filterKey(filters)}:${action ?? ''}:${accounts?.join(',') ?? ''}`, tw ? 30000 : LIVE_CACHE_MS, async () => {
-    const prices = await ensurePrices()
-    const tokenIds = assetIdsForToken(filters.token)
-    const postFilter = tokenIds != null || accountSet != null || hasRowLevelFilter(filters)
-    const want = offset + limit
-    const resolvedAction = resolveOtcAction(action)
-    const names = (resolvedAction && OTC_ACTION_EVENTS[resolvedAction] ? OTC_ACTION_EVENTS[resolvedAction] : OTC_EVENT_NAMES).map(n => `'${n}'`).join(',')
-    // Every order this account owns, resolved once for the whole feed rather
-    // than per page: an account makes a handful of orders over its life, and
-    // the set is what the third reference arm below is built from.
-    const makerOrderIds = accountSet ? await otcOrderIdsForAccounts(accounts!) : []
-    const fetchPage = async (bound: string, pageLimit: number, pageOffset: number): Promise<ActivityRow[]> => {
-      // An account OTC feed used to start at every OTC event, then resolve
-      // signers and discard almost all rows in JS. Filled events expose `who`
-      // and are already in account_activity_v3; Placed/Cancelled are owned by the
-      // signing extrinsic. Combine those account-first reference sets before
-      // reading raw event payloads, preserving the exact later row builder.
-      // The OTC-event side is bounded exactly like the page it feeds: the read
-      // below takes the newest `pageOffset + pageLimit` OTC rows, so an event
-      // older than the account's (pageOffset + pageLimit)-th newest OTC
-      // reference can never appear on it. The signer side stays unbounded.
-      //
-      // The third arm is the account's own ORDERS. Neither of the first two
-      // reaches a maker: a fill names only the taker, and an order placed by
-      // governance or by a multisig was signed by nobody or by a member. It is
-      // an id list rather than a join because the account's order set is small
-      // and already in hand.
-      const makerRef = makerOrderIds.length ? ` OR toUInt32(JSONExtractUInt(e.args_json,'orderId')) IN (${sqlUIntList(makerOrderIds)})` : ''
-      const accountRefs = accountSet
-        ? `AND ((e.block_height, e.event_index) IN (
-              ${accountActivityRefsQuery(accounts!, `event_name IN (${names})`, bound, pageLimit, pageOffset)}
-            ) OR (e.block_height, e.extrinsic_index) IN (
-              SELECT block_height, extrinsic_index FROM price_data.raw_extrinsics
-              WHERE signer IN (${sqlAccountList(accounts!)}) OR effective_signer IN (${sqlAccountList(accounts!)})
-            )${makerRef})`
-        : ''
-      const res = await client.query({
-        query: `SELECT e.block_height, toString(e.block_timestamp) AS ts, e.event_index, e.extrinsic_index, e.event_name, e.args_json
-                FROM (
-                  SELECT block_height, block_timestamp, event_index, extrinsic_index, event_name, args_json
-                  FROM ${otcActivityTable()}
-                  WHERE ${bound}
-                ) AS e
-                WHERE e.event_name IN (${names})
-                ${accountRefs}
-                ORDER BY e.block_height DESC, e.event_index DESC LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
-        query_params: { limit: pageLimit, offset: pageOffset }, format: 'JSONEachRow',
-      })
-      const rawOtc = await res.json<RawOtcActivityEvent>()
-      if (!rawOtc.length) return []
-      // Placed rows are looked up too: they carry their own legs, but not the
-      // maker the same query resolves.
-      const lookupIds = rawOtc.map(r => argInt((safeJson(r.args_json) ?? {}) as Record<string, unknown>, 'orderId'))
-      const [placedById, signers] = await Promise.all([
-        getOtcPlacedLegsByOrderId(lookupIds),
-        actorsFor(rawOtc.filter(r => r.event_name === 'OTC.Placed' || r.event_name === 'OTC.Cancelled').map(r => [r.block_height, r.extrinsic_index] as [number, number | null])),
-      ])
-      const out: ActivityRow[] = []
-      for (const r of rawOtc) {
-        const signer = r.extrinsic_index != null ? signers.get(`${r.block_height}:${r.extrinsic_index}`) ?? null : null
-        const row = otcRowFromEvent(r, prices, placedById, { signerFallback: signer })
-        if (row) out.push(row)
-      }
-      await applyHistoricalUsd(out, activityHistPick)
-      return out
-    }
-    if (postFilter) {
-      // Token/min need the order's Placed legs (joined after fetch) — walk full
-      // history in pages until enough filtered rows exist.
-      // Either END of the row belongs to the account: a fill's `who` is the
-      // taker and its `to` the maker, and the maker's feed is the one this row
-      // was missing from.
-      const involves = (r: ActivityRow): boolean => accountSet == null
-        || (r.who != null && accountSet.has(r.who.accountId.toLowerCase()))
-        || (r.to != null && accountSet.has(r.to.accountId.toLowerCase()))
-      const deep = await fetchFilteredDeep(tw, want, (bound, pageLimit) => fetchPage(bound, pageLimit, 0),
-        r => activityRowMatchesFilters(r, filters) && involves(r),
-        r => r.blockHeight, r => r.eventIndex ?? -1, r => `${r.blockHeight}:${r.eventIndex}`)
-      return deep.slice(offset, offset + limit)
-    }
-    return withFeedWindow(tw, limit, offset + limit, (bound) => fetchPage(bound, limit, offset))
-  })
 }
 
 export interface VoteRow {
@@ -12280,8 +6604,8 @@ function activityExtrinsicSet(rows: ActivityRow[]): Set<string> {
 //
 // Exported because planExactActivity mirrors this same split when it counts a
 // transfer feed: two copies of the rule is how a total and its page drift apart.
-export function hookActivityOwnsBlockTransfers(row: ActivityRow): boolean {
-  return !(row.type === 'otc' && row.otcAction !== 'Fill')
+export function hookActivityOwnsBlockTransfers(_row: ActivityRow): boolean {
+  return true
 }
 
 export function suppressSubordinateActivityRows<T extends ActivityRow>(rows: T[]): T[] {
@@ -12389,10 +6713,7 @@ async function suppressTransferCandidates(transfers: TransferRow[]): Promise<Tra
   const semanticNames = [...new Set([
     ...SWAP_EVENTS,
     ...LIQUIDITY_EVENTS,
-    ...STAKING_EVENT_NAMES,
     ...VOTE_EVENTS,
-    'DCA.TradeExecuted', 'DCA.TradeFailed', 'Referrals.Claimed',
-    ...OTC_EVENT_NAMES,
   ])]
   const semanticEvents: SemanticEvent[] = []
   const signedSemanticChunks = await mapChunksConcurrently(signedKeys, 5_000, CHUNK_QUERY_CONCURRENCY, async chunk => {
@@ -12431,48 +6752,11 @@ async function suppressTransferCandidates(transfers: TransferRow[]): Promise<Tra
   for (const rows of hookSemanticChunks) semanticEvents.push(...rows)
   for (const event of semanticEvents) {
     const args = (safeJson(event.args_json) ?? {}) as Record<string, unknown>
-    // Staking builders reject empty/zero amount events; do not let one own a
-    // transfer that would otherwise remain visible.
-    if (STAKING_EVENT_NAMES.includes(event.event_name)) {
-      const staking = stakingAmountAndAsset(event.event_name, args)
-      if (!staking?.amount || staking.amount === '0') continue
-    }
-    if (event.event_name === 'Referrals.Claimed') {
-      const amount = BigInt(argStr(args, 'referrerRewards') || '0') + BigInt(argStr(args, 'tradeRewards') || '0')
-      if (amount === 0n) continue
-    }
     if (event.extrinsic_index != null) {
       semanticExtrinsics.add(`${event.block_height}:${event.extrinsic_index}`)
       continue
     }
     addHookAccount(event.block_height, argStr(args, 'who') || argStr(args, 'voter'))
-  }
-
-  // Money-market logs do not store the substrate extrinsic directly. Resolve
-  // only logs in candidate blocks, then apply the same configured-pool and
-  // module-user conditions as getRecentMoneyMarket.
-  const candidateBlocks = [...new Set(transfers.map(row => row.blockHeight))]
-  type SemanticMm = { block_height: number; event_index: number; account_id: string | null }
-  const mmRows: SemanticMm[] = []
-  const mmChunks = await mapChunksConcurrently(candidateBlocks, 5_000, CHUNK_QUERY_CONCURRENCY, async chunk => {
-    const blocks = chunk.join(',')
-    const result = await client.query({
-      query: `SELECT block_height, event_index, account_id
-              FROM price_data.raw_money_market_events
-              WHERE block_height IN (${blocks})
-                AND event_name IN ('Supply','Borrow','Repay','Withdraw','LiquidationCall')
-                AND lower(ifNull(pool_address, '')) IN (${configuredMmPoolsSql()})
-                AND user_address NOT LIKE '0x6d6f646c%'`,
-      format: 'JSONEachRow',
-    })
-    return result.json<SemanticMm>()
-  })
-  for (const rows of mmChunks) mmRows.push(...rows)
-  const mmExtrinsics = await extrinsicIndexFor(mmRows.map(row => [row.block_height, row.event_index] as [number, number]))
-  for (const row of mmRows) {
-    const index = mmExtrinsics.get(`${row.block_height}:${row.event_index}`)
-    if (index != null) semanticExtrinsics.add(`${row.block_height}:${index}`)
-    else addHookAccount(row.block_height, row.account_id)
   }
 
   // XCM ownership is based on successfully decoded economic rows, not merely
@@ -12509,46 +6793,6 @@ async function suppressTransferCandidates(transfers: TransferRow[]): Promise<Tra
     }
   }
 
-  // An NTT send or redeem extrinsic owns its transfer legs the way a swap or OTC fill
-  // does — the send/arrival renders as a cross-chain row (getRecentNttOut/In), so a
-  // transfer beside it is that row's plumbing. Sends are evidenced by the minter-leg
-  // itself (a primary-key read of the minters' own account-first rows), redeems by the
-  // manager's TransferRedeemed log.
-  const nttMinters = await nttMinterAccounts()
-  if (nttMinters.size && signedKeys.length) {
-    const pairsSql = [...nttMinters].map(([assetId, account]) => `(${assetId},'${account}')`).join(',')
-    const minterList = [...nttMinters.values()].map(a => `'${a}'`).join(',')
-    const managerList = [...nttMinters.values()].map(a => `'${nttMinterH160(a)}'`).join(',')
-    const nttChunks = await mapChunksConcurrently(signedKeys, 5_000, CHUNK_QUERY_CONCURRENCY, async chunk => {
-      const tuples = chunk.map(key => { const [height, index] = key.split(':'); return `(${height},${index})` }).join(',')
-      const [sendRes, redeemRes] = await Promise.all([
-        client.query({
-          query: `SELECT DISTINCT block_height, extrinsic_index
-                  FROM price_data.account_transfer_activity
-                  WHERE account IN (${minterList})
-                    AND (block_height, extrinsic_index) IN (${tuples})
-                    AND (asset_id, lower(to_account)) IN (${pairsSql})`,
-          format: 'JSONEachRow',
-        }),
-        client.query({
-          query: `SELECT DISTINCT block_height, extrinsic_index
-                  FROM price_data.raw_evm_logs
-                  WHERE (block_height, extrinsic_index) IN (${tuples})
-                    AND topic0 = '${NTT_TRANSFER_REDEEMED_TOPIC}'
-                    AND lower(contract_address) IN (${managerList})`,
-          format: 'JSONEachRow',
-        }),
-      ])
-      return [...await sendRes.json<{ block_height: number; extrinsic_index: number | null }>(),
-        ...await redeemRes.json<{ block_height: number; extrinsic_index: number | null }>()]
-    })
-    for (const rows of nttChunks) {
-      for (const row of rows) {
-        if (row.extrinsic_index != null) semanticExtrinsics.add(`${row.block_height}:${row.extrinsic_index}`)
-      }
-    }
-  }
-
   // Incentive claims own their reward-pot transfer even though the semantic
   // evidence lives in the compact call model rather than an event.
   const incentiveKeys = transfers
@@ -12577,224 +6821,12 @@ async function suppressTransferCandidates(transfers: TransferRow[]): Promise<Tra
   })
 }
 
-// Reward claims whose payout is otherwise indistinguishable from an ordinary
-// transfer.  The raw event tables already contain enough historical evidence,
-// so this works immediately without an indexer backfill:
-//   - Referrals.Claimed owns its HDX payout;
-//   - the incentives controller claim call owns each reward-asset payout.
-// `only` restricts the window to one claim source. The two sources are merged
-// and TRUNCATED to `limit`, so a caller that keeps just one kind must not fetch
-// a mixed window: filtering it afterwards under-fills the page, and a pager with
-// no exact total reads a short page as the end of the list (ClaimReferral page 1
-// returned 22 of 25 while 10k claims sat deeper).
-async function getRecentRewardClaims(limit: number, from?: string, to?: string, accounts?: string[], assetIds?: number[], height?: number, extrinsicIndex?: number, filters: ValueListFilters = {}, only?: 'referral' | 'incentive'): Promise<ActivityRow[]> {
-  if (assetIds != null && !assetIds.length) return []
-  const prices = await ensurePrices()
-  const tw = timeWindow(from, to)
-  const rawBound = height != null
-    ? `block_height = {height:UInt32}${extrinsicIndex != null ? ' AND extrinsic_index = {extrinsicIndex:UInt32}' : ''}`
-    : (tw ?? '1')
-  const accountList = accounts?.length ? sqlAccountList(accounts) : null
-  const accountFilter = accountList ? `AND JSONExtractString(e.args_json,'who') IN (${accountList})` : ''
-  const referralAssetFilter = assetIds != null && !assetIds.includes(0) ? 'AND 0' : ''
-  const referralAmountExpr = `toString(toUInt256OrZero(JSONExtractString(e.args_json,'referrerRewards')) + toUInt256OrZero(JSONExtractString(e.args_json,'tradeRewards')))`
-  const referralValueFilter = eventValueFilterSql('0', referralAmountExpr, 'e.block_timestamp', filters, prices, 'referral_claim_price')
-  const fetchReferralPage = async (bound: string, pageLimit: number): Promise<ActivityRow[]> => {
-    const res = await client.query({
-      // A claim's displayed amount is the SAME 256-bit sum the min-value predicate is
-      // pushed down as, so it is stated once: re-adding it in TypeScript from a shipped
-      // payload is how a page comes to filter on a value its rows do not show.
-      query: `SELECT e.block_height, toString(e.block_timestamp) AS ts, e.event_index, e.extrinsic_index,
-                JSONExtractString(e.args_json,'who') AS who,
-                ${referralAmountExpr} AS amount
-              FROM (
-                SELECT block_height, block_timestamp, event_index, extrinsic_index, event_name, args_json
-                FROM price_data.referral_claim_activity FINAL
-                WHERE ${bound}
-              ) AS e
-              ${referralValueFilter.joinSql}
-              WHERE e.event_name = 'Referrals.Claimed'
-                ${accountFilter} ${referralAssetFilter} ${referralValueFilter.predicateSql}
-              ORDER BY e.block_height DESC, e.event_index DESC LIMIT {limit:UInt32}`,
-      query_params: { limit: pageLimit, height: height ?? 0, extrinsicIndex: extrinsicIndex ?? 0 }, format: 'JSONEachRow',
-    })
-    const rows: ActivityRow[] = []
-    for (const r of await res.json<{ block_height: number; ts: string; event_index: number; extrinsic_index: number | null; who: string; amount: string }>()) {
-      const a = asset(0)
-      rows.push({
-        type: 'liquidity', blockHeight: r.block_height, timestamp: r.ts, eventIndex: r.event_index, extrinsicIndex: r.extrinsic_index,
-        who: r.who ? accountRef(r.who) : null, to: null, asset: a, assetIn: null, assetOut: null,
-        amount: r.amount, amountIn: null, amountOut: null, valueUsd: usdValue(prices, a.assetId, r.amount, a.decimals),
-        // Its own action, not the LM 'Claim': a referral payout claims trade-referral
-        // rewards, not a liquidity position's farm rewards, and the feed filter
-        // and badge both name that difference.
-        liqAction: 'ClaimReferral', linkBlock: r.block_height, linkIndex: r.extrinsic_index,
-      })
-    }
-    return rows
-  }
-  // The value filter is enforced in the SQL above; identity/viewer-tag filters are
-  // decided on the BUILT row (hasRowLevelFilter), so under them the referral source
-  // walks deeper until the page fills. Filtering one fixed window instead under-fills
-  // a saturated page, which the action path's window guard turns into a 503 telling
-  // the reader to narrow the filter they just set.
-  const out: ActivityRow[] = only === 'incentive'
-    ? []
-    : filters.identity != null
-      ? (await fetchFilteredDeep(height != null ? rawBound : tw, limit, fetchReferralPage,
-          r => activityRowMatchesFilters(r, { identity: filters.identity, viewerTagged: filters.viewerTagged }),
-          r => r.blockHeight, r => r.eventIndex ?? -1, r => `${r.blockHeight}:${r.eventIndex}`)).slice(0, limit)
-      : await fetchReferralPage(rawBound, limit)
-
-  const transferAssetExpr = `if(e.event_name = 'Balances.Transfer', 0, ${currencyIdSql('e.args_json')})`
-  const incentiveAccountFilter = accountList ? `AND JSONExtractString(e.args_json,'to') IN (${accountList})` : ''
-  const incentiveAssetFilter = assetIds != null ? `AND ${transferAssetExpr} IN (${assetIds.join(',')})` : ''
-  const incentiveValueFilter = eventValueFilterSql(transferAssetExpr, `JSONExtractString(e.args_json,'amount')`, 'e.block_timestamp', filters, prices, 'incentive_claim_price')
-  type IncentiveTransfer = RawTransferEventRow & { call_address: string }
-  const fetchIncentiveCandidates = async (candidateBound: string, pageLimit: number): Promise<IncentiveTransfer[]> => {
-    const res = await client.query({
-      query: `SELECT e.block_height, toString(e.block_timestamp) AS ts, e.event_index, e.extrinsic_index, e.event_name, ifNull(e.call_address,'') AS call_address,
-                JSONExtractString(e.args_json,'from') AS from_acc,
-                JSONExtractString(e.args_json,'to') AS to_acc,
-                JSONExtractString(e.args_json,'amount') AS amount,
-                ${transferAssetExpr} AS asset_id
-              FROM (
-                SELECT block_height, block_timestamp, event_index, extrinsic_index, event_name, call_address, args_json
-                FROM price_data.incentive_reward_transfers FINAL
-                WHERE ${candidateBound}
-              ) AS e
-              ${incentiveValueFilter.joinSql}
-              WHERE e.event_name IN ('Balances.Transfer','Tokens.Transfer','Currencies.Transferred')
-                AND JSONExtractString(e.args_json,'from') = '${INCENTIVES_REWARD_POT}'
-                ${incentiveAccountFilter} ${incentiveAssetFilter} ${incentiveValueFilter.predicateSql}
-              ORDER BY e.block_height DESC, e.event_index DESC LIMIT {candidateLimit:UInt32}`,
-      query_params: { candidateLimit: pageLimit, height: height ?? 0, extrinsicIndex: extrinsicIndex ?? 0 }, format: 'JSONEachRow',
-    })
-    return res.json<IncentiveTransfer>()
-  }
-
-  // Search the compressed call payload only after the reward-pot transfers have
-  // supplied exact primary-key tuples. Sparse/old claims keep full-history
-  // semantics by walking candidate pages rather than scanning raw_calls at once.
-  const confirmIncentiveCandidates = async (candidates: IncentiveTransfer[]): Promise<IncentiveTransfer[]> => {
-    const candidateTuples = [...new Set(candidates
-      .filter(r => r.extrinsic_index != null)
-      .map(r => `(${r.block_height},${r.extrinsic_index},'${r.call_address.replaceAll("'", "''")}')`))]
-    const confirmedCalls = new Set<string>()
-    const callChunks = await mapChunksConcurrently(candidateTuples, 5_000, CHUNK_QUERY_CONCURRENCY, async chunk => {
-      const callRes = await client.query({
-        query: `SELECT block_height, extrinsic_index, call_address
-                FROM price_data.incentive_claim_calls FINAL
-                PREWHERE (block_height, ifNull(extrinsic_index, 4294967295), call_address) IN (${chunk.join(',')})`,
-        format: 'JSONEachRow',
-      })
-      return callRes.json<{ block_height: number; extrinsic_index: number; call_address: string }>()
-    })
-    for (const rows of callChunks) {
-      for (const c of rows) confirmedCalls.add(`${c.block_height}:${c.extrinsic_index}:${c.call_address}`)
-    }
-    return dedupeTransferEvents(candidates.filter(r => r.extrinsic_index != null && confirmedCalls.has(`${r.block_height}:${r.extrinsic_index}:${r.call_address}`)))
-  }
-
-  let pageState: { scanned: number; cursor: { blockHeight: number; eventIndex: number } | null } = { scanned: 0, cursor: null }
-  const confirmed = only === 'referral' ? [] : await fetchFilteredDeep(height != null ? rawBound : tw, limit, async (candidateBound, pageLimit) => {
-    const candidates = await fetchIncentiveCandidates(candidateBound, pageLimit)
-    const last = candidates.at(-1)
-    pageState = {
-      scanned: candidates.length,
-      cursor: last ? { blockHeight: last.block_height, eventIndex: last.event_index } : null,
-    }
-    return confirmIncentiveCandidates(candidates)
-  }, () => true, r => r.block_height, r => r.event_index,
-  r => `${r.block_height}:${r.event_index}`, { pageState: () => pageState })
-  const rawIncentives = confirmed.slice(0, limit)
-  for (const r of rawIncentives) {
-    if (!r.to_acc || !r.amount) continue
-    const a = asset(r.asset_id)
-    out.push({
-      type: 'mm', blockHeight: r.block_height, timestamp: r.ts, eventIndex: r.event_index, extrinsicIndex: r.extrinsic_index,
-      who: accountRef(r.to_acc), to: null, asset: a, assetIn: null, assetOut: null,
-      amount: r.amount, amountIn: null, amountOut: null, valueUsd: usdValue(prices, a.assetId, r.amount, a.decimals),
-      mmAction: 'ClaimRewards', linkBlock: r.block_height, linkIndex: r.extrinsic_index,
-    })
-  }
-  return out.sort((a, b) => b.blockHeight - a.blockHeight || (b.eventIndex ?? 0) - (a.eventIndex ?? 0)).slice(0, limit)
-}
-
-// Join an execution row aliased `e` to its schedule, one schedule row per `e.id`.
-//
-// It has to be a plain LEFT JOIN over an explicitly deduplicated right side, never
-// `ANY LEFT JOIN`. `ANY` reads like the right tool here — dca_schedules replaces on
-// `id`, so an un-merged replayed DCA.Scheduled row would otherwise multiply every
-// execution it joins — but on ClickHouse 26.3 the analyzer mis-associates an ANY
-// join's output: rows come back holding their own block, event index and amounts
-// beside ANOTHER schedule's `id`. The row COUNT stays exact, so only comparing
-// identities sees it and a count-based guard never fires. It needs a left side the
-// primary key can narrow (any `block_height` predicate over dca_events'
-// `ORDER BY (event_name, block_height, …)`), and it does not appear under the
-// `block_timestamp` bounds and single-block lookups the DCA reads use today — so it
-// would surface the moment a feed is located by block instead of by time. Measured
-// over one account's 100 executions in 90 blocks: 40 rows carried another schedule's
-// id and 60 of the 90 blocks came back with the wrong row count.
-//
-// So take the replacement semantics from the side that owns them: `FINAL` over
-// dca_schedules is bounded by the table being tiny (~34k rows, `ORDER BY id`), and a
-// plain LEFT JOIN onto a right side that is 1:1 by construction can neither fan out
-// nor re-associate.
-export function dcaScheduleJoinSql(columns: string[]): string {
-  return `LEFT JOIN (SELECT id, ${columns.join(', ')} FROM price_data.dca_schedules FINAL) s ON s.id = e.id`
-}
-
-async function getRecentDcaFailures(limit: number, from?: string, to?: string, accounts?: string[], assetIds?: number[], height?: number): Promise<ActivityRow[]> {
-  if (assetIds != null && !assetIds.length) return []
-  const accountFilter = accounts?.length ? `AND e.who IN (${sqlAccountList(accounts)})` : ''
-  const assetFilter = assetIds != null
-    ? `AND (s.asset_in IN (${assetIds.join(',')}) OR s.asset_out IN (${assetIds.join(',')}))`
-    : ''
-  const bound = height != null
-    ? `e.block_height = {height:UInt32}`
-    : (timeWindow(from, to)?.replaceAll('block_timestamp', 'e.block_timestamp') ?? '1')
-  const res = await client.query({
-    query: `SELECT e.block_height, toString(e.block_timestamp) AS ts, e.event_index,
-              e.who, toString(e.id) AS id,
-              toNullable(s.asset_in) AS asset_in, toNullable(s.asset_out) AS asset_out,
-              ifNull(s.direction, '') AS direction,
-              ifNull(s.amount_per, '') AS amount_per,
-              s.block_height AS schedule_block, s.extrinsic_index AS schedule_index,
-              e.error AS error
-            FROM price_data.dca_events AS e FINAL
-            ${dcaScheduleJoinSql(['asset_in', 'asset_out', 'direction', 'amount_per', 'block_height', 'extrinsic_index'])}
-            WHERE ${bound} AND e.event_name = 'DCA.TradeFailed'
-              ${accountFilter} ${assetFilter}
-            ORDER BY e.block_height DESC, e.event_index DESC
-            LIMIT {limit:UInt32}`,
-    query_params: { limit, height: height ?? 0 }, format: 'JSONEachRow',
-  })
-  const rows = await res.json<{ block_height: number; ts: string; event_index: number; who: string; id: string; asset_in: number | null; asset_out: number | null; direction: string; amount_per: string; schedule_block: number; schedule_index: number | null; error: string }>()
-  return rows.map(r => {
-    // The failed attempt only knows the schedule's fixed per-trade leg (the
-    // sold amount for Sell orders, the bought amount for Buy orders).
-    const legs = dcaPerTradeLegs(r.direction, r.amount_per)
-    return {
-      type: 'trade' as const,
-      blockHeight: r.block_height, timestamp: r.ts, eventIndex: r.event_index, extrinsicIndex: null,
-      who: r.who && ACCOUNT_RE.test(r.who) ? accountRef(r.who) : null, to: null, asset: null,
-      assetIn: r.asset_in != null ? asset(r.asset_in) : null,
-      assetOut: r.asset_out != null ? asset(r.asset_out) : null,
-      amount: null, amountIn: legs.amountIn, amountOut: legs.amountOut, valueUsd: null,
-      dca: true, dcaStatus: 'failed' as const, dcaError: r.error || undefined,
-      dcaScheduleId: Number(r.id) || undefined,
-      linkBlock: r.schedule_block || r.block_height, linkIndex: r.schedule_index,
-    }
-  })
-}
-
 // single-assignment activity classification
 // Every on-chain activity lands in exactly ONE activity category. Precedence:
-// trades/staking/mm own their extrinsics' transfer legs (dropped from
-// Transfers); liquidity owns share-asset trade legs (routing into/out of a pool
-// share inside an add/remove is mechanics, not a trade); module-account rows
-// are protocol internals, not user activity.
+// trades own their extrinsics' transfer legs (dropped from Transfers); liquidity
+// owns share-asset trade legs (routing into/out of a pool share inside an
+// add/remove is mechanics, not a trade); module-account rows are protocol
+// internals, not user activity.
 const isShareAssetId = (id: number) => displayAssetId(id) !== id || asset(id).symbol.includes('-Pool')
 function dropShareRoutedTrades<T extends { blockHeight: number; extrinsicIndex: number | null; assetIn: AssetRef | null; assetOut: AssetRef | null }>(trades: T[], liquidityExtrinsics: Set<string>): T[] {
   return trades.filter(t => !(t.extrinsicIndex != null && liquidityExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)
@@ -12821,23 +6853,15 @@ async function liquidityExtrinsicsForShareTrades(trades: TradeRow[]): Promise<Se
   }
   return out
 }
-// 'dca' is categorized under the Trade chip (rows keep their dca flag for the badge).
-function normalizeActivityTypeKey(type: string): string { return type === 'dca' ? 'trade' : type }
-// OTC is categorized under the Trade chip: a requested `type=trade` also matches otc
-// rows (still tagged `type: 'otc'` — they keep their own badges/slugs/detail
-// pages, only the categorization/filter changes). `type=otc` still selects
-// only otc rows (kept working as an API nicety; the UI never sends it).
+function normalizeActivityTypeKey(type: string): string { return type }
 export function activityTypeMatchesFamily(rowType: ActivityRow['type'], type: string): boolean {
-  return rowType === type || (type === 'trade' && rowType === 'otc')
+  return rowType === type
 }
 // Per-category action filter (the sub-type select next to the chips).
 export function activityRowMatchesAction(r: ActivityRow, action?: string): boolean {
   if (!action) return true
   switch (r.type) {
-    case 'trade': return action === 'dca-failed' ? r.dcaStatus === 'failed' : action === 'dca' ? r.dca === true : action === 'swap' ? !r.dca : false
-    case 'otc': return r.otcAction === resolveOtcAction(action)
-    case 'mm': return r.mmAction === action
-    case 'staking': return r.stakingAction === action
+    case 'trade': return action === 'swap'
     case 'liquidity': return r.liqAction === action
     case 'vote': return (r.voteSide ?? '') === action
     case 'xcm': return (r.xcmDir ?? 'out') === action
@@ -12881,180 +6905,14 @@ export async function getRecentActivity(limit: number, from?: string, to?: strin
   }
 }
 
-// A revenue floor cannot be pushed into SQL by any activity source, so post-filtering
-// the feed means materialising every row in range to keep a handful: measured, a $1,000
-// floor either hung or tripped the read guard, because the newest 25 such extrinsics
-// reach back 18 months.
-//
-// So this filter is answered from the other end. `revenue_events` already knows which
-// extrinsics earned what, and there are very few of them, so the candidates are found
-// first and only their rows are built. Cost then follows the PAGE, not the sparsity:
-// measured 0.4-0.6s for $1, $100 and $1,000 alike, against a hang for the last.
-const REVENUE_CANDIDATE_BLOCK_SLACK = 20
-
-// How much deeper a scoped (account/tag) list reads when a revenue floor is set, so the
-// page it returns is still a full page after the floor is applied.
-const REVENUE_FLOOR_SCOPED_OVERREAD = 8
-const REVENUE_BUILD_CONCURRENCY = 6
-
-// Run at most `limit` of these at a time, preserving result order.
-async function mapWithConcurrency<T, R>(
-  items: readonly T[], limit: number, run: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const out = new Array<R>(items.length)
-  let next = 0
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      const i = next++
-      if (i >= items.length) return
-      out[i] = await run(items[i])
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
-  return out
-}
-
-// Candidate blocks, newest first. A plain aggregate with no join — joining raw_events
-// unrestricted is what cost 18s, so the block set is resolved before any join.
-async function revenueCandidateBlocks(
-  minUsd: number, want: number, from?: string, to?: string,
-): Promise<{ blocks: number[]; oldestDay: string | null; newestDay: string | null }> {
-  const bounds = [
-    from ? 'block_timestamp >= toDateTime({from:String})' : '1',
-    to ? 'block_timestamp < toDateTime({to:String}) + INTERVAL 1 DAY' : '1',
-  ].join(' AND ')
-  const res = await client.query({
-    query: `SELECT b, toString(toDate(ts)) AS d FROM (
-              SELECT block_height AS b, min(block_timestamp) AS ts FROM price_data.revenue_events
-              WHERE ${PROTOCOL_REVENUE_PREDICATE_SQL} AND ${bounds}
-              GROUP BY b HAVING sum(amount_usd) >= {min:Float64}
-              ORDER BY b DESC LIMIT {want:UInt32})
-            ORDER BY b DESC`,
-    query_params: { min: minUsd, want, ...(from ? { from } : {}), ...(to ? { to } : {}) },
-    format: 'JSONEachRow',
-  })
-  const rows = await res.json<{ b: number; d: string }>()
-  const days = rows.map(r => r.d).filter(Boolean).sort()
-  return {
-    blocks: rows.map(r => Number(r.b)),
-    oldestDay: days[0] ?? null,
-    newestDay: days[days.length - 1] ?? null,
-  }
-}
-
-// How far apart the candidates sit, in days.
-function daySpan(oldest: string, newest: string): number {
-  return Math.round((Date.parse(`${newest}T00:00:00Z`) - Date.parse(`${oldest}T00:00:00Z`)) / 86_400_000) + 1
-}
-
-// Beyond this the candidates are too scattered for the feed to walk to them, and
-// building their rows directly is the cheaper answer.
-const REVENUE_DENSE_SPAN_DAYS = 3
-
-// The extrinsics within those blocks that clear the floor. Same join as before, now
-// primary-key pruned to the block set, which is what makes it milliseconds.
-async function revenueCandidateExtrinsics(
-  blocks: readonly number[], minUsd: number,
-): Promise<{ blockHeight: number; extrinsicIndex: number | null }[]> {
-  if (!blocks.length) return []
-  const res = await client.query({
-    query: `SELECT e.block_height AS b, e.extrinsic_index AS xi
-            FROM price_data.revenue_events r
-            INNER JOIN (
-              SELECT block_height, event_index, extrinsic_index FROM price_data.raw_events
-              WHERE block_height IN ({blocks:Array(UInt32)})
-            ) AS e ON e.block_height = r.block_height AND e.event_index = r.event_index
-            WHERE r.block_height IN ({blocks:Array(UInt32)}) AND ${PROTOCOL_REVENUE_PREDICATE_SQL}
-            GROUP BY b, xi HAVING sum(r.amount_usd) >= {min:Float64}
-            ORDER BY b DESC, xi DESC`,
-    query_params: { blocks: [...blocks], min: minUsd },
-    format: 'JSONEachRow',
-  })
-  return (await res.json<{ b: number; xi: number | null }>())
-    .map(r => ({ blockHeight: Number(r.b), extrinsicIndex: r.xi == null ? null : Number(r.xi) }))
-}
-
-// Build only the candidates' own rows. An extrinsic-backed candidate comes from
-// getExtrinsicActivity; a candidate with no extrinsic is a block hook (a DCA execution,
-// a scheduler payout), whose rows only getBlockActivity can produce — so its block is
-// built once and the extrinsic-less rows taken from it.
-async function revenueFilteredActivityPage(
-  limit: number, offset: number, type: string, filters: ValueListFilters,
-  action?: string, from?: string, to?: string,
-): Promise<ActivityRow[]> {
-  const minUsd = filters.minRevenue!
-  const want = offset + limit
-  const { blocks } = await revenueCandidateBlocks(minUsd, want * 2 + REVENUE_CANDIDATE_BLOCK_SLACK, from, to)
-  const candidates = await revenueCandidateExtrinsics(blocks, minUsd)
-  if (!candidates.length) return []
-  // Only enough candidates to fill the page. They are newest-first and each paying
-  // extrinsic yields at least one row, so `want` plus slack always covers it — and the
-  // cap is what keeps the cost on the page: an extrinsic-less candidate is a block hook
-  // whose rows only the whole-block builder can produce, and building every dense-floor
-  // candidate that way cost 64s where the page needs under two.
-  const picked = candidates.slice(0, want + REVENUE_CANDIDATE_BLOCK_SLACK)
-  const hookBlocks = [...new Set(picked.filter(c => c.extrinsicIndex == null).map(c => c.blockHeight))]
-  // Each builder is several queries, so firing a whole page of them at once is what
-  // made a dense floor take a minute: ~54 in flight contended with each other and with
-  // the live feed. Bounded, the same work is under two seconds.
-  const jobs: (() => Promise<ActivityRow[]>)[] = [
-    ...picked
-      .filter(c => c.extrinsicIndex != null)
-      .map(c => () => getExtrinsicActivity(c.blockHeight, c.extrinsicIndex!, { revenue: false }).catch(() => [] as ActivityRow[])),
-    ...hookBlocks.map(height => async () => (await getBlockActivity(height, { revenue: false }).catch(() => [] as ActivityRow[]))
-      .filter(row => row.extrinsicIndex == null)),
-  ]
-  const built = await mapWithConcurrency(jobs, REVENUE_BUILD_CONCURRENCY, job => job())
-  // Once, for every row collected — not inside each builder. Per-builder attach meant a
-  // page ran ~45 revenue reads instead of two, which is where the half-minute went.
-  const collected = built.flat()
-  await applyActivityRevenue(collected)
-  const rows = collected
-    // The floor is re-applied per ROW because the candidate set is per EXTRINSIC: an
-    // extrinsic that cleared it carries every row it produced, not only the paying one.
-    .filter(row => revenueFloorPasses(row, minUsd))
-    .filter(row => activityRowMatchesFilters(row, filters) && activityRowMatchesAction(row, action))
-    .filter(row => type === 'all' || activityTypeMatchesFamily(row.type, type))
-    .sort((a, b) => b.blockHeight - a.blockHeight || (b.eventIndex ?? -1) - (a.eventIndex ?? -1))
-  return rows.slice(offset, offset + limit)
-}
-
-async function recentActivityPage(limit: number, from?: string, to?: string, offset = 0, type = 'all', filters: ValueListFilters = {}, action?: string, opts: ActivityPageOptions = {}, revenueRouteResolved = false): Promise<ActivityRow[]> {
-  const withRevenue = opts.revenue !== false
-  // A revenue floor is answered by whichever route suits where the candidates ARE.
-  // Locating them is cheap either way, and the span is what decides:
-  //
-  //  - clustered (a low floor: most extrinsics clear $1, so they are contiguous and
-  //    recent) — read the feed over their own days and filter the built rows. One feed
-  //    read beats building each candidate: at $1 a page needs ~45 candidates, and
-  //    building those was ~225 queries contending with live ingestion on the hot
-  //    partition, measured 32s against ~1.5s for the dated read.
-  //  - scattered (a high floor: the newest 25 extrinsics earning $1,000+ span 18
-  //    months) — the feed cannot walk that far, so build the candidates' rows directly.
-  //    Their blocks are old and static, and it lands in well under a second.
-  if (filters.minRevenue != null && !revenueRouteResolved) {
-    const { blocks, oldestDay, newestDay } = await revenueCandidateBlocks(
-      filters.minRevenue, (offset + limit) * 2 + REVENUE_CANDIDATE_BLOCK_SLACK, from, to)
-    if (!blocks.length) return []
-    const dense = oldestDay && newestDay && daySpan(oldestDay, newestDay) <= REVENUE_DENSE_SPAN_DAYS
-    if (dense) {
-      return recentActivityPage(limit, from ?? oldestDay!, to ?? newestDay!, offset, type, filters, action, opts, true)
-    }
-    return cached(
-      `explorer:activity-rev:${await liveFeedTag(Boolean(timeWindow(from, to)), datedWindowIsClosed(to))}:${type}:${limit}:${offset}:${from ?? ''}:${to ?? ''}:${filterKey(filters)}:${action ?? ''}`,
-      timeWindow(from, to) ? 30_000 : LIVE_CACHE_MS,
-      () => revenueFilteredActivityPage(limit, offset, type, filters, action, from, to))
-  }
+async function recentActivityPage(limit: number, from?: string, to?: string, offset = 0, type = 'all', filters: ValueListFilters = {}, action?: string, opts: ActivityPageOptions = {}): Promise<ActivityRow[]> {
   const tw = timeWindow(from, to)
   type = normalizeActivityTypeKey(type)
-  // Page 0 of the plain live feed also leads with transaction-pool rows, merged
-  // OUTSIDE the cache (see below) so a pool change costs no read.
-  const livePage0 = offset === 0 && !tw && !action
   // The forward-only flag is part of the key, not just of the build: the page a UI
   // reader cached for this same head was sliced from the shared stale window, and
   // serving it to the evaluator would hand back exactly the rows the flag exists to
   // avoid.
-  const settled = await cached(`explorer:activity:${await liveFeedTag(Boolean(tw), datedWindowIsClosed(to))}:${type}:${limit}:${offset}:${from ?? ''}:${to ?? ''}:${filterKey(filters)}:${action ?? ''}:${withRevenue ? 'rev' : 'norev'}${opts.forwardOnly ? ':fwd' : ''}`, tw ? 30000 : LIVE_CACHE_MS, async () => {
+  return cached(`explorer:activity:${await liveHeadTag(Boolean(tw), datedWindowIsClosed(to))}:${type}:${limit}:${offset}:${from ?? ''}:${to ?? ''}:${filterKey(filters)}:${action ?? ''}${opts.forwardOnly ? ':fwd' : ''}`, tw ? 30000 : LIVE_CACHE_MS, async () => {
     const { rows, locallyPaged } = await activityWindow(limit, from, to, offset, type, filters, action, opts.forwardOnly)
     // A locally paged window holds the whole filtered ordering, so this page
     // starts at `offset`; a SQL-paged read already returned the page itself.
@@ -13062,32 +6920,9 @@ async function recentActivityPage(limit: number, from?: string, to?: string, off
     // page of the same feed, and the enrichment below writes to its rows.
     const sliceOffset = locallyPaged ? offset : 0
     const page = rows.slice(sliceOffset, sliceOffset + limit).map(row => ({ ...row }))
-    await Promise.all([
-      applyHistoricalUsd(page, activityHistPick),
-      applyXcmJourneys(page),
-      ...(withRevenue ? [applyActivityRevenue(page)] : []),
-    ])
-    // Page 0 of the plain live feed leads with the BASIC unfinalized rows
-    // (pending trades and transfers); dated, deeper and action-filtered views
-    // stay finalized-only.
-    if (livePage0) {
-      const pending = await pendingActivityRows(type, filters, page[0]?.blockHeight ?? 0)
-      // These lead the feed, so they are the rows most likely to be read. They
-      // are merged after the enrichment above, so revenue has to be attached
-      // here or the newest rows on the page would always show a dash.
-      if (pending.length) {
-        if (withRevenue) await applyActivityRevenue(pending)
-        return [...pending, ...page].slice(0, limit)
-      }
-    }
+    await applyHistoricalUsd(page, activityHistPick)
     return page
   })
-  // The pool, read fresh per request: classifying a handful of already-decoded
-  // projections is in-memory work, so this stays cheap however often the pool
-  // moves (prices come from the shared, separately cached table).
-  if (!livePage0) return settled
-  const pool = (await mempoolActivityRows(type, filters)).slice(0, poolShare(limit))
-  return pool.length ? [...pool, ...settled].slice(0, limit) : settled
 }
 
 interface ActivityWindow { rows: ActivityRow[]; locallyPaged: boolean }
@@ -13189,17 +7024,9 @@ export function activityWindowPlan(
 // pages by, so a window may only be shared across offsets where it holds.
 export function activityPagesInMemory(type: string, action?: string): boolean {
   const category = normalizeActivityTypeKey(type)
-  // Failed DCA executions and the OTC actions are exact, independently pageable
-  // event families; the builder reads them at the page's own offset.
-  if (category === 'trade' && (action === 'dca-failed' || otcOnlyActivityAction(action))) return false
   if (category === 'all' || category === 'trade' || category === 'transfer') return true
   if (action) return true
-  return category === 'liquidity' || category === 'mm' || category === 'xcm'
-}
-
-function otcOnlyActivityAction(action?: string): boolean {
-  const otcAction = resolveOtcAction(action)
-  return !!otcAction && !!OTC_ACTION_EVENTS[otcAction]
+  return category === 'liquidity' || category === 'xcm'
 }
 
 // Whether a value floor is sparse enough that the classified builder skips the
@@ -13220,7 +7047,7 @@ async function buildActivityWindow(limit: number, from: string | undefined, to: 
   const classified = type === 'all' || type === 'trade' || type === 'transfer'
   // Categories assembled from multiple sources page only after merging, so
   // every source must cover the requested offset as well as the page size.
-  const locallyMerged = classified || !!action || type === 'xcm' || type === 'liquidity' || type === 'mm'
+  const locallyMerged = classified || !!action || type === 'xcm' || type === 'liquidity'
   let fetchN = locallyMerged
     ? Math.max(want * 5, limit + 50)
     : Math.max(limit * 5, limit + 50)
@@ -13231,7 +7058,7 @@ async function buildActivityWindow(limit: number, from: string | undefined, to: 
   const toTradeRow = (t: TradeRow): ActivityRow => ({
     type: 'trade', blockHeight: t.blockHeight, timestamp: t.timestamp, eventIndex: t.eventIndex, extrinsicIndex: t.extrinsicIndex,
     who: t.who, to: null, asset: null, assetIn: t.assetIn, assetOut: t.assetOut, amount: null, amountIn: t.amountIn, amountOut: t.amountOut, valueUsd: t.valueUsd,
-    dca: t.dca, linkBlock: t.linkBlock, linkIndex: t.linkIndex,
+    linkBlock: t.linkBlock, linkIndex: t.linkIndex,
   })
   // Whether the collective (Council / Technical Committee) votes join this
   // window's vote source. Decided on the caller's OWN filters, not on the
@@ -13246,25 +7073,12 @@ async function buildActivityWindow(limit: number, from: string | undefined, to: 
   const locallyPaged = activityPagesInMemory(type, action)
   let sourceSaturated = false
   let plumbingApplied = false
-  const otcOnlyAction = type === 'trade' && otcOnlyActivityAction(action)
-  if (type === 'trade' && action === 'dca-failed') {
-    // Failed executions are a self-contained indexed DCA family.  Routing this
-    // action through the shared Trade classifier also paged swaps and OTC rows
-    // that can never match it, turning a small failure page into a multi-source
-    // full-history search.
-    rows = (await getRecentDcaFailures(want, from, to, undefined, assetIdsForToken(filters.token)))
-      .slice(offset, want)
-  } else if (otcOnlyAction) {
-    // OTC actions are already exact, independently pageable event families.
-    // Sending them through the shared Trade classifier widens the unrelated
-    // swap source forever because no swap can satisfy an otc-* action.
-    rows = await getRecentOtc(limit, from, to, offset, filters, action)
-  } else if (type === 'transfer') {
+  if (type === 'transfer') {
     // Pull only transfer candidates, then resolve semantic ownership by their
     // exact identities. Widening the swap/liquidity/XCM/etc. feeds alongside
     // a sparse transfer filter made a 25-row page enumerate >100k unrelated
     // rows and could never complete under the ClickHouse result guard.
-    const deferredValueFilter = (filters.min != null && filters.unit !== 'token') || filters.minRevenue != null
+    const deferredValueFilter = filters.min != null && filters.unit !== 'token'
     const sourceFilters = deferredValueFilter ? { ...filters, min: undefined, unit: undefined } : filters
     for (;;) {
       const transfers = await getRecentTransfers(fetchN, from, to, 0, true, sourceFilters)
@@ -13273,12 +7087,6 @@ async function buildActivityWindow(limit: number, from: string | undefined, to: 
       plumbingApplied = true
       sourceSaturated = transfers.length >= fetchN
       if (deferredValueFilter && filters.unit !== 'token') await applyHistoricalUsd(rows, activityHistPick)
-      // The dense route reaches here with a narrow date range; no source can express a
-      // revenue floor in SQL, so it is decided on built rows once they carry the figure.
-      if (filters.minRevenue != null) {
-        await applyActivityRevenue(rows)
-        rows = rows.filter(r => revenueFloorPasses(r, filters.minRevenue))
-      }
       const visibleRows = rows
         .filter(row => activityRowMatchesFilters(row, filters) && activityRowMatchesAction(row, action))
         .sort((left, right) => right.blockHeight - left.blockHeight || (right.eventIndex ?? -1) - (left.eventIndex ?? -1))
@@ -13311,7 +7119,7 @@ async function buildActivityWindow(limit: number, from: string | undefined, to: 
     // before LIMIT more cheaply than repeatedly widening a sparse candidate
     // window. Other activity families still defer USD filtering until their
     // bounded candidates have been classified and valued below.
-    const deferredValueFilter = filters.min != null || filters.minRevenue != null
+    const deferredValueFilter = filters.min != null
       && filters.unit !== 'token'
       && !(type === 'trade' && filters.token)
     // A four-figure USD floor is sparse enough that the cheap unfiltered
@@ -13346,52 +7154,29 @@ async function buildActivityWindow(limit: number, from: string | undefined, to: 
       })
     }
     for (;;) {
-      const [transfers, trades, dcaFailures, rewards, liquidity, mm, otc, xcm, xcmIn, xcmOutRemote, xcmExecuted, nttOut, nttIn, staking, votes] = await Promise.all([
+      const [transfers, trades, liquidity, xcm, xcmIn, xcmOutRemote, xcmExecuted, votes] = await Promise.all([
         needsFullClassification
           ? loadClassifiedSource('transfer', (sourceLimit, sourceFrom) => getRecentTransfers(sourceLimit, sourceFrom, to, 0, true, sourceFilters))
-          : Promise.resolve([]),
+          : Promise.resolve([] as TransferRow[]),
         loadClassifiedSource('trade', (sourceLimit, sourceFrom) => getRecentTrades(sourceLimit, sourceFrom, to, 0, sourceFilters)),
-        // Failed schedules have no executed USD value and cannot survive a
-        // USD minimum. Do not widen their error-payload lookup alongside a
-        // sparse qualifying-swap walk (that used to reopen millions of raw
-        // rows for candidates guaranteed to be filtered out).
-        deferredValueFilter
-          ? Promise.resolve([])
-          : loadClassifiedSource('dca', (sourceLimit, sourceFrom) => getRecentDcaFailures(sourceLimit, sourceFrom, to, undefined, assetIdsForToken(filters.token))),
-        needsFullClassification
-          ? loadClassifiedSource('reward', (sourceLimit, sourceFrom) => getRecentRewardClaims(sourceLimit, sourceFrom, to, undefined, assetIdsForToken(filters.token)))
-          : Promise.resolve([]),
         needsFullClassification
           ? loadClassifiedSource('liquidity', (sourceLimit, sourceFrom) => getRecentLiquidity(sourceLimit, sourceFrom, to, 0, sourceFilters))
-          : Promise.resolve([]),
-        needsFullClassification
-          ? loadClassifiedSource('mm', (sourceLimit, sourceFrom) => getRecentMoneyMarket(sourceLimit, sourceFrom, to, 0, sourceFilters))
-          : Promise.resolve([]),
-        loadClassifiedSource('otc', (sourceLimit, sourceFrom) => getRecentOtc(sourceLimit, sourceFrom, to, 0, sourceFilters)),
+          : Promise.resolve([] as ActivityRow[]),
         needsFullClassification
           ? loadClassifiedSource('xcm', (sourceLimit, sourceFrom) => getRecentXcm(sourceLimit, sourceFrom, to, undefined, 0, sourceFilters))
-          : Promise.resolve([]),
+          : Promise.resolve([] as ActivityRow[]),
         needsFullClassification
           ? loadClassifiedSource('xcmIn', (sourceLimit, sourceFrom) => getRecentXcmIn(sourceLimit, sourceFrom, to, undefined, 0, sourceFilters))
-          : Promise.resolve([]),
+          : Promise.resolve([] as ActivityRow[]),
         needsFullClassification
           ? loadClassifiedSource('xcmOutRemote', (sourceLimit, sourceFrom) => getRecentXcmOutRemote(sourceLimit, sourceFrom, to, undefined, 0, sourceFilters))
-          : Promise.resolve([]),
+          : Promise.resolve([] as ActivityRow[]),
         needsFullClassification
           ? loadClassifiedSource('xcmExecuted', (sourceLimit, sourceFrom) => getRecentXcmExecuted(sourceLimit, sourceFrom, to, undefined, 0, sourceFilters))
-          : Promise.resolve([]),
-        needsFullClassification
-          ? loadClassifiedSource('nttOut', (sourceLimit, sourceFrom) => getRecentNttOut(sourceLimit, sourceFrom, to, undefined, 0, sourceFilters))
-          : Promise.resolve([]),
-        needsFullClassification
-          ? loadClassifiedSource('nttIn', (sourceLimit, sourceFrom) => getRecentNttIn(sourceLimit, sourceFrom, to, undefined, 0, sourceFilters))
-          : Promise.resolve([]),
-        needsFullClassification
-          ? loadClassifiedSource('staking', (sourceLimit, sourceFrom) => getRecentStaking(sourceLimit, sourceFrom, to, undefined, 0, sourceFilters))
-          : Promise.resolve([]),
+          : Promise.resolve([] as ActivityRow[]),
         needsFullClassification
           ? loadClassifiedSource('vote', (sourceLimit, sourceFrom) => getVoteFeedRows(sourceLimit, sourceFrom, to, 0, sourceFilters, withCollective))
-          : Promise.resolve([]),
+          : Promise.resolve([] as VoteRow[]),
       ])
       const sourceFilteredTransfers = sourceValueFiltered
         ? await suppressTransferCandidates(transfers)
@@ -13404,22 +7189,11 @@ async function buildActivityWindow(limit: number, from: string | undefined, to: 
           ])
       const userTrades = dropShareRoutedTrades(trades, liquidityExtrinsics)
       // Drop swap-internal transfer legs: any transfer in a trade's extrinsic, or
-      // touching a pallet/pool account (hops, fees, referral pot). OTC fills
-      // settle peer-to-peer (real Transfer events between taker/maker, unlike an
-      // AMM swap's pool-internal Withdrawn/Deposited), so their extrinsics own
-      // their transfer legs the same way trades/staking/mm do.
+      // touching a pallet/pool account (hops, fees).
       const tradeExtrinsics = new Set(trades.filter(t => t.extrinsicIndex != null).map(t => `${t.blockHeight}:${t.extrinsicIndex}`))
-      const stakingExtrinsics = activityExtrinsicSet(staking)
-      const mmExtrinsics = activityExtrinsicSet(mm)
-      const otcExtrinsics = activityExtrinsicSet(otc)
       const userTransfers = sourceFilteredTransfers.filter(t =>
         !(t.extrinsicIndex != null && tradeExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)) &&
-        !(t.extrinsicIndex != null && stakingExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)) &&
-        !(t.extrinsicIndex != null && mmExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)) &&
-        !(t.extrinsicIndex != null && otcExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)) &&
         !isModuleAcct(t.from) && !isModuleAcct(t.to))
-      // Module-account MM rows are pool-proxy internals, not user activity.
-      const userMm = mm.filter(r => !isModuleAcct(r.who))
       type SourceCursor = { blockHeight: number; eventIndex: number }
       type SourcePage = { key: ClassifiedSourceKey; fetchSize: number; rawSize: number; rows: ActivityRow[]; oldest: SourceCursor | null; valueIrrelevant?: boolean }
       const oldestOf = <T extends { blockHeight: number; eventIndex?: number | null }>(source: T[]): SourceCursor | null => {
@@ -13435,23 +7209,15 @@ async function buildActivityWindow(limit: number, from: string | undefined, to: 
       const allSources: SourcePage[] = [
         { key: 'transfer', fetchSize: sourceFetchSize('transfer'), rawSize: transfers.length, rows: userTransfers.map(toTransferRow), oldest: oldestOf(transfers) },
         { key: 'trade', fetchSize: sourceFetchSize('trade'), rawSize: trades.length, rows: userTrades.map(toTradeRow), oldest: oldestOf(trades) },
-        // Failed DCA rows have no executed value and can never pass a minimum.
-        { key: 'dca', fetchSize: sourceFetchSize('dca'), rawSize: dcaFailures.length, rows: dcaFailures, oldest: oldestOf(dcaFailures), valueIrrelevant: true },
-        { key: 'reward', fetchSize: sourceFetchSize('reward'), rawSize: rewards.length, rows: rewards, oldest: oldestOf(rewards) },
         { key: 'liquidity', fetchSize: sourceFetchSize('liquidity'), rawSize: liquidity.length, rows: liquidity, oldest: oldestOf(liquidity) },
-        { key: 'staking', fetchSize: sourceFetchSize('staking'), rawSize: staking.length, rows: staking, oldest: oldestOf(staking) },
         { key: 'vote', fetchSize: sourceFetchSize('vote'), rawSize: votes.length, rows: votes.map(voteActivityRow), oldest: oldestOf(votes) },
-        { key: 'mm', fetchSize: sourceFetchSize('mm'), rawSize: mm.length, rows: userMm, oldest: oldestOf(mm) },
-        { key: 'otc', fetchSize: sourceFetchSize('otc'), rawSize: otc.length, rows: otc, oldest: oldestOf(otc) },
         { key: 'xcm', fetchSize: sourceFetchSize('xcm'), rawSize: xcm.length, rows: xcm, oldest: oldestOf(xcm) },
         { key: 'xcmIn', fetchSize: sourceFetchSize('xcmIn'), rawSize: xcmIn.length, rows: xcmIn, oldest: oldestOf(xcmIn) },
         { key: 'xcmOutRemote', fetchSize: sourceFetchSize('xcmOutRemote'), rawSize: xcmOutRemote.length, rows: xcmOutRemote, oldest: oldestOf(xcmOutRemote) },
         { key: 'xcmExecuted', fetchSize: sourceFetchSize('xcmExecuted'), rawSize: xcmExecuted.length, rows: xcmExecuted, oldest: oldestOf(xcmExecuted) },
-        { key: 'nttOut', fetchSize: sourceFetchSize('nttOut'), rawSize: nttOut.length, rows: nttOut, oldest: oldestOf(nttOut) },
-        { key: 'nttIn', fetchSize: sourceFetchSize('nttIn'), rawSize: nttIn.length, rows: nttIn, oldest: oldestOf(nttIn) },
       ]
       const sourcePages = type === 'trade'
-        ? [allSources[1], allSources[2], allSources[8]]
+        ? [allSources[1]]
         : type === 'transfer' ? [allSources[0]] : allSources
       sourceSaturated = sourcePages.some(source => source.rawSize >= source.fetchSize)
       // A transfer-only result still needs the other categories as
@@ -13463,12 +7229,6 @@ async function buildActivityWindow(limit: number, from: string | undefined, to: 
       plumbingApplied = true
       if (type !== 'all') rows = rows.filter(r => activityTypeMatchesFamily(r.type, type))
       if (deferredValueFilter && filters.unit !== 'token') await applyHistoricalUsd(rows, activityHistPick)
-      // The dense route reaches here with a narrow date range; no source can express a
-      // revenue floor in SQL, so it is decided on built rows once they carry the figure.
-      if (filters.minRevenue != null) {
-        await applyActivityRevenue(rows)
-        rows = rows.filter(r => revenueFloorPasses(r, filters.minRevenue))
-      }
       const visibleRows = rows.filter(r => activityRowMatchesFilters(r, filters) && activityRowMatchesAction(r, action))
         .sort((a, b) => b.blockHeight - a.blockHeight || (b.eventIndex ?? -1) - (a.eventIndex ?? -1))
       const cutoff = completeActivityPageCutoff(visibleRows, want)
@@ -13516,29 +7276,13 @@ async function buildActivityWindow(limit: number, from: string | undefined, to: 
     }
   } else if (action) {
     // Sub-type filtering breaks SQL paging — fetch a window and page locally.
-    // 'ClaimReferral' has no liquidity-pallet events behind it — the rows come from
-    // the reward-claims builder alone, so the event-list fetch is skipped outright.
-    if (type === 'liquidity') rows = [
-      ...(action === 'ClaimReferral' ? [] : await getRecentLiquidity(fetchN, from, to, 0, filters, action)),
-      ...(action === 'Claim' || action === 'ClaimReferral'
-        ? (await getRecentRewardClaims(fetchN, from, to, undefined, assetIdsForToken(filters.token), undefined, undefined, filters, 'referral')).filter(r => r.type === 'liquidity' && r.liqAction === action)
-        : []),
-    ]
-    else if (type === 'mm') rows = [...(await getRecentMoneyMarket(fetchN, from, to, 0, filters, action)).filter(r => !isModuleAcct(r.who)), ...(action === 'ClaimRewards' ? (await getRecentRewardClaims(fetchN, from, to, undefined, assetIdsForToken(filters.token), undefined, undefined, filters, 'incentive')).filter(r => r.type === 'mm') : [])]
-    else if (type === 'otc') rows = await getRecentOtc(fetchN, from, to, 0, filters, action)
-    else if (type === 'xcm') rows = (await Promise.all([getRecentXcm(fetchN, from, to, undefined, 0, filters), getRecentXcmIn(fetchN, from, to, undefined, 0, filters), getRecentXcmOutRemote(fetchN, from, to, undefined, 0, filters), getRecentXcmExecuted(fetchN, from, to, undefined, 0, filters), getRecentNttOut(fetchN, from, to, undefined, 0, filters), getRecentNttIn(fetchN, from, to, undefined, 0, filters)])).flat()
-    else if (type === 'staking') rows = await getRecentStaking(fetchN, from, to, undefined, 0, filters, undefined, action)
+    if (type === 'liquidity') rows = await getRecentLiquidity(fetchN, from, to, 0, filters, action)
+    else if (type === 'xcm') rows = (await Promise.all([getRecentXcm(fetchN, from, to, undefined, 0, filters), getRecentXcmIn(fetchN, from, to, undefined, 0, filters), getRecentXcmOutRemote(fetchN, from, to, undefined, 0, filters), getRecentXcmExecuted(fetchN, from, to, undefined, 0, filters)])).flat()
     else rows = (await getVoteFeedRows(fetchN, from, to, 0, filters, withCollective)).map(voteActivityRow)
   } else if (type === 'liquidity') {
-    rows = [...await getRecentLiquidity(fetchN, from, to, 0, filters), ...(await getRecentRewardClaims(fetchN, from, to, undefined, assetIdsForToken(filters.token), undefined, undefined, filters, 'referral')).filter(r => r.type === 'liquidity')]
-  } else if (type === 'mm') {
-    rows = [...(await getRecentMoneyMarket(fetchN, from, to, 0, filters)).filter(r => !isModuleAcct(r.who)), ...(await getRecentRewardClaims(fetchN, from, to, undefined, assetIdsForToken(filters.token), undefined, undefined, filters, 'incentive')).filter(r => r.type === 'mm')]
-  } else if (type === 'otc') {
-    rows = await getRecentOtc(limit, from, to, offset, filters)
+    rows = await getRecentLiquidity(fetchN, from, to, 0, filters)
   } else if (type === 'xcm') {
-    rows = (await Promise.all([getRecentXcm(fetchN, from, to, undefined, 0, filters), getRecentXcmIn(fetchN, from, to, undefined, 0, filters), getRecentXcmOutRemote(fetchN, from, to, undefined, 0, filters), getRecentXcmExecuted(fetchN, from, to, undefined, 0, filters), getRecentNttOut(fetchN, from, to, undefined, 0, filters), getRecentNttIn(fetchN, from, to, undefined, 0, filters)])).flat()
-  } else if (type === 'staking') {
-    rows = await getRecentStaking(limit, from, to, undefined, offset, filters)
+    rows = (await Promise.all([getRecentXcm(fetchN, from, to, undefined, 0, filters), getRecentXcmIn(fetchN, from, to, undefined, 0, filters), getRecentXcmOutRemote(fetchN, from, to, undefined, 0, filters), getRecentXcmExecuted(fetchN, from, to, undefined, 0, filters)])).flat()
   } else {
     rows = (await getVoteFeedRows(limit, from, to, offset, filters, withCollective)).map(voteActivityRow)
   }
@@ -13636,105 +7380,6 @@ export async function getGlobalActivityTotal(
     })
 }
 
-// A DCA schedule is the canonical unit: initiation, lifecycle status, execution
-// totals, and a paged execution list belong to the schedule page.
-// One leg of a schedule's route, with its assets resolved for display.
-export interface DcaRouteHop { pool: string; poolId: number | null; assetIn: AssetRef; assetOut: AssetRef }
-
-export interface DcaScheduleDetail {
-  scheduleId: number
-  who: AccountRef | null
-  createdAt: { blockHeight: number; timestamp: string; extrinsicIndex: number | null }
-  assetIn: AssetRef
-  assetOut: AssetRef
-  // 'Sell' | 'Buy' ('' for pre-router schedules). amountPer follows it: the
-  // sold (in) amount for Sell orders, the bought (out) amount for Buy orders.
-  direction: string
-  amountPer: string
-  totalAmount: string
-  // What one trade and the whole budget are worth. A live schedule still has
-  // that money to spend, so it carries today's price. A finished one carries the
-  // price of the day it stopped — the executions listed under it are valued at
-  // the moments they ran, and a long schedule's creation price can be a world
-  // away from those. usdBasis says which, so the page can label it.
-  amountPerUsd: number | null
-  budgetUsd: number | null
-  usdBasis: 'current' | 'ended'
-  period: number
-  // Seconds actually observed between this schedule's trades (median of its most
-  // recent gaps), null before it has executed twice. `period` alone cannot be
-  // turned into a duration: block time has been 12s, is ~6s and is heading for
-  // 2s, so an old schedule read at today's block time is off by that ratio.
-  periodSeconds: number | null
-  // How many times a failing execution is retried before the pallet gives up.
-  // Null means the schedule set none and the runtime default applies, or that the
-  // schedule was submitted through an EVM permit whose inner call is not indexed —
-  // never conflate either with a real zero.
-  maxRetries: number | null
-  // Per-execution slippage tolerance against the oracle price, as a Permill
-  // (30000 = 3%). Same Option caveat as maxRetries.
-  slippagePermill: number | null
-  // The order's own absolute price bound, fixed for the schedule's whole life: a
-  // Sell floors what each trade receives, a Buy caps what each trade pays. Exactly
-  // one of the two is set, per the order's direction.
-  minAmountOut: string | null
-  maxAmountIn: string | null
-  // The path each execution trades through. An EMPTY array is a real answer — the
-  // order named no path, so the router chooses one per execution. Null means the
-  // path is unknown (a pre-router schedule with no indexed call).
-  route: DcaRouteHop[] | null
-  // Highest block the pallet has planned an execution for. It is the anchor for
-  // "next in …" and, with the cadence, for how long the budget still has to run.
-  nextExecutionBlock: number | null
-  // Owner's spendable balance of the sold asset, on live open-ended schedules
-  // only. Those have no budget to exhaust — they run until the wallet does — so
-  // the balance is the one thing that can date their end and give them a share
-  // to be "filled" against. Null everywhere else.
-  fundingBalance: string | null
-  status: 'active' | 'completed' | 'terminated' | 'cancelled'
-  statusAt: string | null
-  // Named DispatchError reason for hook (error) terminations, null when the
-  // error is a metadata-indexed module error or the schedule wasn't terminated.
-  statusReason: string | null
-  executions: { count: number; failed: number; attempts: number; totalIn: string; totalOut: string }
-  rows: ActivityRow[]
-}
-// Resolve a legacy per-execution DCA reference to its schedule. Extrinsic-form
-// ids point at the SCHEDULING extrinsic; event-form ids carried the swap
-// event's index, which sits a few events before the DCA.TradeExecuted row —
-// nearest-in-block is unambiguous in practice (executions are sparse per block).
-export async function getDcaScheduleIdAt(height: number, index: number, kind: 'event' | 'extrinsic'): Promise<number | null> {
-  if (kind === 'extrinsic') {
-    const res = await client.query({
-      query: `SELECT toString(id) AS id FROM price_data.dca_schedules WHERE block_height = {h:UInt32} AND extrinsic_index = {i:UInt32} LIMIT 1`,
-      query_params: { h: height, i: index }, format: 'JSONEachRow',
-    })
-    const hit = (await res.json<{ id: string }>())[0]
-    if (hit) return Number(hit.id)
-  }
-  const res = await client.query({
-    query: `SELECT toString(id) AS id FROM price_data.dca_events
-            WHERE block_height = {h:UInt32} AND event_name = 'DCA.TradeExecuted'
-            ORDER BY abs(toInt64(event_index) - {i:Int64}) ASC LIMIT 1`,
-    query_params: { h: height, i: index }, format: 'JSONEachRow',
-  })
-  const hit = (await res.json<{ id: string }>())[0]
-  return hit ? Number(hit.id) : null
-}
-
-// A DCA.Terminated event from a signed extrinsic is the owner's own
-// dca.terminate call ("cancelled"); one from a block hook is the pallet ending
-// the schedule on an error ("terminated"). The previous latest-execution-event
-// heuristic mislabelled error terminations that left a pending plan.
-export function dcaScheduleStatus(
-  terminated: boolean,
-  completed: boolean,
-  manualTerminate: boolean,
-): DcaScheduleDetail['status'] {
-  if (terminated) return manualTerminate ? 'cancelled' : 'terminated'
-  return completed ? 'completed' : 'active'
-}
-
 export interface FailureReason { label: string; docs: string | null }
 
 // camelCase → "spaced lower" (BuyLimitNotReached → "buy limit not reached").
@@ -13808,579 +7453,7 @@ export function dispatchErrorReason(
   return { label, docs: null }
 }
 
-// Human-readable termination reason for the named DispatchError kinds
-// ("token frozen"). Module errors carry only a pallet index and error byte —
-// naming them needs runtime metadata, so they are omitted rather than shown
-// as opaque numbers.
-export function dcaTerminationReason(errorJson: string | null | undefined): string | null {
-  const reason = dispatchErrorReason(errorJson ?? null, 0, () => null)
-  if (!reason) return null
-  // Module errors were previously omitted here (only named kinds returned).
-  if (reason.label.startsWith('pallet ')) return null
-  // dispatchErrorReason keeps the top-level kind's original casing and joins
-  // kind/sub with " · " (e.g. "Token · frozen"); this pre-existing format
-  // lowercases the whole label and uses a single space for nested kinds
-  // (e.g. "token frozen").
-  if (reason.label.includes(' · ')) return reason.label.toLowerCase().replace(' · ', ' ')
-  // 'Other' is the one bare kind with a bespoke label; pass it through as-is.
-  if (reason.label === 'runtime error') return reason.label
-  // Every other bare kind arrives already humanized/spaced/lowercased (e.g.
-  // "BadOrigin" → "bad origin"); this pre-existing format instead collapses
-  // it to the raw kind's lowercase form with no separating space (e.g.
-  // "badorigin"). humanizeKind only ever inserts spaces, so stripping them
-  // back out reconstructs kind.toLowerCase() exactly.
-  return reason.label.replace(/ /g, '')
-}
-
-// A single DCA execution attempt: an executed trade (both legs + a derived
-// price) or a failed attempt (only the intended leg — see dcaPerTradeLegs —
-// and a decoded failure reason).
-export interface DcaExecutionDetail {
-  scheduleId: number
-  status: 'executed' | 'failed'
-  who: AccountRef | null
-  blockHeight: number
-  timestamp: string
-  eventIndex: number
-  extrinsicIndex: number | null
-  assetIn: AssetRef
-  assetOut: AssetRef
-  amountIn: string | null
-  amountOut: string | null
-  valueUsd: number | null
-  executionPrice: number | null
-  period: number
-  failureReason: FailureReason | null
-  revenue?: ActivityRevenue
-}
-
-// A schedule's amount-per denomination follows its order type: a Sell order
-// fixes the sold (in) amount, a Buy order fixes the bought (out) amount. The
-// other leg varies per execution, so an attempt that never traded has no value
-// for it. Pre-router schedules stored no direction ('') and no amount-per —
-// their intended trade is unknown, so both legs stay empty.
-export function dcaPerTradeLegs(direction: string, amountPer: string): { amountIn: string | null; amountOut: string | null } {
-  if (!amountPer) return { amountIn: null, amountOut: null }
-  return direction === 'Buy'
-    ? { amountIn: null, amountOut: amountPer }
-    : { amountIn: amountPer, amountOut: null }
-}
-
-// Pure per-execution outcome: a DCA.TradeFailed event has no amounts, so the
-// intended trade is the schedule's amount-per on its fixed leg (see
-// dcaPerTradeLegs); a DCA.TradeExecuted carries both legs and an execution
-// price (out per in).
-export function dcaExecutionOutcome(
-  eventName: string,
-  direction: string,
-  amountPer: string,
-  eventAmountIn: string,
-  eventAmountOut: string,
-  inDecimals: number,
-  outDecimals: number,
-): { status: 'executed' | 'failed'; amountIn: string | null; amountOut: string | null; executionPrice: number | null } {
-  if (eventName === 'DCA.TradeFailed') {
-    return { status: 'failed', ...dcaPerTradeLegs(direction, amountPer), executionPrice: null }
-  }
-  const inNum = Number(eventAmountIn) / 10 ** inDecimals
-  const outNum = Number(eventAmountOut) / 10 ** outDecimals
-  return {
-    status: 'executed', amountIn: eventAmountIn, amountOut: eventAmountOut,
-    executionPrice: inNum > 0 && outNum > 0 ? outNum / inNum : null,
-  }
-}
-
-// Pre-router-era schedules recorded no order in DCA.Scheduled, so dca_schedules
-// stores asset_in=asset_out=0 — which would render as a nonsensical HDX→HDX
-// pair. Recover the real traded pair from the first execution's swap leg when
-// the stored order is empty. A DCA.TradeExecuted follows its own swap's events,
-// so the schedule's swap is the nearest owner-matching one BEFORE that event —
-// an owner running several DCAs in the same block has several swaps there, and
-// the first one in the block may belong to a different schedule.
-async function resolveDcaTradedPair(scheduleId: number, storedIn: number, storedOut: number, who: string): Promise<{ assetIn: number; assetOut: number }> {
-  if (storedIn !== 0 || storedOut !== 0) return { assetIn: storedIn, assetOut: storedOut }
-  const swapRes = await client.query({
-    query: `WITH (
-              SELECT (min(block_height), argMin(event_index, (block_height, event_index)))
-              FROM price_data.dca_events
-              WHERE id = {sid:UInt64} AND event_name = 'DCA.TradeExecuted'
-            ) AS first_exec
-            SELECT JSONExtractInt(args_json,'assetIn') AS ain, JSONExtractInt(args_json,'assetOut') AS aout
-            FROM price_data.raw_events
-            WHERE event_name IN ('Router.Executed','Router.RouteExecuted','Omnipool.SellExecuted','Omnipool.BuyExecuted','Stableswap.SellExecuted','Stableswap.BuyExecuted','XYK.SellExecuted','XYK.BuyExecuted','LBP.SellExecuted','LBP.BuyExecuted')
-              AND block_height = first_exec.1
-              AND event_index < first_exec.2
-              AND JSONExtractString(args_json,'who') = {who:String}
-            ORDER BY event_index DESC LIMIT 1`,
-    query_params: { sid: scheduleId, who }, format: 'JSONEachRow',
-  })
-  const sw = (await swapRes.json<{ ain: number; aout: number }>())[0]
-  return sw && (sw.ain || sw.aout) ? { assetIn: sw.ain, assetOut: sw.aout } : { assetIn: storedIn, assetOut: storedOut }
-}
-
-// A single DCA execution, addressed by its DCA.TradeExecuted / DCA.TradeFailed
-// event (block_height + event_index). Bounded primary-key lookups only; the
-// failure reason is decoded on demand from the raw event, like extrinsics.
-export async function getDcaExecution(height: number, eventIndex: number): Promise<DcaExecutionDetail | null> {
-  return cached(`explorer:dca-exec:${height}:${eventIndex}`, 60_000, async () => {
-    // Nearest-following resolution: an execution's swap legs always PRECEDE
-    // its closing TradeExecuted/TradeFailed event, so any event id from inside
-    // the bundle (an activity row's Broadcast leg, a Router event) resolves to
-    // the execution it belongs to. An exact TradeExecuted id — the canonical
-    // /dca/<block>-e<index> form the schedule page links — matches first.
-    const evRes = await client.query({
-      query: `SELECT toString(id) AS id, event_name, extrinsic_index, toString(block_timestamp) AS ts,
-                     toString(amount_in) AS amount_in, toString(amount_out) AS amount_out, error
-              FROM price_data.dca_events
-              WHERE block_height = {h:UInt32} AND event_index >= {i:UInt32}
-                AND event_name IN ('DCA.TradeExecuted','DCA.TradeFailed')
-              ORDER BY event_index ASC LIMIT 1`,
-      query_params: { h: height, i: eventIndex }, format: 'JSONEachRow',
-    })
-    const ev = (await evRes.json<{ id: string; event_name: string; extrinsic_index: number | null; ts: string; amount_in: string; amount_out: string; error: string }>())[0]
-    if (!ev) return null
-    const scheduleId = Number(ev.id)
-    const schedRes = await client.query({
-      query: `SELECT who, asset_in, asset_out, direction, toString(amount_per) AS amount_per, period
-              FROM price_data.dca_schedules WHERE id = {sid:UInt64} ORDER BY block_height DESC LIMIT 1`,
-      query_params: { sid: scheduleId }, format: 'JSONEachRow',
-    })
-    const sched = (await schedRes.json<{ who: string; asset_in: number; asset_out: number; direction: string; amount_per: string; period: number }>())[0]
-    if (!sched) return null
-    const pair = await resolveDcaTradedPair(scheduleId, sched.asset_in, sched.asset_out, sched.who)
-    const aIn = asset(pair.assetIn), aOut = asset(pair.assetOut)
-    const outcome = dcaExecutionOutcome(ev.event_name, sched.direction, sched.amount_per, ev.amount_in, ev.amount_out, aIn.decimals, aOut.decimals)
-
-    let failureReason: FailureReason | null = null
-    if (outcome.status === 'failed') {
-      // The failure event's own row carries the decoded error, so naming the
-      // reason only needs the runtime metadata for its spec version.
-      const specRes = await client.query({
-        query: `SELECT spec_version FROM price_data.blocks WHERE block_height = {h:UInt32} LIMIT 1`,
-        query_params: { h: height }, format: 'JSONEachRow',
-      })
-      const specVersion = (await specRes.json<{ spec_version: number }>())[0]?.spec_version ?? 0
-      failureReason = dispatchErrorReason(ev.error || null, specVersion, resolveModuleError)
-    }
-
-    const detail: DcaExecutionDetail = {
-      scheduleId, status: outcome.status,
-      who: ACCOUNT_RE.test(sched.who) ? accountRef(sched.who) : null,
-      blockHeight: height, timestamp: ev.ts, eventIndex, extrinsicIndex: ev.extrinsic_index,
-      assetIn: aIn, assetOut: aOut,
-      amountIn: outcome.amountIn, amountOut: outcome.amountOut,
-      valueUsd: null, executionPrice: outcome.executionPrice, period: sched.period, failureReason,
-    }
-    // Value the flow at event-time prices (the out leg when executed, the
-    // schedule's fixed leg when failed) — parity with the schedule's rows. A
-    // pre-router failure has no known leg at all and stays unvalued.
-    await applyHistoricalUsd([detail], d => d.status === 'failed' && d.amountIn != null
-      ? { assetId: aIn.assetId, decimals: aIn.decimals, raw: d.amountIn, ts: d.timestamp }
-      : d.amountOut != null
-        ? { assetId: aOut.assetId, decimals: aOut.decimals, raw: d.amountOut, ts: d.timestamp }
-        : null)
-    await applyActivityRevenue([detail])
-    return detail
-  })
-}
-
-// Pre-router runtimes emitted DCA.Scheduled with only {id, who}: no order, period,
-// totalAmount or maxRetries. dca_schedules_mv reads that event, so 2,354 of 33,903
-// schedules (every one below block ~4.3M) stored asset_in = asset_out = 0 and blank
-// amounts — and asset 0 is HDX, so a DOT->HDX schedule rendered as "HDX -> HDX".
-//
-// The DCA.schedule CALL args carry the whole order; only the id is event-only, so no
-// materialized view can join the two. Reconstruct the missing half per request instead:
-// one raw_calls row addressed by (block_height, extrinsic_index), which is that table's
-// primary-key prefix. Returns null when there is nothing to recover, so a genuinely
-// zero-asset schedule is never invented.
-interface DcaScheduleOrder {
-  asset_in: number
-  asset_out: number
-  direction: string
-  amount_per: string
-  total_amount: string
-  period: number
-  max_retries: number
-}
-
-export function dcaOrderFromCallArgs(argsJson: string): DcaScheduleOrder | null {
-  const schedule = dcaScheduleFromCallArgs(argsJson)
-  if (!schedule) return null
-  const order = (schedule as { order?: Record<string, unknown> }).order
-  if (!order || typeof order !== 'object') return null
-  const num = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null)
-  const str = (v: unknown) => (typeof v === 'string' ? v : '')
-  const assetIn = num((order as { assetIn?: unknown }).assetIn)
-  const assetOut = num((order as { assetOut?: unknown }).assetOut)
-  const kind = str((order as { __kind?: unknown }).__kind)
-  if (assetIn == null || assetOut == null || !kind) return null
-  return {
-    asset_in: assetIn,
-    asset_out: assetOut,
-    direction: kind,
-    // A Sell order fixes amountIn per trade, a Buy order fixes amountOut.
-    amount_per: str((order as { amountIn?: unknown }).amountIn) || str((order as { amountOut?: unknown }).amountOut),
-    total_amount: str((schedule as { totalAmount?: unknown }).totalAmount),
-    period: num((schedule as { period?: unknown }).period) ?? 0,
-    max_retries: num((schedule as { maxRetries?: unknown }).maxRetries) ?? 0,
-  }
-}
-
-async function recoverDcaScheduleOrder(blockHeight: number, extrinsicIndex: number | null): Promise<DcaScheduleOrder | null> {
-  if (extrinsicIndex == null) return null
-  const res = await client.query({
-    query: `SELECT args_json FROM price_data.raw_calls
-            WHERE block_height = {h:UInt32} AND extrinsic_index = {i:UInt32} AND call_address = 'root'
-            LIMIT 1`,
-    query_params: { h: blockHeight, i: extrinsicIndex }, format: 'JSONEachRow',
-  })
-  const row = (await res.json<{ args_json: string }>())[0]
-  return row ? dcaOrderFromCallArgs(row.args_json) : null
-}
-
-// One leg of the path a schedule trades through. Stableswap names the pool it uses;
-// the other venues are a single pool each, so only Stableswap carries an id.
-export interface DcaRouteLeg { pool: string; poolId: number | null; assetIn: number; assetOut: number }
-
-// What DCA.Scheduled says about a schedule's terms beyond the pair and the size:
-// the order's own price bound, and the route it trades through.
-//
-// `route: []` is not missing data — it means the order named no path, so the router
-// picks one per execution. Callers must tell that apart from a pre-router schedule
-// (whose event carried no order at all), hence null vs an empty array.
-export interface DcaOrderTerms { minAmountOut: string | null; maxAmountIn: string | null; route: DcaRouteLeg[] | null }
-
-export function dcaOrderTermsFromEventArgs(argsJson: string): DcaOrderTerms | null {
-  let parsed: unknown
-  try { parsed = JSON.parse(argsJson) } catch { return null }
-  return dcaOrderTerms((parsed as { order?: unknown } | null)?.order)
-}
-
-// Same order object, reached through the call's `schedule` wrapper — the only place
-// a pre-router schedule's order survives.
-export function dcaOrderTermsFromCallArgs(argsJson: string): DcaOrderTerms | null {
-  return dcaOrderTerms(dcaScheduleFromCallArgs(argsJson)?.order)
-}
-
-function dcaOrderTerms(orderValue: unknown): DcaOrderTerms | null {
-  const order = orderValue as Record<string, unknown> | null | undefined
-  if (!order || typeof order !== 'object') return null
-  // A zero bound IS no bound: a floor of nothing rejects nothing, so a fifth of all
-  // Sell orders set one to opt out of an absolute limit and rely on slippage alone.
-  // Reporting it as a limit of "0" would state a constraint the order does not have.
-  const str = (v: unknown) => (typeof v === 'string' && v !== '' && v !== '0' ? v : null)
-  const int = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null)
-  const rawRoute = (order as { route?: unknown }).route
-  const route = Array.isArray(rawRoute)
-    ? rawRoute.flatMap((leg): DcaRouteLeg[] => {
-      const l = (leg ?? {}) as Record<string, unknown>
-      const pool = (l.pool ?? {}) as Record<string, unknown>
-      const kind = typeof pool.__kind === 'string' ? pool.__kind : ''
-      const assetIn = int(l.assetIn), assetOut = int(l.assetOut)
-      if (!kind || assetIn == null || assetOut == null) return []
-      return [{ pool: kind, poolId: int(pool.value), assetIn, assetOut }]
-    })
-    : null
-  return {
-    // A Sell order floors what it receives, a Buy order caps what it pays.
-    minAmountOut: str((order as { minAmountOut?: unknown }).minAmountOut),
-    maxAmountIn: str((order as { maxAmountIn?: unknown }).maxAmountIn),
-    route,
-  }
-}
-
-// Slippage and the retry limit live ONLY on the DCA.schedule call — the event never
-// carried either, which is why dca_schedules.max_retries reads 0 for every row it
-// has. Both are Option fields: absent means the pallet's own default applies, which
-// is not the same as zero, so absent stays null all the way to the response.
-//
-// Slippage is a Permill (30000 = 3%), the tolerance each execution allows against
-// the oracle price — a different limit from the order's own minAmountOut/maxAmountIn
-// bound above, which is absolute and fixed for the schedule's whole life.
-export function dcaScheduleTermsFromCallArgs(argsJson: string): { slippagePermill: number | null; maxRetries: number | null } | null {
-  const schedule = dcaScheduleFromCallArgs(argsJson)
-  if (!schedule) return null
-  const int = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null)
-  return { slippagePermill: int(schedule.slippage), maxRetries: int(schedule.maxRetries) }
-}
-
-// A DCA Schedule struct: an object under a key literally named `schedule` that
-// carries the pallet's own required `order`. Nothing else in a call tree pairs
-// those two, and matching on the order (rather than on `period`, or on the whole
-// field set) keeps this reading a schedule whose optional fields are all unset.
-function isDcaScheduleStruct(v: unknown): v is Record<string, unknown> {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return false
-  const order = (v as Record<string, unknown>).order
-  return !!order && typeof order === 'object'
-}
-
-// The `schedule` payload of a DCA.schedule call, wherever the extrinsic buried it.
-//
-// Only ~5 in 6 schedules are submitted as a bare DCA.schedule; the rest arrive
-// wrapped, and the wrapper the Hydration app now sends —
-// Dispatcher.dispatch_with_extra_gas — carries its inner call whole inside
-// args_json rather than as its own raw_calls row. Reading only the top-level
-// `DCA.schedule` call therefore found nothing for 2.3k schedules, every recent one
-// among them, and reported their slippage and retry limit as unset rather than as
-// what the owner chose. Multisig.as_multi, Utility.batch_all and Proxy.proxy nest
-// it the same way.
-//
-// Matching the Schedule struct's own shape instead of a list of wrapper call names
-// keeps this working for a wrapper nobody has used yet, and changes nothing for the
-// bare args that already parsed. An EVM permit (MultiTransactionPayment
-// .dispatch_permit, Ethereum.transact) keeps its inner call as opaque SCALE hex, so
-// those 3.2k stay null — there is nothing there to read, and a default would be a
-// guess at a term the owner set.
-//
-// One extrinsic can schedule several orders (nine, at most, in indexed history).
-// Depth-first order makes which one answers deterministic, and no indexed extrinsic
-// has ever mixed two slippages or two retry limits.
-export function dcaScheduleFromCallArgs(argsJson: string): Record<string, unknown> | null {
-  let parsed: unknown
-  try { parsed = JSON.parse(argsJson) } catch { return null }
-  // Wrappers nest a handful of levels (dispatch → DCA → schedule); the bound stops
-  // a batch-of-batches from walking an unbounded tree on a request path.
-  const walk = (node: unknown, depth: number): Record<string, unknown> | null => {
-    if (node == null || typeof node !== 'object' || depth > 12) return null
-    if (Array.isArray(node)) {
-      for (const item of node) { const hit = walk(item, depth + 1); if (hit) return hit }
-      return null
-    }
-    const obj = node as Record<string, unknown>
-    if (isDcaScheduleStruct(obj.schedule)) return obj.schedule as Record<string, unknown>
-    for (const value of Object.values(obj)) { const hit = walk(value, depth + 1); if (hit) return hit }
-    return null
-  }
-  return walk(parsed, 0)
-}
-
-// The two lookups behind the terms above, both bounded by a primary-key prefix on
-// the schedule's own creation block — the same shape (and justification) as
-// recoverDcaScheduleOrder. No projection carries these, and a schedule page reads
-// them once, for one schedule.
-//
-// The event is matched by id inside the block rather than by extrinsic: one
-// extrinsic can schedule nine orders at once, and 129 schedules have no extrinsic
-// index at all. The call is the extrinsic's top-level one, whatever it is, because
-// the schedule is as often nested inside a wrapper as dispatched bare —
-// dcaScheduleFromCallArgs digs it back out either way.
-//
-// EVM owners schedule through MultiTransactionPayment.dispatch_permit or
-// Ethereum.transact, whose inner call survives only as opaque SCALE hex, so 9% of
-// schedules have nothing to read and their slippage/retries stay null rather than
-// being guessed at.
-async function dcaScheduleTerms(scheduleId: number, blockHeight: number, extrinsicIndex: number | null): Promise<{
-  minAmountOut: string | null; maxAmountIn: string | null; route: DcaRouteLeg[] | null
-  slippagePermill: number | null; maxRetries: number | null
-}> {
-  const [eventRes, callRes] = await Promise.all([
-    client.query({
-      query: `SELECT args_json FROM price_data.raw_events
-              WHERE block_height = {h:UInt32} AND event_name = 'DCA.Scheduled'
-                AND toUInt64(JSONExtractInt(args_json, 'id')) = {sid:UInt64}
-              LIMIT 1`,
-      query_params: { h: blockHeight, sid: scheduleId }, format: 'JSONEachRow',
-    }),
-    extrinsicIndex == null ? Promise.resolve(null) : client.query({
-      query: `SELECT args_json FROM price_data.raw_calls
-              WHERE block_height = {h:UInt32} AND extrinsic_index = {i:UInt32} AND call_address = 'root'
-              LIMIT 1`,
-      query_params: { h: blockHeight, i: extrinsicIndex }, format: 'JSONEachRow',
-    }),
-  ])
-  const eventArgs = (await eventRes.json<{ args_json: string }>())[0]?.args_json
-  const callArgs = callRes ? (await callRes.json<{ args_json: string }>())[0]?.args_json : undefined
-  const order = eventArgs ? dcaOrderTermsFromEventArgs(eventArgs) : null
-  // Pre-router schedules carry no order on the event; the call still has one.
-  const fromCall = callArgs ? dcaOrderTermsFromCallArgs(callArgs) : null
-  const terms = callArgs ? dcaScheduleTermsFromCallArgs(callArgs) : null
-  return {
-    minAmountOut: order?.minAmountOut ?? fromCall?.minAmountOut ?? null,
-    maxAmountIn: order?.maxAmountIn ?? fromCall?.maxAmountIn ?? null,
-    route: order?.route ?? fromCall?.route ?? null,
-    slippagePermill: terms?.slippagePermill ?? null,
-    maxRetries: terms?.maxRetries ?? null,
-  }
-}
-
-export async function getDcaSchedule(scheduleId: number, offset = 0, limit = 25): Promise<DcaScheduleDetail | null> {
-  return cached(`explorer:dca-schedule:${scheduleId}:${offset}:${limit}`, 8000, async () => {
-    const prices = await ensurePrices()
-    const [schedRes, lifeRes, totalRes, exRes, planRes, cadenceRes] = await Promise.all([
-      client.query({
-        query: `SELECT block_height, toString(block_timestamp) AS ts, extrinsic_index, who, asset_in, asset_out, direction,
-                       toString(amount_per) AS amount_per, toString(total_amount) AS total_amount, period, max_retries
-                FROM price_data.dca_schedules WHERE id = {sid:UInt64} ORDER BY block_height DESC LIMIT 1`,
-        query_params: { sid: scheduleId }, format: 'JSONEachRow',
-      }),
-      client.query({
-        query: `SELECT event_name, toString(max(block_timestamp)) AS ts,
-                       argMax(block_height, block_timestamp) AS bh,
-                       argMax(event_index, block_timestamp) AS ei,
-                       argMax(ifNull(toInt64(extrinsic_index), -1), block_timestamp) AS xi
-                FROM price_data.dca_events
-                WHERE id = {sid:UInt64} AND event_name IN ('DCA.Completed','DCA.Terminated') GROUP BY event_name`,
-        query_params: { sid: scheduleId }, format: 'JSONEachRow',
-      }),
-      client.query({
-        // dca_events replaces on (event_name, block_height, event_index, id); a
-        // re-inserted raw range holds each execution twice until its parts merge,
-        // so counting and summing rows overstates both the attempts and the amount
-        // traded. LIMIT 1 BY collapses on the replacement key itself.
-        query: `SELECT countIf(event_name = 'DCA.TradeExecuted') AS n,
-                       countIf(event_name = 'DCA.TradeFailed') AS failed,
-                       count() AS attempts,
-                       toString(sumIf(toUInt256OrZero(amount_in), event_name = 'DCA.TradeExecuted')) AS tin,
-                       toString(sumIf(toUInt256OrZero(amount_out), event_name = 'DCA.TradeExecuted')) AS tout
-                FROM (
-                  SELECT event_name, block_height, event_index, id, amount_in, amount_out
-                  FROM price_data.dca_events
-                  WHERE id = {sid:UInt64} AND event_name IN ('DCA.TradeExecuted','DCA.TradeFailed')
-                  LIMIT 1 BY event_name, block_height, event_index, id
-                )`,
-        query_params: { sid: scheduleId }, format: 'JSONEachRow',
-      }),
-      client.query({
-        // `error` is DCA.TradeFailed's dispatch error, decoded once by the MV that
-        // feeds this table. Re-reading raw_events for the rows already listed here
-        // matched on (block_height, event_index) across tables and decompressed
-        // args_json for every row in every granule those keys touched.
-        query: `SELECT block_height, ts, event_index, extrinsic_index, event_name, amount_in, amount_out, error
-                FROM (
-                  SELECT block_height, toString(block_timestamp) AS ts, event_index, extrinsic_index, event_name, id,
-                         toString(amount_in) AS amount_in, toString(amount_out) AS amount_out, error
-                  FROM price_data.dca_events
-                  WHERE id = {sid:UInt64} AND event_name IN ('DCA.TradeExecuted','DCA.TradeFailed')
-                  LIMIT 1 BY event_name, block_height, event_index, id
-                )
-                ORDER BY block_height DESC, event_index DESC LIMIT {lim:UInt32} OFFSET {off:UInt32}`,
-        query_params: { sid: scheduleId, lim: limit, off: offset }, format: 'JSONEachRow',
-      }),
-      // max() is idempotent under a replayed range, so no FINAL is needed here.
-      client.query({
-        query: `SELECT max(planned_block) AS nb FROM price_data.dca_events
-                WHERE id = {sid:UInt64} AND event_name = 'DCA.ExecutionPlanned'`,
-        query_params: { sid: scheduleId }, format: 'JSONEachRow',
-      }),
-      client.query({ query: dcaCadenceQuery('id = {sid:UInt64}', false), query_params: { sid: scheduleId }, format: 'JSONEachRow' }),
-    ])
-    const sched = (await schedRes.json<{ block_height: number; ts: string; extrinsic_index: number | null; who: string; asset_in: number; asset_out: number; direction: string; amount_per: string; total_amount: string; period: number; max_retries: number }>())[0]
-    if (!sched) return null
-    // A blank direction is the pre-router marker: the event carried no order at all.
-    if (sched.direction === '') {
-      const recovered = await recoverDcaScheduleOrder(sched.block_height, sched.extrinsic_index)
-      if (recovered) Object.assign(sched, recovered)
-    }
-    const terms = await dcaScheduleTerms(scheduleId, sched.block_height, sched.extrinsic_index)
-    const life = await lifeRes.json<{ event_name: string; ts: string; bh: number; ei: number; xi: number }>()
-    const totals = (await totalRes.json<{ n: string; failed: string; attempts: string; tin: string; tout: string }>())[0]
-    const pair = await resolveDcaTradedPair(scheduleId, sched.asset_in, sched.asset_out, sched.who)
-    const aIn = asset(pair.assetIn), aOut = asset(pair.assetOut)
-    const terminated = life.find(l => l.event_name === 'DCA.Terminated')
-    const completed = life.find(l => l.event_name === 'DCA.Completed')
-    const executionRows = await exRes.json<{ block_height: number; ts: string; event_index: number; extrinsic_index: number | null; event_name: string; amount_in: string; amount_out: string; error: string }>()
-    const rows: ActivityRow[] = executionRows.map(x => {
-      const failed = x.event_name === 'DCA.TradeFailed'
-      // A failed attempt only knows the schedule's fixed per-trade leg; value
-      // it on that leg. Executed attempts are valued on the received leg.
-      const legs = failed ? dcaPerTradeLegs(sched.direction, sched.amount_per) : { amountIn: x.amount_in, amountOut: x.amount_out }
-      return {
-        type: 'dca', blockHeight: x.block_height, timestamp: x.ts, eventIndex: x.event_index, extrinsicIndex: x.extrinsic_index,
-        who: ACCOUNT_RE.test(sched.who) ? accountRef(sched.who) : null, to: null, asset: null, assetIn: aIn, assetOut: aOut,
-        amount: null, amountIn: legs.amountIn, amountOut: legs.amountOut,
-        valueUsd: legs.amountOut != null
-          ? usdValue(prices, aOut.assetId, legs.amountOut, aOut.decimals)
-          : legs.amountIn != null ? usdValue(prices, aIn.assetId, legs.amountIn, aIn.decimals) : null,
-        dca: true, dcaStatus: failed ? 'failed' : undefined, dcaError: x.error || undefined,
-        dcaScheduleId: scheduleId, linkBlock: x.block_height, linkIndex: x.extrinsic_index,
-      }
-    })
-    await applyHistoricalUsd(rows, activityHistPick)
-    let statusReason: string | null = null
-    if (terminated && Number(terminated.xi) < 0) {
-      // Not foldable into dca_events the way the failure errors above are:
-      // dca_events_mv writes '' AS error for DCA.Terminated, so the column is
-      // empty for every terminated row and reading it would blank this reason.
-      // Termination errors are only in raw_events, and this is a point lookup on
-      // the primary key.
-      const errRes = await client.query({
-        query: `SELECT JSONExtractRaw(args_json,'error') AS error FROM price_data.raw_events
-                WHERE event_name = 'DCA.Terminated' AND block_height = {bh:UInt32} AND event_index = {ei:UInt32} LIMIT 1`,
-        query_params: { bh: terminated.bh, ei: terminated.ei }, format: 'JSONEachRow',
-      })
-      statusReason = dcaTerminationReason((await errRes.json<{ error: string }>())[0]?.error)
-    }
-    const status = dcaScheduleStatus(!!terminated, !!completed, terminated != null && Number(terminated.xi) >= 0)
-    // A Buy order fixes the amount it BUYS, a Sell the amount it sells — value the
-    // per-trade amount on the leg its own order type names. The budget is always
-    // in the sold asset.
-    const perAsset = sched.direction === 'Buy' ? aOut : aIn
-    const budgeted = sched.total_amount !== '0'
-    const currentPer = usdValue(prices, perAsset.assetId, sched.amount_per, perAsset.decimals)
-    const currentBudget = budgeted ? usdValue(prices, aIn.assetId, sched.total_amount, aIn.decimals) : null
-    let amountPerUsd = currentPer
-    let budgetUsd = currentBudget
-    let usdBasis: DcaScheduleDetail['usdBasis'] = 'current'
-    if (status !== 'active') {
-      // Finished: value the plan at the moment it stopped, which is the era its
-      // executions traded in. A schedule too young for a completed hourly close
-      // has no close to read — today's price is then the only honest answer, and
-      // usdBasis says so.
-      const endedTs = (terminated ?? completed)?.ts ?? sched.ts
-      const closes = await historicalCloses([
-        { assetId: perAsset.assetId, ts: endedTs },
-        ...(budgeted ? [{ assetId: aIn.assetId, ts: endedTs }] : []),
-      ])
-      const at = (a: AssetRef, raw: string): number | null => {
-        const close = closes.get(historicalPriceKey(a.assetId, endedTs))
-        const amt = Number(raw) / 10 ** a.decimals
-        return close && Number.isFinite(amt) ? amt * Number(close) : null
-      }
-      const histPer = at(perAsset, sched.amount_per)
-      if (histPer != null) {
-        amountPerUsd = histPer
-        budgetUsd = budgeted ? at(aIn, sched.total_amount) ?? currentBudget : null
-        usdBasis = 'ended'
-      }
-    }
-    // Only a live open-ended schedule needs it (see fundingBalance).
-    const fundingBalance = status === 'active' && !budgeted && ACCOUNT_RE.test(sched.who)
-      ? (await spendableBalances([{ account: sched.who, assetId: aIn.assetId }])).get(`${sched.who}|${aIn.assetId}`) ?? null
-      : null
-    return {
-      scheduleId,
-      who: ACCOUNT_RE.test(sched.who) ? accountRef(sched.who) : null,
-      createdAt: { blockHeight: sched.block_height, timestamp: sched.ts, extrinsicIndex: sched.extrinsic_index },
-      assetIn: aIn, assetOut: aOut,
-      direction: sched.direction,
-      amountPer: sched.amount_per, totalAmount: sched.total_amount,
-      amountPerUsd, budgetUsd, usdBasis,
-      period: sched.period,
-      periodSeconds: Number((await cadenceRes.json<{ sec: number }>())[0]?.sec ?? 0) || null,
-      maxRetries: terms.maxRetries,
-      slippagePermill: terms.slippagePermill,
-      // Only the bound the order's own direction defines is meaningful.
-      minAmountOut: sched.direction === 'Buy' ? null : terms.minAmountOut,
-      maxAmountIn: sched.direction === 'Buy' ? terms.maxAmountIn : null,
-      route: terms.route?.map(leg => ({
-        pool: leg.pool, poolId: leg.poolId, assetIn: asset(leg.assetIn), assetOut: asset(leg.assetOut),
-      })) ?? null,
-      fundingBalance,
-      nextExecutionBlock: Number((await planRes.json<{ nb: number }>())[0]?.nb ?? 0) || null,
-      status,
-      statusAt: (terminated ?? completed)?.ts ?? null,
-      statusReason,
-      executions: {
-        count: Number(totals?.n ?? 0), failed: Number(totals?.failed ?? 0), attempts: Number(totals?.attempts ?? 0),
-        totalIn: totals?.tin ?? '0', totalOut: totals?.tout ?? '0',
-      },
-      rows,
-    }
-  })
-}
-
-export async function getExtrinsicActivity(height: number, index: number, opts: ActivityPageOptions = {}): Promise<ActivityRow[]> {
+export async function getExtrinsicActivity(height: number, index: number): Promise<ActivityRow[]> {
   return cached(`explorer:extrinsic-activity:${height}:${index}`, 10000, async () => {
     const prices = await ensurePrices()
     const evRes = await client.query({
@@ -14422,40 +7495,29 @@ export async function getExtrinsicActivity(height: number, index: number, opts: 
     }
 
     const swapEvents = events.filter(e => SWAP_EVENTS.includes(e.event_name))
-    const dcaExec = events.find(e => e.event_name === 'DCA.TradeExecuted')
     // A batch dispatching several routes is several trades. Keeping only the first
-    // route hid the rest — a proxied multisig batch showed its HUSDT leg and dropped
-    // the HUSDC one, on the very page that lists what the extrinsic did.
+    // route hid the rest — a proxied multisig batch showed one leg and dropped the
+    // other, on the very page that lists what the extrinsic did.
     for (const route of routeGroups(swapEvents)) {
       const rep = route.find(e => isRouterNet(e.event_name)) ?? route[route.length - 1]
       const args = (safeJson(rep.args_json) ?? {}) as Record<string, unknown>
       const aIn = asset(Number(args.assetIn ?? 0))
       const aOut = asset(Number(args.assetOut ?? 0))
-      // A DCA execution reports the schedule its swap belongs to and follows that
-      // swap's events, so it claims the last route that opened before it.
-      const ownsDca = dcaExec != null && rep.event_index <= dcaExec.event_index
-        && !routeGroups(swapEvents).some(other => {
-          const otherRep = other.find(e => isRouterNet(e.event_name)) ?? other[other.length - 1]
-          return otherRep.event_index > rep.event_index && otherRep.event_index <= dcaExec.event_index
-        })
-      const dcaArgs = ownsDca && dcaExec ? (safeJson(dcaExec.args_json) ?? {}) as Record<string, unknown> : null
       rows.push({
-        type: dcaArgs ? 'dca' : 'trade',
+        type: 'trade',
         blockHeight: rep.block_height,
         timestamp: rep.ts,
         eventIndex: rep.event_index,
         extrinsicIndex: rep.extrinsic_index,
-        who: dcaArgs && argStr(dcaArgs, 'who') ? accountRef(argStr(dcaArgs, 'who')) : signer ? accountRef(signer) : null,
+        who: signer ? accountRef(signer) : null,
         to: null,
         asset: null,
         assetIn: aIn,
         assetOut: aOut,
         amount: null,
-        amountIn: argStr(dcaArgs ?? args, 'amountIn'),
-        amountOut: argStr(dcaArgs ?? args, 'amountOut'),
-        valueUsd: usdValue(prices, aOut.assetId, argStr(dcaArgs ?? args, 'amountOut'), aOut.decimals),
-        dca: !!dcaArgs,
-        dcaScheduleId: dcaArgs ? Number(argStr(dcaArgs, 'id')) || undefined : undefined,
+        amountIn: argStr(args, 'amountIn'),
+        amountOut: argStr(args, 'amountOut'),
+        valueUsd: usdValue(prices, aOut.assetId, argStr(args, 'amountOut'), aOut.decimals),
         linkBlock: rep.block_height,
         linkIndex: rep.extrinsic_index,
       })
@@ -14516,83 +7578,7 @@ export async function getExtrinsicActivity(height: number, index: number, opts: 
       }
     }
 
-    // Wormhole NTT legs, decoded from the events this read already holds — the same
-    // classification the feed builders apply (getRecentNttOut/getRecentNttIn): a
-    // transfer of an NTT asset to its registered minter is the send, and a mirrored
-    // Currencies.Deposited whose asset's manager logged TransferRedeemed here is the
-    // arrival's mint. The underlying transfer legs fold behind these rows through
-    // suppressActivityPlumbing, like every other family's plumbing.
-    const nttMinters = await nttMinterAccounts()
-    if (nttMinters.size) {
-      const sentLogs: NttSentLog[] = []
-      const redeemedManagers = new Set<string>()
-      const sourceChains: number[] = []
-      for (const e of events) {
-        if (e.event_name !== 'EVM.Log') continue
-        const log = ((safeJson(e.args_json) ?? {}) as { log?: { address?: string; topics?: string[]; data?: string } }).log
-        if (!log?.topics || !Array.isArray(log.topics)) continue
-        const contract = (log.address ?? '').toLowerCase()
-        if (log.topics[0]?.toLowerCase() === NTT_TRANSFER_REDEEMED_TOPIC) redeemedManagers.add(contract)
-        const sent = decodeNttTransferSent(log.topics, log.data ?? '')
-        if (sent) sentLogs.push({ manager: contract, sent })
-        const received = decodeNttReceivedMessage(log.topics, log.data ?? '')
-        if (received) sourceChains.push(received.sourceChain)
-      }
-      const seenNtt = new Set<string>()
-      for (const t of dedupeTransferEvents(transferRows.filter(leg => {
-        const minter = nttMinters.get(leg.asset_id)
-        return !!minter && leg.to_acc?.toLowerCase() === minter
-      }))) {
-        const key = `${t.block_height}:${t.event_index}`
-        if (seenNtt.has(key)) continue
-        seenNtt.add(key)
-        const a = asset(t.asset_id)
-        const row: ActivityRow = {
-          type: 'xcm', blockHeight: t.block_height, timestamp: t.ts, eventIndex: t.event_index, extrinsicIndex: t.extrinsic_index,
-          who: t.from_acc ? accountRef(t.from_acc) : null, to: null, asset: a, assetIn: null, assetOut: null,
-          amount: t.amount, amountIn: null, amountOut: null, valueUsd: usdValue(prices, a.assetId, t.amount, a.decimals),
-          xcmDir: 'out', bridge: 'Wormhole', linkBlock: t.block_height, linkIndex: t.extrinsic_index,
-        }
-        const manager = nttMinterH160(nttMinters.get(t.asset_id) ?? '')
-        const candidates = sentLogs.filter(s => s.manager === manager && !s.claimed)
-        const match = candidates.find(s => s.sent.amount === t.amount) ?? (candidates.length === 1 ? candidates[0] : undefined)
-        if (match) {
-          match.claimed = true
-          const dest = nttDestination(match.sent)
-          const ref = dest ? externalChainRef(dest.urn, dest.account) : null
-          if (ref) {
-            row.destChain = ref.chain
-            row.destParachainId = ref.paraId
-            row.destAccount = ref.account
-          }
-        }
-        rows.push(row)
-      }
-      for (const e of events) {
-        if (e.event_name !== 'Currencies.Deposited') continue
-        const args = (safeJson(e.args_json) ?? {}) as Record<string, unknown>
-        const who = argStr(args, 'who')
-        const cid = argInt(args, 'currencyId', 'currency_id')
-        const amount = argStr(args, 'amount')
-        const minter = nttMinters.get(cid)
-        if (!minter || !who || RESERVED_ACCOUNT_RE.test(who)) continue
-        if (!redeemedManagers.has(nttMinterH160(minter))) continue
-        const a = asset(cid)
-        // One message names one chain; a batch of redeems from different chains
-        // names none for this row rather than guessing which message minted it.
-        const chains = [...new Set(sourceChains)]
-        const origin = chains.length === 1 ? nttOriginChain(chains[0]) : null
-        rows.push({
-          type: 'xcm', blockHeight: e.block_height, timestamp: e.ts, eventIndex: e.event_index, extrinsicIndex: e.extrinsic_index,
-          who: accountRef(who), to: null, asset: a, assetIn: null, assetOut: null,
-          amount, amountIn: null, amountOut: null, valueUsd: usdValue(prices, a.assetId, amount, a.decimals),
-          xcmDir: 'in', bridge: 'Wormhole', ...(origin ?? {}), linkBlock: e.block_height, linkIndex: e.extrinsic_index,
-        })
-      }
-    }
-
-    const liqRouteEndpoints = routerRouteEndpoints(events)
-    const liqRows = suppressPositionCreatedCompanions(events
+    const liqRows = events
       .filter(e => LIQUIDITY_EVENTS.includes(e.event_name))
       .map(e => {
         const args = (safeJson(e.args_json) ?? {}) as Record<string, unknown>
@@ -14605,8 +7591,6 @@ export async function getExtrinsicActivity(height: number, index: number, opts: 
           event_index: e.event_index,
         }
       })
-      .filter(r => !isRouterHopLiquidity(r.event_name, r.who, r.asset_id,
-        r.extrinsic_index == null ? undefined : liqRouteEndpoints.get(r.extrinsic_index))))
     await fillMissingLiquidityAmounts(liqRows)
     const createCands: { row: ActivityRow; pool: string; assetB: number }[] = []
     for (const r of liqRows) {
@@ -14623,12 +7607,6 @@ export async function getExtrinsicActivity(height: number, index: number, opts: 
     }
     // Pool creations render both seed legs + their combined block-time value.
     await enrichPoolCreations(createCands)
-
-    const stakingEvents = suppressGigaCompanionEvents(events.filter(e => STAKING_EVENT_NAMES.includes(e.event_name)))
-    for (const e of stakingEvents) {
-      const built = stakingRowFromEvent(e, prices, { signerFallback: signer })
-      if (built) rows.push(built.row)
-    }
 
     const voteEvents = events.filter(e => e.event_name === 'ConvictionVoting.Voted' || e.event_name === 'Democracy.Voted')
     const convictionCalls = new Map<string, { ref: string | null; details: VoteDetails }>()
@@ -14691,62 +7669,14 @@ export async function getExtrinsicActivity(height: number, index: number, opts: 
       rows.push(voteActivityRow(collectiveVoteRow(e, hdx)))
     }
 
-    const eventIndices = events.map(e => e.event_index).join(',')
-    if (eventIndices) {
-      const mmRes = await client.query({
-        query: `SELECT block_height, event_index, toString(block_timestamp) AS ts, event_name, account_id, asset_address, pool_address,
-                  if(event_name='LiquidationCall', JSONExtractString(decoded_args_json,'liquidatedCollateralAmount'), amount) AS amount
-                FROM price_data.raw_money_market_events
-                WHERE block_height = {h:UInt32}
-                  AND event_index IN (${eventIndices})
-                  AND lower(ifNull(pool_address, '')) IN (${configuredMmPoolsSql()})
-                  AND event_name IN ('Supply','Borrow','Repay','Withdraw','LiquidationCall')
-                  ${mmStakingPlumbingExclusionSql()}`,
-        query_params: { h: height },
-        format: 'JSONEachRow',
-      })
-      for (const r of await mmRes.json<{ block_height: number; event_index: number; ts: string; event_name: string; account_id: string | null; asset_address: string; pool_address: string | null; amount: string }>()) {
-        const aid = assetIdFromMmAddress(r.asset_address)
-        const a = aid != null ? asset(aid) : null
-        rows.push({
-          type: 'mm', blockHeight: r.block_height, timestamp: r.ts, eventIndex: r.event_index, extrinsicIndex: index,
-          who: r.account_id ? accountRef(r.account_id) : null, to: null, asset: a, assetIn: null, assetOut: null,
-          amount: r.amount, amountIn: null, amountOut: null,
-          valueUsd: a ? usdValue(prices, a.assetId, r.amount, a.decimals) : null,
-          mmAction: r.event_name, ...moneyMarketActivityFields(r.pool_address), linkBlock: r.block_height, linkIndex: index,
-        })
-      }
-    }
-
-    // OTC place/pull/fill. No separate hook variant is needed here —
-    // getBlockHookActivity covers the historical hook-context Placed/Cancelled
-    // events (extrinsic_index NULL); Filled/PartiallyFilled always carry an
-    // extrinsic_index, so every fill is covered by this per-extrinsic path.
-    const otcEvents = events.filter(e => OTC_EVENT_NAMES.includes(e.event_name))
-    if (otcEvents.length) {
-      const lookupIds = otcEvents.map(e => argInt((safeJson(e.args_json) ?? {}) as Record<string, unknown>, 'orderId'))
-      const placedById = await getOtcPlacedLegsByOrderId(lookupIds)
-      for (const e of otcEvents) {
-        const row = otcRowFromEvent(e, prices, placedById, { signerFallback: signer })
-        if (row) rows.push(row)
-      }
-    }
-    // A Fill settles peer-to-peer (real Transfer legs between taker and maker),
-    // unlike an AMM swap's pool-internal Withdrawn/Deposited — so its legs must
-    // be dropped here too, the same way module-account legs already are, or
-    // every fill would double as spurious transfer rows.
-    const hasOtcFill = otcEvents.some(e => e.event_name === 'OTC.Filled' || e.event_name === 'OTC.PartiallyFilled')
-
     const semanticExtrinsic = rows.length > 0
     const createdPools = new Set(liqRows.filter(r => r.event_name === 'XYK.PoolCreated').map(r => r.pool_acc).filter(Boolean))
     const pools = ammPoolAccounts()
-    const mmReserves = await mmReserveAccountIds()
     for (const t of dedupeTransferEvents(transferRows)) {
       if (!t.from_acc || !t.to_acc || !t.amount) continue
       const moduleLeg = /^0x(6d6f646c|7369626c|70617261|506172656e74)/.test(t.from_acc) || /^0x(6d6f646c|7369626c|70617261|506172656e74)/.test(t.to_acc)
       const poolLeg = pools.has(t.from_acc.toLowerCase()) || pools.has(t.to_acc.toLowerCase())
-        || mmReserves.has(t.from_acc.toLowerCase()) || mmReserves.has(t.to_acc.toLowerCase())
-      if (semanticExtrinsic && (moduleLeg || poolLeg || hasOtcFill || createdPools.has(t.to_acc) || createdPools.has(t.from_acc))) continue
+      if (semanticExtrinsic && (moduleLeg || poolLeg || createdPools.has(t.to_acc) || createdPools.has(t.from_acc))) continue
       const a = asset(t.asset_id)
       rows.push({
         type: 'transfer', blockHeight: t.block_height, timestamp: t.ts, eventIndex: t.event_index, extrinsicIndex: t.extrinsic_index,
@@ -14756,53 +7686,12 @@ export async function getExtrinsicActivity(height: number, index: number, opts: 
       })
     }
 
-    // A DCA-scheduling extrinsic performs no trades itself — surface its
-    // schedule's FIRST execution as the one representative row (the schedule
-    // can run for months; the full list lives on the schedule page, one click
-    // away through the execution detail).
-    for (const e of events.filter(ev => ev.event_name === 'DCA.Scheduled')) {
-      const sArgs = (safeJson(e.args_json) ?? {}) as Record<string, unknown>
-      const scheduleId = Number(sArgs.id)
-      if (!Number.isFinite(scheduleId)) continue
-      const order = (sArgs.order ?? {}) as Record<string, unknown>
-      const aIn = asset(Number(order.assetIn ?? 0))
-      const aOut = asset(Number(order.assetOut ?? 0))
-      const owner = typeof sArgs.who === 'string' ? sArgs.who : signer
-      const exRes = await client.query({
-        query: `SELECT block_height, toString(block_timestamp) AS ts, event_index, extrinsic_index,
-                       toString(amount_in) AS amount_in, toString(amount_out) AS amount_out
-                FROM price_data.dca_events FINAL
-                WHERE id = {sid:UInt64} AND event_name = 'DCA.TradeExecuted'
-                ORDER BY block_height ASC, event_index ASC LIMIT 1`,
-        query_params: { sid: scheduleId }, format: 'JSONEachRow',
-      })
-      for (const x of await exRes.json<{ block_height: number; ts: string; event_index: number; extrinsic_index: number | null; amount_in: string; amount_out: string }>()) {
-        rows.push({
-          type: 'dca', blockHeight: x.block_height, timestamp: x.ts, eventIndex: x.event_index, extrinsicIndex: x.extrinsic_index,
-          who: owner ? accountRef(owner) : null, to: null, asset: null, assetIn: aIn, assetOut: aOut,
-          amount: null, amountIn: x.amount_in, amountOut: x.amount_out,
-          valueUsd: usdValue(prices, aOut.assetId, x.amount_out, aOut.decimals),
-          dca: true, dcaScheduleId: scheduleId, linkBlock: x.block_height, linkIndex: x.extrinsic_index,
-        })
-      }
-    }
-
-    rows.push(...await getRecentRewardClaims(100, undefined, undefined, undefined, undefined, height, index))
-
     const seen = new Set<string>()
     const deduped = await suppressActivityPlumbing(rows.filter(r => {
-      const key = `${r.type}:${r.blockHeight}:${r.extrinsicIndex ?? ''}:${r.asset?.assetId ?? r.assetIn?.assetId ?? ''}:${r.who?.accountId ?? ''}:${r.to?.accountId ?? ''}:${r.amount ?? r.amountIn ?? ''}:${r.amountOut ?? ''}:${r.voteRef ?? ''}:${r.mmAction ?? r.stakingAction ?? r.liqAction ?? ''}`
+      const key = `${r.type}:${r.blockHeight}:${r.extrinsicIndex ?? ''}:${r.asset?.assetId ?? r.assetIn?.assetId ?? ''}:${r.who?.accountId ?? ''}:${r.to?.accountId ?? ''}:${r.amount ?? r.amountIn ?? ''}:${r.amountOut ?? ''}:${r.voteRef ?? ''}:${r.liqAction ?? ''}`
       if (seen.has(key)) return false
       seen.add(key)
       return true
-    }).filter(r => {
-      // A module account never lends or borrows as a user: the router executor's Aave
-      // hops are route plumbing, which is why every enumerated feed drops them through
-      // `userMm`. Unconditional here for the same reason — a routed trade emits those
-      // hops whether or not the route also passed through a stablepool, so gating this
-      // on a surviving liquidity row surfaced them the moment routerHopLiquiditySql
-      // removed the pool leg.
-      return !(r.type === 'mm' && isModuleAcct(r.who))
     }).filter((r, _i, all) => {
       // Consolidate liquidity-routed mechanics: when this extrinsic carries a liquidity
       // add/remove, routing into or out of the pool share is that action's own mechanics
@@ -14810,16 +7699,12 @@ export async function getExtrinsicActivity(height: number, index: number, opts: 
       if (!all.some(x => x.type === 'liquidity')) return true
       return !(r.type === 'trade' && ((r.assetIn && isShareAssetId(r.assetIn.assetId)) || (r.assetOut && isShareAssetId(r.assetOut.assetId))))
     }))
-    await Promise.all([
-      applyHistoricalUsd(deduped, activityHistPick),
-      applyXcmJourneys(deduped),
-      ...(opts.revenue === false ? [] : [applyActivityRevenue(deduped)]),
-    ])
+    await applyHistoricalUsd(deduped, activityHistPick)
     return deduped
   })
 }
 
-export async function getBlockActivity(height: number, opts: ActivityPageOptions = {}): Promise<ActivityRow[]> {
+export async function getBlockActivity(height: number): Promise<ActivityRow[]> {
   return cached(`explorer:block-activity:${height}`, 10000, async () => {
     const extRes = await client.query({
       query: `SELECT DISTINCT extrinsic_index
@@ -14833,14 +7718,13 @@ export async function getBlockActivity(height: number, opts: ActivityPageOptions
       .map(r => r.extrinsic_index)
       .filter(i => Number.isInteger(i))
 
-    const [extRows, hookRows, dcaFailureRows] = await Promise.all([
+    const [extRows, hookRows] = await Promise.all([
       Promise.all(extIndices.map(i => getExtrinsicActivity(height, i))).then(parts => parts.flat()),
       getBlockHookActivity(height),
-      getRecentDcaFailures(100, undefined, undefined, undefined, undefined, height),
     ])
 
     const seen = new Set<string>()
-    const merged = (await suppressActivityPlumbing([...extRows, ...hookRows, ...dcaFailureRows]
+    const merged = (await suppressActivityPlumbing([...extRows, ...hookRows]
       .filter(r => {
         const key = `${r.type}:${r.blockHeight}:${r.extrinsicIndex ?? ''}:${r.eventIndex ?? ''}:${r.asset?.assetId ?? r.assetIn?.assetId ?? ''}:${r.assetOut?.assetId ?? ''}:${r.who?.accountId ?? ''}:${r.to?.accountId ?? ''}:${r.amount ?? r.amountIn ?? ''}:${r.amountOut ?? ''}`
         if (seen.has(key)) return false
@@ -14853,11 +7737,7 @@ export async function getBlockActivity(height: number, opts: ActivityPageOptions
         if (ax !== bx) return ax - bx
         return (a.eventIndex ?? 0) - (b.eventIndex ?? 0)
       })
-    await Promise.all([
-      applyHistoricalUsd(merged, activityHistPick),
-      applyXcmJourneys(merged),
-      ...(opts.revenue === false ? [] : [applyActivityRevenue(merged)]),
-    ])
+    await applyHistoricalUsd(merged, activityHistPick)
     return merged
   })
 }
@@ -14865,9 +7745,9 @@ export async function getBlockActivity(height: number, opts: ActivityPageOptions
 async function getBlockHookActivity(height: number): Promise<ActivityRow[]> {
   const prices = await ensurePrices()
   const names = SWAP_EVENTS.map(n => `'${n}'`).join(',')
-  const transferPlumbing = [...ammPoolAccounts(), ...(await mmReserveAccountIds())]
+  const transferPlumbing = [...ammPoolAccounts()]
   const transferPlumbingList = transferPlumbing.length ? transferPlumbing.map(a => `'${a}'`).join(',') : "''"
-  const [swapRes, dcaRes, xcmInRows, xcmOutRemoteRows, stakingRes, transferRes, liquidityRes, mmRes, otcRes] = await Promise.all([
+  const [swapRes, xcmInRows, xcmOutRemoteRows, transferRes, liquidityRes] = await Promise.all([
     client.query({
       query: `SELECT event_index, event_name, args_json, toString(block_timestamp) AS ts
               FROM price_data.raw_events
@@ -14875,32 +7755,12 @@ async function getBlockHookActivity(height: number): Promise<ActivityRow[]> {
                 AND extrinsic_index IS NULL
                 AND event_name IN (${names})
                 ${NOT_ROUTER_HOP}
-                ${NOT_DCA_FEE_LEG}
-              ORDER BY event_index`,
-      query_params: { h: height },
-      format: 'JSONEachRow',
-    }),
-    client.query({
-      query: `SELECT event_index, toString(id) AS id, who, amount_in, amount_out, toString(block_timestamp) AS ts
-              FROM price_data.dca_events FINAL
-              WHERE block_height = {h:UInt32} AND event_name = 'DCA.TradeExecuted'
               ORDER BY event_index`,
       query_params: { h: height },
       format: 'JSONEachRow',
     }),
     xcmInRowsForBlocks([height], prices),
     xcmOutRemoteRowsForBlocks([height], prices),
-    // Extrinsic-less staking (e.g. CollatorRewards.CollatorRewarded, paid from
-    // on_initialize with no extrinsic) — same event list/suppression as
-    // getRecentStaking (source of truth for staking's row shape/filters).
-    client.query({
-      query: `SELECT block_height, toString(block_timestamp) AS ts, event_index, extrinsic_index, event_name, args_json
-              FROM price_data.raw_events
-              WHERE block_height = {h:UInt32} AND extrinsic_index IS NULL AND event_name IN (${sqlEventNameList(STAKING_EVENT_NAMES)})
-              ORDER BY event_index`,
-      query_params: { h: height },
-      format: 'JSONEachRow',
-    }),
     // Extrinsic-less transfers (hook-driven treasury/vesting/reward payouts and
     // user↔user moves). Classified with the shared non-plumbing leg filter — NOT
     // a blanket module exclusion — so genuine pallet-pot payouts stay visible and
@@ -14943,82 +7803,17 @@ async function getBlockHookActivity(height: number): Promise<ActivityRow[]> {
       query_params: { h: height },
       format: 'JSONEachRow',
     }),
-    // Money-market events for the block — same event list, configured-pool
-    // allow-list and user-address exclusion as getRecentMoneyMarket (source of
-    // truth). Scoped to the block only (no extrinsic_index column on this
-    // table); rows whose substrate extrinsic DOES resolve are dropped below
-    // since getExtrinsicActivity already covers them.
-    client.query({
-      query: `SELECT block_height, event_index, toString(block_timestamp) AS ts, event_name, account_id, asset_address, pool_address,
-                if(event_name='LiquidationCall', JSONExtractString(decoded_args_json,'liquidatedCollateralAmount'), amount) AS amount
-              FROM price_data.raw_money_market_events
-              WHERE block_height = {h:UInt32}
-                AND event_name IN ('Supply','Borrow','Repay','Withdraw','LiquidationCall')
-                AND lower(ifNull(pool_address, '')) IN (${configuredMmPoolsSql()})
-                AND user_address NOT LIKE '0x6d6f646c%'
-                ${mmStakingPlumbingExclusionSql()}
-              ORDER BY event_index`,
-      query_params: { h: height },
-      format: 'JSONEachRow',
-    }),
-    // Extrinsic-less OTC place/pull (30 historical Placed + 1 Cancelled hook
-    // events) — Filled/PartiallyFilled always carry an extrinsic_index so
-    // they're fully covered by getExtrinsicActivity instead.
-    client.query({
-      query: `SELECT block_height, toString(block_timestamp) AS ts, event_index, extrinsic_index, event_name, args_json
-              FROM price_data.raw_events
-              WHERE block_height = {h:UInt32} AND extrinsic_index IS NULL AND event_name IN (${sqlEventNameList(OTC_EVENT_NAMES)})
-              ORDER BY event_index`,
-      query_params: { h: height },
-      format: 'JSONEachRow',
-    }),
   ])
   const swaps = await swapRes.json<{ event_index: number; event_name: string; args_json: string; ts: string }>()
-  const dcas = await dcaRes.json<{ event_index: number; id: string; who: string; amount_in: string; amount_out: string; ts: string }>()
-  const schedById = await getDcaScheduleLinks(dcas.map(d => d.id))
-  const usedSwap = new Set<number>()
   const rows: ActivityRow[] = []
 
   const swapCandidates = swaps.map(s => {
     const args = (safeJson(s.args_json) ?? {}) as Record<string, unknown>
     return { row: s, args, amounts: swapEventAmounts(s.event_name, args) }
   })
-  for (const d of dcas) {
-    const match = swapCandidates.find(s => !usedSwap.has(s.row.event_index) && s.amounts.amountIn === d.amount_in && (!d.amount_out || s.amounts.amountOut === d.amount_out))
-      ?? swapCandidates.find(s => !usedSwap.has(s.row.event_index) && s.amounts.amountIn === d.amount_in)
-    if (match) usedSwap.add(match.row.event_index)
-    const aIn = match ? asset(match.amounts.assetIn) : null
-    const aOut = match ? asset(match.amounts.assetOut) : null
-    const sched = schedById.get(d.id)
-    rows.push({
-      type: 'trade',
-      blockHeight: height,
-      timestamp: d.ts,
-      eventIndex: match?.row.event_index ?? d.event_index,
-      extrinsicIndex: null,
-      who: d.who && ACCOUNT_RE.test(d.who) ? accountRef(d.who) : null,
-      to: null,
-      asset: null,
-      assetIn: aIn,
-      assetOut: aOut,
-      amount: null,
-      amountIn: d.amount_in,
-      amountOut: d.amount_out,
-      valueUsd: aOut ? usdValue(prices, aOut.assetId, d.amount_out, aOut.decimals) : null,
-      dca: true,
-      dcaScheduleId: Number(d.id) || undefined,
-      linkBlock: sched?.block ?? height,
-      linkIndex: sched?.idx ?? null,
-    })
-  }
-
   for (const s of swapCandidates) {
-    if (usedSwap.has(s.row.event_index)) continue
     const aOut = asset(s.amounts.assetOut)
     const who = argStr(s.args, 'who')
-    // Drop DCA keeper-fee legs: an owner-attributed pallet-internal swap that
-    // didn't match a DCA.TradeExecuted above is the fee leg, not a user trade.
-    if (isDcaFeeLegSwap(null, who)) continue
     rows.push({
       type: 'trade',
       blockHeight: height,
@@ -15043,20 +7838,6 @@ async function getBlockHookActivity(height: number): Promise<ActivityRow[]> {
   rows.push(...xcmInRows)
   rows.push(...xcmOutRemoteRows)
 
-  // Extrinsic-less staking — mirrors getRecentStaking's construction via the
-  // shared stakingRowFromEvent helper.
-  const stakingEvents = suppressGigaCompanionEvents(
-    await stakingRes.json<{ block_height: number; ts: string; event_index: number; extrinsic_index: number | null; event_name: string; args_json: string }>())
-  const seenStaking = new Set<string>()
-  for (const r of stakingEvents) {
-    const built = stakingRowFromEvent(r, prices)
-    if (!built) continue
-    const key = `${r.block_height}:e:${r.event_name}:${built.who}:${built.assetId}:${built.amount}`
-    if (seenStaking.has(key)) continue
-    seenStaking.add(key)
-    rows.push(built.row)
-  }
-
   // Extrinsic-less transfers — same shape as toTransferRow in getRecentActivity,
   // collapsed across event names by the shared dedupeTransferEvents helper (the
   // same one getExtrinsicActivity uses for its per-extrinsic transfer legs).
@@ -15075,7 +7856,7 @@ async function getBlockHookActivity(height: number): Promise<ActivityRow[]> {
   // Extrinsic-less liquidity — mirrors getRecentLiquidity's construction
   // (including its fillMissingLiquidityAmounts backfill, a no-op here since it
   // only applies to extrinsic-scoped rows).
-  const liqRows = suppressPositionCreatedCompanions(await liquidityRes.json<LiquidityAmountCandidate & { ts: string }>())
+  const liqRows = await liquidityRes.json<LiquidityAmountCandidate & { ts: string }>()
   await fillMissingLiquidityAmounts(liqRows)
   const seenLiquidity = new Set<string>()
   for (const r of liqRows) {
@@ -15089,41 +7870,6 @@ async function getBlockHookActivity(height: number): Promise<ActivityRow[]> {
       ...liquidityRowAmount(r.event_name, prices, a.assetId, r.amount, a.decimals), amountIn: null, amountOut: null,
       liqAction: liqActionFor(r.event_name),
     })
-  }
-
-  // Money-market events with no resolvable substrate extrinsic — mirrors
-  // getRecentMoneyMarket's construction (including the userMm module-account
-  // filter getRecentActivity applies on top for the 'mm' category); rows whose
-  // extrinsic DOES resolve are covered by getExtrinsicActivity already.
-  const mmEv = await mmRes.json<{ block_height: number; event_index: number; ts: string; event_name: string; account_id: string | null; asset_address: string; pool_address: string | null; amount: string }>()
-  const mmExt = await extrinsicIndexFor(mmEv.map(r => [r.block_height, r.event_index] as [number, number | null]))
-  for (const r of mmEv) {
-    if (mmExt.has(`${r.block_height}:${r.event_index}`)) continue
-    const aid = assetIdFromMmAddress(r.asset_address)
-    const a = aid != null ? asset(aid) : null
-    const who = r.account_id ? accountRef(r.account_id) : null
-    if (isModuleAcct(who)) continue
-    rows.push({
-      type: 'mm', blockHeight: r.block_height, timestamp: r.ts, eventIndex: r.event_index, extrinsicIndex: null,
-      who, to: null, asset: a, assetIn: null, assetOut: null,
-      amount: r.amount, amountIn: null, amountOut: null,
-      valueUsd: a ? usdValue(prices, a.assetId, r.amount, a.decimals) : null,
-      mmAction: r.event_name, ...moneyMarketActivityFields(r.pool_address), linkBlock: r.block_height, linkIndex: null,
-    })
-  }
-
-  // Extrinsic-less OTC place/pull — same construction as getRecentOtc's
-  // hook-context handling. There is no signer to resolve here, which is exactly
-  // why the actor comes from the order's own reserve: these rows used to render
-  // with no account at all.
-  const otcHookEvents = await otcRes.json<RawOtcActivityEvent>()
-  if (otcHookEvents.length) {
-    const lookupIds = otcHookEvents.map(e => argInt((safeJson(e.args_json) ?? {}) as Record<string, unknown>, 'orderId'))
-    const placedById = await getOtcPlacedLegsByOrderId(lookupIds)
-    for (const e of otcHookEvents) {
-      const row = otcRowFromEvent(e, prices, placedById, {})
-      if (row) rows.push(row)
-    }
   }
 
   return rows
@@ -15148,7 +7894,6 @@ async function getBlockHookActivity(height: number): Promise<ActivityRow[]> {
 // extrinsic's signer, so a hop names the person who caused it rather than the
 // router pot that executed it.
 const POOL_VENUE_EVENTS: Record<string, string[]> = {
-  stableswap: ['Stableswap.SellExecuted', 'Stableswap.BuyExecuted'],
   xyk: ['XYK.SellExecuted', 'XYK.BuyExecuted'],
 }
 export async function getPoolSwaps(poolId: number, members: number[], kind: string, limit = 25): Promise<ActivityRow[]> {
@@ -15247,20 +7992,13 @@ async function assetActivityPage(assetId: number, type = 'all', limit = 40, offs
     const wantTrades = type === 'all' || type === 'trade' || wantTransfers
     const wantLiquidity = type === 'all' || type === 'liquidity' || wantTrades
     const wantXcm = type === 'all' || type === 'xcm' || wantTransfers
-    const wantMm = type === 'all' || type === 'mm' || wantTransfers
-    // otc folds under the trade chip/type — fetch it whenever trade is (wantTrades
-    // already implies wantTransfers), plus its own `type=otc` request.
-    const wantOtc = type === 'all' || type === 'otc' || wantTrades
-    const wantStaking = type === 'all' || type === 'staking' || wantTransfers
     const wantVotes = (type === 'all' || type === 'vote' || wantTransfers) && assetId === 0
 
     const transfersP: Promise<ActivityRow[]> = wantTransfers ? (async () => {
       const useTransferReadModel = true
       const transferAssetExpr = useTransferReadModel ? 'asset_id' : transferAssetIdSql()
       const transferValueFilter = eventValueFilterSql('{assetId:UInt32}', useTransferReadModel ? 'amount' : `JSONExtractString(args_json,'amount')`, 'block_timestamp', queryFilters, prices, 'asset_transfer_price')
-      // The asset's outbound Wormhole sends are its cross-chain rows (nttInP/nttOutP),
-      // not its transfers — same predicate both sides, so a leg is exactly one of the two.
-      const nttExclusion = nttMinterLegExclusionSql(await nttMinterAccounts(), '{assetId:UInt32}')
+      const nttExclusion = ''
       const res = await client.query({
         query: useTransferReadModel ? `
           SELECT block_height, toString(block_timestamp) AS ts, event_index, extrinsic_index, event_name,
@@ -15309,10 +8047,6 @@ async function assetActivityPage(assetId: number, type = 'all', limit = 40, offs
       return out
     })() : Promise.resolve([])
 
-    const dcaFailuresP = wantTrades
-      ? getRecentDcaFailures(fetchN, from, to, undefined, [assetId])
-      : Promise.resolve([])
-
     // Trades: swaps where the asset is either leg. Grouped per ROUTE, preferring the
     // Router.Executed net summary that touches this asset. A `LIMIT 1 BY` per extrinsic
     // used to collapse the rows before `swapRouteReps` could split them, so a batch
@@ -15329,7 +8063,6 @@ async function assetActivityPage(assetId: number, type = 'all', limit = 40, offs
           ${tradeValueFilter.joinSql}
           WHERE ${bound} AND asset_id = {assetId:UInt32}
             AND who != '${ROUTER_PALLET_ACCT}'
-            AND NOT (extrinsic_index IS NULL AND who != '' AND who NOT LIKE '0x6d6f646c%') ${NOT_LEGACY_DCA_HOP}
             ${tradeValueFilter.predicateSql}
           ORDER BY block_height DESC, extrinsic_index DESC, event_name IN (${ROUTER_NET_EVENTS_SQL}) DESC, event_index DESC
           LIMIT {n:UInt32}` : `
@@ -15342,7 +8075,7 @@ async function assetActivityPage(assetId: number, type = 'all', limit = 40, offs
           FROM price_data.raw_events
           ${tradeValueFilter.joinSql}
           WHERE ${bound}
-            AND event_name IN (${names}) ${NOT_ROUTER_HOP} ${NOT_DCA_FEE_LEG}
+            AND event_name IN (${names}) ${NOT_ROUTER_HOP}
             AND (JSONExtractInt(args_json,'assetIn') = ${assetId} OR JSONExtractInt(args_json,'assetOut') = ${assetId})
             ${tradeValueFilter.predicateSql}
           ORDER BY block_height DESC, extrinsic_index DESC, event_name IN (${ROUTER_NET_EVENTS_SQL}) DESC, event_index DESC
@@ -15351,36 +8084,21 @@ async function assetActivityPage(assetId: number, type = 'all', limit = 40, offs
       })
       const rows = await res.json<RawSwapEventRow>()
       if (!rows.length) return []
-      // DCA owner attribution (executions are unsigned block hooks).
-      const dcaRes = await client.query({
-        query: `SELECT block_height, who, amount_in
-                FROM price_data.dca_events
-                WHERE event_name='DCA.TradeExecuted' AND block_height IN (${[...new Set(rows.map(r => r.block_height))].join(',') || '0'})`,
-        format: 'JSONEachRow',
-      })
-      const dcaByAmount = new Map<string, string>()
-      for (const d of await dcaRes.json<{ block_height: number; who: string; amount_in: string }>()) dcaByAmount.set(`${d.block_height}:${d.amount_in}`, d.who)
       const pairs = rows.map(r => [r.block_height, r.extrinsic_index] as [number, number | null])
-      const [signers, liqExt] = await Promise.all([actorsFor(pairs), liquidationExtrinsics(pairs)])
+      const signers = await actorsFor(pairs)
       const out: ActivityRow[] = []
       // Prefer each route's Router.Executed net summary, but only if it touches the
       // asset (a multi-hop route's net legs may not include it even when a hop does).
       for (const rep of swapRouteReps(rows, r => r.asset_in === assetId || r.asset_out === assetId)) {
-        // Drop DCA keeper-fee legs (SQL already excludes them; defensive net so a
-        // fee leg never surfaces as a phantom "Swap" next to its "DCA" row).
-        if (isDcaFeeLegSwap(rep.extrinsic_index, rep.who)) continue
-        // Skip a liquidation's internal swap — it's surfaced as the mm row instead.
-        if (rep.extrinsic_index != null && liqExt.has(`${rep.block_height}:${rep.extrinsic_index}`)) continue
         const signer = rep.extrinsic_index != null ? signers.get(`${rep.block_height}:${rep.extrinsic_index}`) : undefined
-        const dcaWho = rep.extrinsic_index == null ? dcaByAmount.get(`${rep.block_height}:${rep.amount_in}`) : undefined
-        const actor = signer ?? dcaWho ?? (rep.who && ACCOUNT_RE.test(rep.who) ? rep.who : null)
+        const actor = signer ?? (rep.who && ACCOUNT_RE.test(rep.who) ? rep.who : null)
         const aOut = asset(rep.asset_out)
         out.push({
           type: 'trade', blockHeight: rep.block_height, timestamp: rep.ts, eventIndex: rep.event_index, extrinsicIndex: rep.extrinsic_index,
           who: actor ? accountRef(actor) : null, to: null, asset: null, assetIn: asset(rep.asset_in), assetOut: aOut,
           amount: null, amountIn: rep.amount_in, amountOut: rep.amount_out,
           valueUsd: usdValue(prices, aOut.assetId, rep.amount_out, aOut.decimals),
-          dca: !!dcaWho, linkBlock: rep.extrinsic_index != null ? rep.block_height : null, linkIndex: rep.extrinsic_index,
+          linkBlock: rep.extrinsic_index != null ? rep.block_height : null, linkIndex: rep.extrinsic_index,
         })
       }
       await attachHookSwapActors(out)
@@ -15398,11 +8116,9 @@ async function assetActivityPage(assetId: number, type = 'all', limit = 40, offs
             asset_b AS asset_b,
             pool_account AS pool_acc
           FROM price_data.liquidity_activity
-          ${routerHopLiquiditySql(pageBound, 'asset_id', 'has(asset_refs, {assetId:UInt32})').joinSql}
           WHERE ${pageBound}
             AND event_name IN (${sqlEventNameList(LIQUIDITY_EVENTS)})
             AND who NOT LIKE '0x6d6f646c%'
-            ${routerHopLiquiditySql(pageBound).predicateSql}
             AND has(asset_refs, {assetId:UInt32})
           ORDER BY block_height DESC, event_index DESC
           LIMIT {n:UInt32}`,
@@ -15535,114 +8251,6 @@ async function assetActivityPage(assetId: number, type = 'all', limit = 40, offs
         .then(rows => rows.filter(row => row.asset?.assetId === assetId))
       : Promise.resolve([])
 
-    // Wormhole NTT sends and arrivals of this asset — the same builders every other
-    // surface uses, scoped by the token filter they already push into SQL.
-    const nttOutP: Promise<ActivityRow[]> = wantXcm
-      ? getRecentNttOut(fetchN, from, to, undefined, 0, { ...fixedAssetFilters, token: String(assetId) })
-        .then(rows => rows.filter(row => row.asset?.assetId === assetId))
-      : Promise.resolve([])
-    const nttInP: Promise<ActivityRow[]> = wantXcm
-      ? getRecentNttIn(fetchN, from, to, undefined, 0, { ...fixedAssetFilters, token: String(assetId) })
-        .then(rows => rows.filter(row => row.asset?.assetId === assetId))
-      : Promise.resolve([])
-
-    // Money market: supply/borrow/repay/withdraw/liquidation on the asset's reserve.
-    // The reserve is often not the queried id. For an aToken (aPRIME 1043) it is the
-    // UNDERLYING asset (PRIME 43) — the MM activity for the aToken IS the
-    // supply/withdraw flow on that reserve. For a main asset whose collateral is a
-    // pool share it is the SHARE token: GDOT 69's reserve is 2-Pool-GDOT 690, so
-    // resolving only the direct id left GDOT, GETH and the HUSD* pages with no
-    // money-market rows at all.
-    // Filter by the reserve's ERC20 address in SQL so low-volume reserves aren't
-    // starved by a global recency window.
-    // A row displays the queried asset and carries one raw amount, so a reserve only
-    // qualifies while its units ARE the queried asset's: 2-Pool-PRIME carries 18
-    // decimals where PRIME carries 6, and no single row can hold both bases.
-    const mmP: Promise<ActivityRow[]> = wantMm ? (async () => {
-      const reserveAddrs = [...mmReserveScope(assetId).byAddress]
-        .filter(([, decimals]) => decimals === asset(assetId).decimals)
-        .map(([address]) => address)
-      const mmValueFilter = eventValueFilterSql('{assetId:UInt32}', `if(event_name='LiquidationCall', JSONExtractString(decoded_args_json,'liquidatedCollateralAmount'), amount)`, 'block_timestamp', fixedAssetFilters, prices, 'asset_mm_price')
-      const res = await client.query({
-        query: `SELECT block_height, event_index, toString(block_timestamp) AS ts, event_name, account_id, asset_address, pool_address,
-                  if(event_name='LiquidationCall', JSONExtractString(decoded_args_json,'liquidatedCollateralAmount'), amount) AS amount
-                FROM price_data.raw_money_market_events
-                ${mmValueFilter.joinSql}
-                WHERE ${bound}
-                  AND event_name IN ('Supply','Borrow','Repay','Withdraw','LiquidationCall')
-                  AND user_address NOT LIKE '0x6d6f646c%'
-                  AND lower(ifNull(pool_address, '')) IN (${configuredMmPoolsSql()})
-                  AND lower(ifNull(asset_address, '')) IN ({reserves:Array(String)})
-                  ${mmStakingPlumbingExclusionSql()}
-                  ${mmValueFilter.predicateSql}
-                ORDER BY block_height DESC, event_index DESC LIMIT {n:UInt32}`,
-        query_params: { n: fetchN, assetId, reserves: reserveAddrs }, format: 'JSONEachRow',
-      })
-      const mmEv = await res.json<{ block_height: number; event_index: number; ts: string; event_name: string; account_id: string | null; asset_address: string; pool_address: string | null; amount: string }>()
-      const mmExt = await extrinsicIndexFor(mmEv.map(r => [r.block_height, r.event_index] as [number, number | null]))
-      const out: ActivityRow[] = []
-      // Display the queried asset (the aToken itself, or the plain reserve asset).
-      const a = asset(assetId)
-      for (const r of mmEv) {
-        const xi = mmExt.get(`${r.block_height}:${r.event_index}`) ?? null
-        out.push({
-          type: 'mm', blockHeight: r.block_height, timestamp: r.ts, eventIndex: r.event_index, extrinsicIndex: xi,
-          who: r.account_id ? accountRef(r.account_id) : null, to: null, asset: a, assetIn: null, assetOut: null,
-          amount: r.amount, amountIn: null, amountOut: null, valueUsd: usdValue(prices, a.assetId, r.amount, a.decimals),
-          mmAction: r.event_name, ...moneyMarketActivityFields(r.pool_address), linkBlock: r.block_height, linkIndex: xi,
-        })
-      }
-      return out
-    })() : Promise.resolve([])
-
-    // OTC lifecycle rows inherit their legs from Placed. Restrict all event
-    // kinds by the matching order ids in SQL, then cursor-walk for thresholds
-    // that can only be decided after the order enrichment.
-    const otcP: Promise<ActivityRow[]> = wantOtc ? (async () => {
-      const fetchPage = async (pageBound: string, pageLimit: number): Promise<ActivityRow[]> => {
-        const res = await client.query({
-          query: `SELECT block_height, toString(block_timestamp) AS ts, event_index, extrinsic_index, event_name, args_json
-                  FROM ${otcActivityTable()}
-                  WHERE ${pageBound}
-                    AND event_name IN (${sqlEventNameList(OTC_EVENT_NAMES)})
-                    AND JSONExtractUInt(args_json,'orderId') IN (
-                      SELECT JSONExtractUInt(args_json,'orderId')
-                      FROM ${otcActivityTable()}
-                      WHERE event_name = 'OTC.Placed'
-                        AND (JSONExtractInt(args_json,'assetIn') = {assetId:UInt32}
-                          OR JSONExtractInt(args_json,'assetOut') = {assetId:UInt32})
-                    )
-                  ORDER BY block_height DESC, event_index DESC LIMIT {n:UInt32}`,
-          query_params: { assetId, n: pageLimit }, format: 'JSONEachRow',
-        })
-        const rows = await res.json<RawOtcActivityEvent>()
-        const orderIds = rows.map(r => argInt((safeJson(r.args_json) ?? {}) as Record<string, unknown>, 'orderId'))
-        const [placedById, signers] = await Promise.all([
-          getOtcPlacedLegsByOrderId(orderIds),
-          actorsFor(rows.filter(r => r.event_name === 'OTC.Placed' || r.event_name === 'OTC.Cancelled').map(r => [r.block_height, r.extrinsic_index] as [number, number | null])),
-        ])
-        const out: ActivityRow[] = []
-        for (const r of rows) {
-          const signer = r.extrinsic_index != null ? signers.get(`${r.block_height}:${r.extrinsic_index}`) ?? null : null
-          const row = otcRowFromEvent(r, prices, placedById, { signerFallback: signer })
-          if (row) out.push(row)
-        }
-        await applyHistoricalUsd(out, activityHistPick)
-        return out
-      }
-      if (fixedAssetFilters.min != null) {
-        return fetchFilteredDeep(tw, want, fetchPage,
-          row => activityRowMatchesFilters(row, fixedAssetFilters),
-          row => row.blockHeight, row => row.eventIndex ?? -1,
-          row => `${row.blockHeight}:${row.eventIndex}`)
-      }
-      return fetchPage(bound, fetchN)
-    })() : Promise.resolve([])
-
-    const stakingP: Promise<ActivityRow[]> = wantStaking ? getRecentStaking(fetchN, from, to, undefined, 0, queryFilters, assetId) : Promise.resolve([])
-    const rewardsP: Promise<ActivityRow[]> = (type === 'all' || type === 'transfer' || type === 'liquidity' || type === 'mm')
-      ? getRecentRewardClaims(fetchN, from, to, undefined, [assetId], undefined, undefined, fixedAssetFilters)
-      : Promise.resolve([])
     // Votes reach an asset feed only for HDX (`wantVotes` requires assetId 0),
     // which is what governance capital is denominated in. Both vote sources join
     // it, through the same builder every other feed uses, so the HDX page and the
@@ -15651,20 +8259,13 @@ async function assetActivityPage(assetId: number, type = 'all', limit = 40, offs
       ? getVoteFeedRows(fetchN, from, to, 0, queryFilters, collectiveVotesAdmitted(queryFilters)).then(rows => rows.map(voteActivityRow))
       : Promise.resolve([])
 
-    const [transfers, trades, dcaFailures, rewards, liquidity, xcm, xcmIn, xcmOutRemote, xcmExecuted, nttOut, nttIn, mm, otc, staking, votes] = await Promise.all([transfersP, tradesP, dcaFailuresP, rewardsP, liquidityP, xcmP, xcmInP, xcmOutRemoteP, xcmExecutedP, nttOutP, nttInP, mmP, otcP, stakingP, votesP])
+    const [transfers, trades, liquidity, xcm, xcmIn, xcmOutRemote, xcmExecuted, votes] = await Promise.all([transfersP, tradesP, liquidityP, xcmP, xcmInP, xcmOutRemoteP, xcmExecutedP, votesP])
     // Drop transfer legs of the asset's own trades (hops/fee legs share the extrinsic).
     const tradeExtrinsics = new Set(trades.filter(t => t.extrinsicIndex != null).map(t => `${t.blockHeight}:${t.extrinsicIndex}`))
-    const stakingExtrinsics = activityExtrinsicSet(staking)
-    const mmExtrinsics = activityExtrinsicSet(mm)
-    const otcExtrinsics = activityExtrinsicSet(otc)
     const userTransfers = transfers.filter(t =>
-      !(t.extrinsicIndex != null && tradeExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)) &&
-      !(t.extrinsicIndex != null && stakingExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)) &&
-      !(t.extrinsicIndex != null && mmExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)) &&
-      !(t.extrinsicIndex != null && otcExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)))
+      !(t.extrinsicIndex != null && tradeExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)))
     const userTrades = dropShareRoutedTrades(trades, activityExtrinsicSet(liquidity))
-    const userMm = mm.filter(r => !isModuleAcct(r.who))
-    let rows = await suppressActivityPlumbing([...userTransfers, ...userTrades, ...dcaFailures, ...rewards, ...liquidity, ...staking, ...votes, ...xcm, ...xcmIn, ...xcmOutRemote, ...xcmExecuted, ...nttOut, ...nttIn, ...userMm, ...otc])
+    let rows = await suppressActivityPlumbing([...userTransfers, ...userTrades, ...liquidity, ...votes, ...xcm, ...xcmIn, ...xcmOutRemote, ...xcmExecuted])
     if (type !== 'all') rows = rows.filter(r => activityTypeMatchesFamily(r.type, type))
     rows = rows.filter(r => activityRowMatchesAction(r, action))
     // The token key is meaningless here (the asset IS fixed); min applies the
@@ -15672,19 +8273,14 @@ async function assetActivityPage(assetId: number, type = 'all', limit = 40, offs
     if (filters.min != null && filters.unit !== 'token') await applyHistoricalUsd(rows, activityHistPick)
     rows = rows.filter(r => activityRowMatchesFilters(r, { ...filters, token: undefined }))
     rows.sort(compareActivityRowsNewestFirst)
-    const saturationSources = type === 'all' ? [transfers, trades, dcaFailures, rewards, liquidity, staking, votes, xcm, xcmIn, xcmOutRemote, xcmExecuted, nttOut, nttIn, mm, otc]
+    const saturationSources = type === 'all' ? [transfers, trades, liquidity, votes, xcm, xcmIn, xcmOutRemote, xcmExecuted]
       : type === 'transfer' ? [transfers]
-        : type === 'trade' ? [trades, dcaFailures, otc]
-          : type === 'liquidity' ? [liquidity, rewards]
-            : type === 'mm' ? [mm, rewards]
-              : type === 'otc' ? [otc]
-                : type === 'xcm' ? [xcm, xcmIn, xcmOutRemote, xcmExecuted, nttOut, nttIn]
-                  : type === 'staking' ? [staking]
-                    : [votes]
+        : type === 'trade' ? [trades]
+          : type === 'liquidity' ? [liquidity]
+            : type === 'xcm' ? [xcm, xcmIn, xcmOutRemote, xcmExecuted]
+              : [votes]
     if (rows.length < want && saturationSources.some(source => source.length >= fetchN)) throw activityQueryTooBroad()
-    const page = rows.slice(offset, offset + limit)
-    await applyXcmJourneys(page)
-    return page
+    return rows.slice(offset, offset + limit)
   })
 }
 
@@ -15696,150 +8292,6 @@ export interface AssetBalanceHistory { asset: AssetRef; current: number; points:
 
 interface HistoryBalanceRow { account_id: string; asset_id: string; b: number; bal: string }
 export interface ScaledBalanceBucket { b: number; value: string }
-
-// Reconstruct end-of-bucket aToken balances without losing integer precision.
-// The anchor is authoritative at anchorBucket; each later scaled-principal delta
-// is applied before multiplying by that bucket's latest liquidity index.
-export function reconstructATokenBalanceBuckets(
-  anchorBucket: number,
-  lastBucket: number,
-  anchorScaled: string,
-  deltas: ScaledBalanceBucket[],
-  indices: ScaledBalanceBucket[],
-): ScaledBalanceBucket[] {
-  const deltaByBucket = new Map<number, bigint>()
-  for (const row of deltas) deltaByBucket.set(row.b, (deltaByBucket.get(row.b) ?? 0n) + BigInt(row.value || '0'))
-  const indexByBucket = new Map<number, bigint>()
-  for (const row of indices) indexByBucket.set(row.b, BigInt(row.value || '0'))
-
-  let scaled = BigInt(anchorScaled || '0')
-  let liquidityIndex = 0n
-  const out: ScaledBalanceBucket[] = []
-  for (let b = Math.max(0, anchorBucket); b <= lastBucket; b++) {
-    scaled += deltaByBucket.get(b) ?? 0n
-    const nextIndex = indexByBucket.get(b)
-    if (nextIndex != null && nextIndex > 0n) liquidityIndex = nextIndex
-    if (liquidityIndex <= 0n) continue
-    const actual = scaled > 0n ? (scaled * liquidityIndex) / ATOKEN_RAY : 0n
-    out.push({ b, value: actual.toString() })
-  }
-  return out
-}
-
-function historyH160(accountId: string): string | null {
-  const id = accountId.toLowerCase()
-  return evmFromAccountId(id)?.toLowerCase() ?? (/^0x[0-9a-f]{64}$/.test(id) ? `0x${id.slice(2, 42)}` : null)
-}
-
-// Add supplied money-market collateral to the per-asset history only. Portfolio
-// value continues to use the indexed per-market collateral/debt snapshots below,
-// avoiding a double count while making the balance tabs agree with live balances.
-async function appendMoneyMarketBalanceRows(
-  accounts: string[],
-  minBlock: number,
-  bucketSize: number,
-  lastBucket: number,
-  rows: HistoryBalanceRow[],
-): Promise<Map<string, number>> {
-  const availableFromBucket = new Map<string, number>()
-  const holders = [...new Set(accounts.map(historyH160).filter(Boolean) as string[])]
-  if (!holders.length) return availableFromBucket
-  const anchorBlock = await aTokenAnchorBlock()
-  if (!anchorBlock) return availableFromBucket
-
-  const tokens = (await getMmReserveTokens()).filter(token => {
-    const market = MM_MARKET_BY_KEY.get(token.marketKey)
-    // The staking-backed market's supplied stHDX is already represented by the
-    // locked HDX wallet curve, matching getAddress's current-balance semantics.
-    return !market?.stakingBacked && assetIdFromMmAddress(token.asset) != null
-  })
-  const contracts = [...new Set(tokens.map(token => token.aToken.toLowerCase()))]
-  if (!contracts.length) return availableFromBucket
-  const anchorBucket = Math.max(0, Math.min(lastBucket, Math.floor((Math.max(anchorBlock, minBlock) - minBlock) / bucketSize)))
-
-  const [anchorRes, deltaRes] = await Promise.all([
-    client.query({
-      query: `SELECT lower(holder) AS holder, lower(contract_address) AS contract,
-                toString(scaled_balance) AS scaled
-              FROM price_data.atoken_scaled_anchor FINAL
-              WHERE holder IN ({holders:Array(String)})
-                AND contract_address IN ({contracts:Array(String)})
-                AND anchor_block = {anchorBlock:UInt32}`,
-      query_params: { holders, contracts, anchorBlock }, format: 'JSONEachRow',
-    }),
-    client.query({
-      query: `SELECT holder, contract_address AS contract,
-                toUInt32(least(intDiv(greatest(block_height, {minBlock:UInt32}) - {minBlock:UInt32}, {bucketSize:UInt32}), {lastBucket:UInt32})) AS b,
-                toString(sum(scaled_delta)) AS delta
-              FROM price_data.atoken_scaled_deltas FINAL
-              WHERE holder IN ({holders:Array(String)})
-                AND contract_address IN ({contracts:Array(String)})
-                AND block_height > {anchorBlock:UInt32}
-              GROUP BY holder, contract, b ORDER BY holder, contract, b`,
-      query_params: { holders, contracts, anchorBlock, minBlock, bucketSize, lastBucket }, format: 'JSONEachRow',
-    }),
-  ])
-  const anchors = await anchorRes.json<{ holder: string; contract: string; scaled: string }>()
-  const deltaRows = await deltaRes.json<{ holder: string; contract: string; b: number; delta: string }>()
-  const state = new Map<string, { holder: string; contract: string; anchor: string; deltas: ScaledBalanceBucket[] }>()
-  for (const row of anchors) {
-    if (BigInt(row.scaled || '0') === 0n) continue
-    const key = `${row.holder}:${row.contract}`
-    state.set(key, { holder: row.holder, contract: row.contract, anchor: row.scaled, deltas: [] })
-  }
-  for (const row of deltaRows) {
-    const key = `${row.holder}:${row.contract}`
-    const entry = state.get(key) ?? { holder: row.holder, contract: row.contract, anchor: '0', deltas: [] }
-    entry.deltas.push({ b: Number(row.b), value: row.delta })
-    state.set(key, entry)
-  }
-  if (!state.size) return availableFromBucket
-
-  const tokenByContract = new Map(tokens.map(token => [token.aToken.toLowerCase(), token]))
-  const usedTokens = [...new Set([...state.values()].map(entry => tokenByContract.get(entry.contract)).filter(Boolean) as MmReserveToken[])]
-  const pools = [...new Set(usedTokens.map(token => token.poolProxy.toLowerCase()))]
-  const reserves = [...new Set(usedTokens.map(token => token.asset.toLowerCase()))]
-  const indexCut = Math.max(anchorBlock, minBlock)
-  const indexRes = await client.query({
-    query: `SELECT pool_address AS pool, reserve_address AS reserve,
-              toUInt32(least(intDiv(greatest(block_height, {indexCut:UInt32}, {minBlock:UInt32}) - {minBlock:UInt32}, {bucketSize:UInt32}), {lastBucket:UInt32})) AS b,
-              toString(argMax(liquidity_index, tuple(block_height,event_index,ingested_at))) AS liquidity_index
-            -- No FINAL, same reason as reserveIndicesNow: the argMax key already
-            -- covers the replacement key and version column.
-            FROM price_data.money_market_reserve_indices
-            WHERE pool_address IN ({pools:Array(String)}) AND reserve_address IN ({reserves:Array(String)})
-            GROUP BY pool, reserve, b ORDER BY pool, reserve, b`,
-    query_params: { pools, reserves, indexCut, minBlock, bucketSize, lastBucket }, format: 'JSONEachRow',
-  })
-  const indicesByReserve = new Map<string, ScaledBalanceBucket[]>()
-  for (const row of await indexRes.json<{ pool: string; reserve: string; b: number; liquidity_index: string }>()) {
-    const key = `${row.pool}:${row.reserve}`
-    const series = indicesByReserve.get(key) ?? []
-    series.push({ b: Number(row.b), value: row.liquidity_index })
-    indicesByReserve.set(key, series)
-  }
-
-  for (const entry of state.values()) {
-    const token = tokenByContract.get(entry.contract)
-    if (!token) continue
-    const reserveId = assetIdFromMmAddress(token.asset)
-    if (reserveId == null) continue
-    const receiptId = UNDERLYING_TO_ATOKEN_ID[reserveId] ?? reserveId
-    const displayId = displayAssetId(receiptId)
-    const indexSeries = indicesByReserve.get(`${token.poolProxy.toLowerCase()}:${token.asset.toLowerCase()}`)
-    if (!indexSeries?.length) continue
-    availableFromBucket.set(String(displayId), anchorBucket)
-    for (const point of reconstructATokenBalanceBuckets(anchorBucket, lastBucket, entry.anchor, entry.deltas, indexSeries)) {
-      rows.push({
-        account_id: `${entry.holder}#mm:${entry.contract}`,
-        asset_id: String(displayId),
-        b: point.b,
-        bal: rescaleRaw(point.value, asset(reserveId).decimals, asset(displayId).decimals),
-      })
-    }
-  }
-  return availableFromBucket
-}
 
 // TS mirror of the `least(intDiv(block_height - minb, bucketSize), lastBucket)`
 // bucket expression every history query shares. The clamp puts the whole ragged
@@ -15993,61 +8445,15 @@ async function getAccountHistory(accounts: string[]): Promise<{ portfolioSeries:
       // portfolio value aren't off by 10^Δ (downactivity divides by the display decimals).
       return { ...r, asset_id: String(did), bal: rescaleRaw(r.bal, asset(r.asset_id).decimals, asset(did).decimals) }
     })
-  // ERC-20-backed holdings (HOLLAR): balances live in contract storage and never
-  // hit raw_balance_observations, so without this the portfolio series shows the
-  // value only in the live-pinned final point — a cliff on tag/account charts.
-  // Reconstruct per-account cumulative bucket balances from the indexed Transfer
-  // logs (verified to reproduce balanceOf exactly) and feed them through the same
-  // fold/price/forward-fill pipeline as observed balances.
-  for (const ea of ERC20_WALLET_ASSETS) {
-    const h160For = new Map<string, string>()
-    for (const a of accounts) {
-      const h160 = historyH160(a)
-      if (h160) h160For.set(h160, a)
-    }
-    const logRes = await client.query({
-      query: `
-        SELECT holder AS w,
-          toUInt32(least(intDiv(greatest(block_height, ${rng.minb}) - ${rng.minb}, ${BUCKET}), ${N})) AS b,
-          toString(sum(balance_delta)) AS net
-        FROM price_data.erc20_transfer_deltas FINAL
-        WHERE contract_address = {c:String} AND holder IN ({ws:Array(String)})
-        GROUP BY w, b ORDER BY w, b`,
-      query_params: { c: ea.contract, ws: [...h160For.keys()] }, format: 'JSONEachRow',
-    }).catch(() => null)
-    if (!logRes) continue
-    let cumBy = ''
-    let cum = 0n
-    for (const r of await logRes.json<{ w: string; b: number; net: string }>()) {
-      if (r.w !== cumBy) { cumBy = r.w; cum = 0n }
-      cum += BigInt(r.net)
-      const accountId = h160For.get(r.w)
-      // '#erc20' pseudo-account: the contract pot forward-fills independently of
-      // the account's (possibly zero-balance) Tokens-side observations of the
-      // same asset and the two sum per bucket like any two tag members.
-      if (accountId) balRows.push({ account_id: `${accountId}#erc20`, asset_id: String(ea.assetId), b: r.b, bal: (cum < 0n ? 0n : cum).toString() })
-    }
-  }
-  const mmAvailableFromBucket = await appendMoneyMarketBalanceRows(accounts, rng.minb, BUCKET, N, balRows)
   const assetIds = [...new Set(balRows.map(r => r.asset_id))]
   if (!assetIds.length) return { portfolioSeries: [], portfolioDates: [], portfolioBlocks: [], balanceHistory: [] }
-  // Open omnipool LP positions (bare + farmed) for the period LP-value reconstruction
-  // below, plus the per-bucket pool state to value them. Fetched here so the position
-  // assets + LRNA(1) can be added to the historical price query.
-  // True historical Omnipool principal (per-block state + ownership intervals), used
-  // instead of the current-shares approximation once its models are complete for the
-  // full history. Loaded before the price query so the assets of historically-owned
-  // (incl. since-closed) positions are priced, and before openPositions so the
-  // fallback reconstruction query is skipped entirely when the new path is active.
-  const omniHist = await loadOmnipoolPrincipalHistory(accounts, rng.minb, BUCKET, N)
-  const omniAssetIds = omniHist ? omniHist.assetIds : []
   // Historical XYK LP principal (direct wallet shareToken balances + collection-5389 farm
   // deposits) valued at pool NAV. Loaded before the price query so both pool assets are priced.
   const xykHist = await loadXykPrincipalHistory(accounts, assetIds.map(Number), rng.minb, BUCKET, N)
-  // aTokens have no price feed of their own — query the underlying reserve's
-  // historical prices for them (priceAssetId maps aPRIME→PRIME, etc.).
+  // Aliased assets have no price feed of their own — query the underlying's
+  // historical prices for them.
   const priceIdFor = new Map(assetIds.map(id => [id, String(priceAssetId(Number(id)))]))
-  const lpPriceIds = omniAssetIds.length ? [...new Set(omniAssetIds.map(id => String(priceAssetId(id))))].concat(String(LRNA_ASSET_ID)) : []
+  const lpPriceIds: string[] = []
   const xykPriceIds = xykHist ? xykHist.underlyingAssetIds.map(id => String(priceAssetId(id))) : []
   const priceIds = [...new Set([...priceIdFor.values(), ...lpPriceIds, ...xykPriceIds])]
   // The daily close states are a replay-safe compact projection of prices. The
@@ -16165,7 +8571,6 @@ async function getAccountHistory(accounts: string[]): Promise<{ portfolioSeries:
         asset: a,
         current: combined[N],
         points: dailyPoints,
-        ...(mmAvailableFromBucket.has(id) ? { availableFrom: tsAt(mmAvailableFromBucket.get(id)!) } : {}),
       })
     }
   }
@@ -16215,94 +8620,6 @@ async function getAccountHistory(accounts: string[]): Promise<{ portfolioSeries:
   // combined tag series sawtooths.
   // account_money_market_position_history is raw_money_market_positions reordered
   // account-first. The raw table is ordered (block_height, user_address, ...), so a
-  // per-account predicate spanning an account's whole life cannot use its primary
-  // index and every bucket pass read the entire table: 6,967,470 rows / 1.25 GiB /
-  // 118 ms / 250 MiB peak per call, and 7.28 TiB across 8,129 calls per 3h — the
-  // largest reader in the instance. Account-first the same call reads 40,960 rows /
-  // 6.57 MiB / 8 ms / 3.54 MiB, byte-identical output.
-  //
-  // The carry-in query below deliberately stays on the raw table: `block_height <
-  // minb` prunes almost perfectly against a block-first key (203,717 rows / 5.6 ms),
-  // and account-first it degrades to 1,738,112 rows / 470 ms.
-  const mmRes = await client.query({
-    query: `SELECT account_id, pool_address AS pool,
-              toUInt32(least(intDiv(block_height - ${rng.minb}, ${BUCKET}), ${N})) AS b,
-              argMax(toFloat64(total_collateral_base), ${moneyMarketPositionOrderSql()}) / 1e8 AS collat,
-              argMax(toFloat64(total_debt_base), ${moneyMarketPositionOrderSql()}) / 1e8 AS debt
-            FROM price_data.account_money_market_position_history
-            WHERE account_id IN (${list}) AND block_height >= ${rng.minb} AND block_height <= ${rng.maxb}
-              AND pool_address IN (${configuredMmPoolsSql()})
-            GROUP BY account_id, pool, b ORDER BY account_id, pool, b`,
-    format: 'JSONEachRow',
-  })
-  const mmRows = await mmRes.json<{ account_id: string; pool: string; b: number; collat: number; debt: number }>()
-  {
-    const mmByPosition = new Map<string, Map<number, { collat: number; debt: number }>>()
-    for (const r of mmRows) {
-      const key = `${r.account_id}:${r.pool}`
-      if (!mmByPosition.has(key)) mmByPosition.set(key, new Map())
-      mmByPosition.get(key)!.set(r.b, { collat: r.collat, debt: r.debt })
-    }
-    // Carry-in per account: last position established before the window opens.
-    const carryRes = await client.query({
-      query: `SELECT account_id, lower(pool_address) AS pool,
-                argMax(toFloat64(total_collateral_base), ${moneyMarketPositionOrderSql()}) / 1e8 AS collat,
-                argMax(toFloat64(total_debt_base), ${moneyMarketPositionOrderSql()}) / 1e8 AS debt
-              FROM price_data.raw_money_market_positions
-              WHERE account_id IN (${list}) AND block_height < ${rng.minb}
-                AND lower(pool_address) IN (${configuredMmPoolsSql()})
-              GROUP BY account_id, pool`,
-      format: 'JSONEachRow',
-    })
-    const carryByPosition = new Map<string, { pool: string; collat: number; debt: number }>()
-    for (const r of await carryRes.json<{ account_id: string; pool: string; collat: number; debt: number }>()) {
-      carryByPosition.set(`${r.account_id}:${r.pool}`, { pool: r.pool, collat: r.collat, debt: r.debt })
-    }
-    // Combined MM net per bucket (sum of per-account, per-market forward-fills).
-    const mmNet = new Array<number>(N + 1).fill(0)
-    const positionKeys = new Set([...mmByPosition.keys(), ...carryByPosition.keys()])
-    const countedPools = new Set(MM_MARKETS.filter(m => !m.stakingBacked).map(m => m.poolProxy))
-    for (const key of positionKeys) {
-      const byBucket = mmByPosition.get(key) ?? new Map<number, { collat: number; debt: number }>()
-      const carry = carryByPosition.get(key)
-      const pool = carry?.pool ?? key.slice(key.lastIndexOf(':') + 1)
-      let lastCollat = carry?.collat ?? 0, lastDebt = carry?.debt ?? 0
-      for (let b = 0; b <= N; b++) {
-        const v = byBucket.get(b)
-        if (v) { lastCollat = v.collat; lastDebt = v.debt }
-        mmNet[b] += (countedPools.has(pool) ? lastCollat : 0) - lastDebt
-      }
-    }
-    // Forward-fill the combined MM net to the end (the position persists between
-    // snapshots); the caller pins the final point to the live net worth, so the
-    // only un-sampled span is the short tail since the last periodic snapshot.
-    for (let b = 0; b <= N; b++) portfolio[b] += mmNet[b]
-  }
-
-  // Omnipool LP principal on the historical curve, valued at WITHDRAW value (asset +
-  // LRNA/hub legs) per bucket from true per-block position state, ownership intervals,
-  // and compact pool state — never current shares or request-time snapshot JSON. When
-  // loadOmnipoolPrincipalHistory returns null, Omnipool value is omitted rather than
-  // approximated (explicit incompleteness).
-  if (omniHist) {
-    const lrnaPx = pxByPriceId.get(String(LRNA_ASSET_ID))
-    const lrnaDec = asset(LRNA_ASSET_ID).decimals
-    const earliest = (m: Map<number, number> | undefined) => { if (m) for (let b = 0; b <= N; b++) if (m.has(b)) return m.get(b)!; return 0 }
-    const fallbackLrna = earliest(lrnaPx)
-    const earliestByPrice = new Map<string, number>()
-    const earliestFor = (priceId: string) => { const c = earliestByPrice.get(priceId); if (c !== undefined) return c; const e = earliest(pxByPriceId.get(priceId)); earliestByPrice.set(priceId, e); return e }
-    for (let b = 0; b <= N; b++) {
-      const lrna = lrnaPx?.get(b) ?? fallbackLrna
-      for (const leg of omniHist.legsByBucket[b]) {
-        const priceId = String(priceAssetId(leg.assetId))
-        const px = pxByPriceId.get(priceId)
-        const price = px?.get(b) ?? earliestFor(priceId)
-        const aDec = asset(leg.assetId).decimals
-        portfolio[b] += (Number(leg.liquidity) / 10 ** aDec) * price + (Number(leg.hub) / 10 ** lrnaDec) * lrna
-      }
-    }
-  }
-
   // Drop leading zero buckets, keep a clean series.
   let start = 0; while (start < portfolio.length - 1 && portfolio[start] === 0) start++
   const alignedBalanceHistory = alignBalanceHistoryDailyPoints(balanceHistory)
@@ -16645,57 +8962,6 @@ function accountSwapTradeArm(list: string, bound: string, tokenIds?: number[]): 
     GROUP BY block_height`
 }
 
-// DCA executions: one trade row each, whichever swap leg the execution ends up
-// rendered against. Executions ONLY — a schedule's failed attempts are rows of the
-// same feed, but they are one of the enumerated sources, so counting them here would
-// count them twice. (That is not a hypothetical: it shifted every page of one DCA
-// account by its two most recent failures until the per-block reconciliation caught
-// it — `block 9807371 counted 2, built 1`.)
-//
-// A token filter has to match the assets the EXECUTION ROW SHOWS, and those come from
-// the swap leg the builder pairs it with, not from its schedule: 525,321 of the
-// 2,549,626 indexed executions (20.6%) belong to a schedule whose `DCA.Scheduled` event
-// predates the runtime that carried the order at all — `{"id":0,"who":"0x…"}` and
-// nothing else — so `dca_schedules` holds 0/0 for them while the row renders the real
-// pair from its leg. Joining the schedule would count those rows only under a HDX
-// filter and drop them under their own token.
-//
-// So the leg is restated instead, over `swap_activity` (the same events, pre-decoded,
-// ordered by block) with the page's own pairing rule: the nearest swap leg BEFORE the
-// execution carrying the same amountIn. `amountIn` is read exactly as the page reads
-// it, which is why the XYK/LBP events — whose amount lives under a different arg and
-// so never matches there — are blanked here too. An execution with no leg renders
-// without assets and is dropped by the token test, which the inner join does for free.
-// The page additionally CONSUMES each leg as it is claimed, so two executions sharing a
-// block, an amount and a differing pair could still be paired differently; that is a
-// per-block disagreement the reconciliation refuses rather than a silent miscount.
-const DCA_LEG_AMOUNT_IN_SQL =
-  `if(event_name IN ('XYK.SellExecuted','XYK.BuyExecuted','LBP.SellExecuted','LBP.BuyExecuted'), '', amount_in)`
-function accountDcaTradeArm(list: string, bound: string, tokenIds?: number[]): ActivityCountArm {
-  const execs = `SELECT e.block_height AS block_height, e.event_index AS event_index, e.amount_in AS amount_in
-    FROM price_data.dca_events AS e FINAL
-    WHERE ${bound.replaceAll('block_height', 'e.block_height').replaceAll('block_timestamp', 'e.block_timestamp')}
-      AND e.event_name = 'DCA.TradeExecuted' AND e.who IN (${list})`
-  if (tokenIds == null) return `SELECT block_height, count() AS rows FROM (${execs}) GROUP BY block_height`
-  if (!tokenIds.length) return emptyActivityCountArm()
-  const ids = tokenIds.join(',')
-  return `SELECT block_height, count() AS rows FROM (
-      SELECT x.block_height AS block_height, x.event_index AS event_index,
-             argMax(l.asset_in, l.event_index) AS leg_in,
-             argMax(l.asset_out, l.event_index) AS leg_out
-      FROM (${execs}) AS x
-      INNER JOIN (
-        SELECT block_height, event_index, asset_in, asset_out, ${DCA_LEG_AMOUNT_IN_SQL} AS amount_in
-        FROM price_data.swap_activity
-        WHERE block_height IN (SELECT block_height FROM (${execs}))
-      ) AS l ON l.block_height = x.block_height AND l.amount_in = x.amount_in
-      WHERE l.event_index < x.event_index
-      GROUP BY block_height, event_index
-    )
-    WHERE leg_in IN (${ids}) OR leg_out IN (${ids})
-    GROUP BY block_height`
-}
-
 // A pool account never appears as `who` on its own lifecycle events — the creator
 // does — so matching only `who` leaves every XYK pair account's Liquidity tab
 // empty. `who` and `pool_account` are never equal (verified across all
@@ -16709,114 +8975,6 @@ function accountDcaTradeArm(list: string, bound: string, tokenIds?: number[]): A
 // collectAccountActivity — so the three cannot drift into classifying differently.
 function liquidityWhoOrPoolSql(list: string): string {
   return `(who IN (${list}) OR (pool_account IN (${list}) AND event_name IN (${sqlEventNameList([...POOL_LIFECYCLE_EVENTS])})))`
-}
-
-// The router uses a stablepool's add_liquidity / remove_liquidity_one_asset as a SWAP
-// primitive: a route hop converting an asset into the pool's share token (or back) emits
-// Stableswap.LiquidityAdded/LiquidityRemoved although nobody provided liquidity. The user's
-// economic action is the route's net trade, so the hop is plumbing (Router.buy 0→10 whose
-// second hop drains the 4-Pool is a trade, not a withdrawal). Only Stableswap is affected —
-// no XYK liquidity event and no module-attributed Omnipool one shares an extrinsic with a
-// router summary, verified chain-wide.
-//
-// Attribution changed with the 2025 router, so a hop is recognised two ways:
-//   - it is attributed to the router executor's own module account; or
-//   - (legacy) it is attributed to the trader and is row-wise identical to a real
-//     single-asset removal, so it is a hop when the extrinsic emitted a router net summary
-//     and the pool's share token is not one of that route's endpoints — an intermediate
-//     share is minted and burned inside the route and never lands anywhere.
-// A share token that IS a route endpoint stays a liquidity row: buying GDOT with DOT really
-// does add liquidity, and dropShareRoutedTrades already drops the mirroring share-legged
-// trade. Endpoints are compared after displayAssetId, since a route names GDOT (69) while
-// its pool emits the 2-Pool-GDOT (690) share.
-const STABLESWAP_LIQUIDITY_EVENTS = ['Stableswap.LiquidityAdded', 'Stableswap.LiquidityRemoved'] as const
-const STABLESWAP_LIQUIDITY_EVENT_SET: ReadonlySet<string> = new Set(STABLESWAP_LIQUIDITY_EVENTS)
-
-function shareTokenFoldSql(assetExpr: string): string {
-  const pairs = Object.entries(SHARE_TOKEN_UNDERLYING_ID)
-  if (!pairs.length) return assetExpr
-  return `transform(${assetExpr}, [${pairs.map(([share]) => share).join(',')}], [${pairs.map(([, main]) => main).join(',')}], ${assetExpr})`
-}
-
-// Shared verbatim by every liquidity_activity read that renders or counts rows, so the
-// feeds cannot classify a hop differently from each other. Returns a JOIN/predicate pair
-// rather than a bare predicate because the route endpoints live in a sibling event: the
-// subquery's columns are renamed so unqualified references in the caller stay unambiguous.
-// It has to run BEFORE the caller's LIMIT — 1.38M of the 1.41M Stableswap liquidity events
-// are router hops, so filtering finished pages would empty them and desync every count.
-//
-// `candidateScopeSql` is the caller's own row filter (its who/pool or asset
-// predicate). When given, the route join is bounded to the blocks that hold a
-// scope-matching Stableswap liquidity row — the only rows whose predicate ever
-// consults the route arrays — instead of aggregating EVERY router route the
-// bound admits. On the full-history account arms (the activity-count sweep runs
-// them with bound = 1) that aggregation hashed all ~1.9M routed extrinsics per
-// query: ~700 MiB of hash table and half the query's rows for routes no row
-// looks at. Identical results by construction: a row outside the scope fails
-// the caller's own WHERE regardless of the join, and every consulted row's
-// block is in the set.
-export function routerHopLiquiditySql(bound: string, assetExpr = 'asset_id', candidateScopeSql?: string): { joinSql: string; predicateSql: string } {
-  // The Omnipool.PositionCreated arm is the SQL twin of
-  // suppressPositionCreatedCompanions: a PositionCreated row renders only when no
-  // LiquidityAdded in its block names the same account and asset — what survives
-  // is `add_token`'s listing grant, the one position with no LiquidityAdded
-  // anywhere. Set-semantic NOT IN, so an unmerged replacement duplicate on the
-  // right side cannot change the answer. The companion lookup is bounded by the
-  // BLOCKS that hold a bound-admitted PositionCreated (a rare event, so the
-  // inner set is tiny), never by `bound` itself: the deep-walk cursor cuts
-  // inside a block at an event index, and a companion LiquidityAdded sits at a
-  // different index of the same block, so reusing the row bound verbatim let a
-  // companion escape suppression whenever a page ended between the two.
-  const routeBlockScope = candidateScopeSql
-    ? `
-            AND block_height IN (
-              SELECT block_height FROM price_data.liquidity_activity
-              WHERE ${bound} AND (${candidateScopeSql})
-                AND event_name IN (${sqlEventNameList([...STABLESWAP_LIQUIDITY_EVENTS])}))`
-    : ''
-  return {
-    joinSql: `LEFT JOIN (
-          SELECT block_height AS rh_block, extrinsic_index AS rh_ext,
-                 groupArray(asset_in) AS rh_route_in, groupArray(asset_out) AS rh_route_out
-          FROM price_data.swap_activity
-          WHERE ${bound} AND event_name IN (${ROUTER_NET_EVENTS_SQL}) AND extrinsic_index IS NOT NULL${routeBlockScope}
-          GROUP BY block_height, extrinsic_index
-        ) rh ON block_height = rh.rh_block AND extrinsic_index = rh.rh_ext`,
-    predicateSql: `AND NOT (event_name IN (${sqlEventNameList([...STABLESWAP_LIQUIDITY_EVENTS])})
-            AND (who LIKE '0x6d6f646c%'
-                 OR (length(rh_route_in) > 0
-                     AND NOT has(arrayConcat(rh_route_in, rh_route_out), ${shareTokenFoldSql(assetExpr)}))))
-            AND NOT (event_name = 'Omnipool.PositionCreated'
-                     AND (block_height, who, asset_id) IN (
-                       SELECT block_height, who, asset_id FROM price_data.liquidity_activity
-                       WHERE event_name = 'Omnipool.LiquidityAdded'
-                         AND block_height IN (
-                           SELECT block_height FROM price_data.liquidity_activity
-                           WHERE ${bound} AND event_name = 'Omnipool.PositionCreated')))`,
-  }
-}
-
-// The in-memory mirror of routerHopLiquiditySql, for the block/extrinsic builders that
-// already hold every event of the block and so need no second query.
-function routerRouteEndpoints(events: readonly { extrinsic_index: number | null; event_name: string; args_json: string }[]): Map<number, Set<number>> {
-  const byExtrinsic = new Map<number, Set<number>>()
-  for (const e of events) {
-    if (e.extrinsic_index == null || !isRouterNet(e.event_name)) continue
-    const args = (safeJson(e.args_json) ?? {}) as Record<string, unknown>
-    const endpoints = byExtrinsic.get(e.extrinsic_index) ?? new Set<number>()
-    for (const side of ['assetIn', 'assetOut'] as const) {
-      const id = Number(args[side])
-      if (Number.isFinite(id)) endpoints.add(displayAssetId(id))
-    }
-    byExtrinsic.set(e.extrinsic_index, endpoints)
-  }
-  return byExtrinsic
-}
-
-export function isRouterHopLiquidity(eventName: string, who: string, assetId: number, routeEndpoints: ReadonlySet<number> | undefined): boolean {
-  if (!STABLESWAP_LIQUIDITY_EVENT_SET.has(eventName)) return false
-  if (who.startsWith('0x6d6f646c')) return true
-  return routeEndpoints != null && !routeEndpoints.has(displayAssetId(assetId))
 }
 
 // Liquidity provision/removal/mining claims: one row per source row, exactly the
@@ -16835,37 +8993,9 @@ export function isRouterHopLiquidity(eventName: string, who: string, assetId: nu
 function accountLiquidityArm(list: string, bound: string, eventNames: readonly string[], tokenIds?: number[]): ActivityCountArm {
   if (!eventNames.length) return emptyActivityCountArm()
   const tokenFilter = armTokenFilter(tokenIds, ids => `hasAny(asset_refs, [${ids}])`)
-  const routerHop = routerHopLiquiditySql(bound, 'asset_id', liquidityWhoOrPoolSql(list))
   return `SELECT block_height, count() AS rows FROM price_data.liquidity_activity
-    ${routerHop.joinSql}
     WHERE ${bound} AND ${liquidityWhoOrPoolSql(list)}
       AND event_name IN (${sqlEventNameList([...eventNames])})
-      ${routerHop.predicateSql}
-      ${tokenFilter}
-    GROUP BY block_height`
-}
-
-// Money-market transactions: one row per source row under the same configured-pool
-// allow-list the page read applies, narrowed to the events the requested action names
-// (`mmAction` IS the event name, so moneyMarketEventNames is that mapping's inverse).
-//
-// The token test resolves the reserve CONTRACT back to the asset the row displays, the
-// same direction `assetIdFromMmAddress` resolves it for the row, and the requested
-// tokens are widened to the reserves they are held through so the arm admits exactly
-// the rows the page's own row test keeps: a row carries its reserve's aliases as
-// assetRefs, so a DOT-reserve row answers to aDOT and a 2-Pool-GDOT row to GDOT.
-// Widening one side alone desynchronises them — a count over rows the page drops, or a
-// page whose rows this arm never counted. The `known` guard keeps an unrecognised
-// address from resolving to asset 0 and being counted under HDX.
-function accountMoneyMarketArm(evmList: string, eventNames: readonly string[], bound: string, tokenIds?: number[]): ActivityCountArm {
-  if (!eventNames.length) return emptyActivityCountArm()
-  const tokenFilter = armTokenFilter(tokenIds && mmTokenMatchIds(tokenIds), ids =>
-    `(${mmAssetKnownSql('asset_address')} AND ${mmAssetIdSql('asset_address')} IN (${ids}))`)
-  return `SELECT block_height, count() AS rows FROM price_data.account_money_market_activity FINAL
-    WHERE ${bound} AND account_id IN (${evmList})
-      AND event_name IN (${sqlEventNameList([...eventNames])})
-      AND lower(ifNull(pool_address, '')) IN (${configuredMmPoolsSql()})
-      ${mmStakingPlumbingExclusionSql()}
       ${tokenFilter}
     GROUP BY block_height`
 }
@@ -16924,18 +9054,6 @@ async function transferCandidatePotFiltersSql(accCond: string[]): Promise<string
     const list = [...poolAccs].map(a => `'${a}'`).join(',')
     parts.push(`AND from_account NOT IN (${list}) AND to_account NOT IN (${list})`)
   }
-  const mmAccounts = await mmReserveAccountIds()
-  if (mmAccounts.size && !accCond.some(a => mmAccounts.has(a))) {
-    const list = [...mmAccounts].map(a => `'${a}'`).join(',')
-    parts.push(`AND from_account NOT IN (${list}) AND to_account NOT IN (${list})`)
-  }
-  // A transfer of an NTT asset to its minter is an outbound Wormhole send — the
-  // cross-chain family's row (getRecentNttOut), which the enumerated sources count and
-  // render for every account including the minter's own. No viewing exception here,
-  // unlike the pots above: their legs have no other row to live in, this one does, so
-  // an exception would render the same leg twice.
-  const nttExclusion = nttMinterLegExclusionSql(await nttMinterAccounts())
-  if (nttExclusion) parts.push(nttExclusion)
   return parts.join('\n                ')
 }
 
@@ -16990,7 +9108,7 @@ function transferCandidateSql(accList: string, bound: string, potFilters: string
 // sets: a liquidation's internal swap and a share-routed pool leg produce no trade row
 // yet still own their extrinsic's transfer legs, which is exactly the distinction the
 // builder draws with `tradeExt` before it drops those rows.
-function semanticExtrinsicSql(list: string, evmList: string, bound: string, enumeratedExtrinsics: [number, number][]): string {
+function semanticExtrinsicSql(list: string, bound: string, enumeratedExtrinsics: [number, number][]): string {
   const arms = [
     `SELECT block_height, assumeNotNull(extrinsic_index) AS extrinsic_index FROM price_data.account_swap_activity FINAL
        WHERE ${bound} AND account IN (${list}) AND extrinsic_index IS NOT NULL`,
@@ -16998,23 +9116,6 @@ function semanticExtrinsicSql(list: string, evmList: string, bound: string, enum
        WHERE ${bound} AND ${liquidityWhoOrPoolSql(list)} AND event_name IN (${sqlEventNameList(LIQUIDITY_EVENTS)})
          AND extrinsic_index IS NOT NULL`,
   ]
-  // Money-market rows are EVM logs; the substrate extrinsic that emitted them is
-  // resolved through raw_events by (block, event) — a primary-key read, the same
-  // lookup extrinsicIndexFor does for the rendered rows.
-  if (evmList) {
-    arms.push(`SELECT block_height, assumeNotNull(extrinsic_index) AS extrinsic_index FROM price_data.raw_events
-       WHERE (block_height, event_index) IN (
-           SELECT block_height, event_index FROM price_data.account_money_market_activity FINAL
-           WHERE ${bound} AND account_id IN (${evmList})
-             AND event_name IN (${sqlEventNameList([...MONEY_MARKET_EVENT_NAMES])})
-             AND lower(ifNull(pool_address, '')) IN (${configuredMmPoolsSql()}))
-         AND extrinsic_index IS NOT NULL`)
-  }
-  // Every OTC settlement, not only the ones this account's own rows reveal. The page
-  // drops both parties' legs (see otcSettlementExtrinsics), so a total that counted the
-  // maker's would exceed the rows it can serve.
-  arms.push(`SELECT block_height, assumeNotNull(extrinsic_index) AS extrinsic_index FROM ${otcActivityTable()}
-       WHERE ${bound} AND event_name IN (${sqlEventNameList([...OTC_FILL_EVENTS])}) AND extrinsic_index IS NOT NULL`)
   if (enumeratedExtrinsics.length) {
     arms.push(`SELECT tupleElement(pair, 1) AS block_height, tupleElement(pair, 2) AS extrinsic_index
        FROM (SELECT arrayJoin(${sortedBlockPairsSql(enumeratedExtrinsics)}) AS pair)`)
@@ -17026,36 +9127,19 @@ function semanticExtrinsicSql(list: string, evmList: string, bound: string, enum
 // extrinsic. A hook transfer has no extrinsic to be owned by, so it is subordinate to
 // a hook sibling that names the same account — a block-and-account rule, never a
 // block-only one, so an unrelated transfer in a busy block is not swallowed.
-function hookOwnerSql(list: string, accounts: string[], evmList: string, bound: string, enumeratedOwners: [number, string][]): string {
+function hookOwnerSql(list: string, accounts: string[], bound: string, enumeratedOwners: [number, string][]): string {
   const who = (column: string) => resolvedAccountIdSql(column, accounts)
   const arms = [
-    `SELECT e.block_height AS block_height, ${who('e.who')} AS owner FROM price_data.dca_events AS e FINAL
-       WHERE ${bound.replaceAll('block_height', 'e.block_height').replaceAll('block_timestamp', 'e.block_timestamp')}
-         AND e.event_name IN ('DCA.TradeExecuted','DCA.TradeFailed') AND e.who IN (${list})`,
     // Bare `who IN (${list})` here, not liquidityWhoOrPoolSql's who-OR-pool_account —
     // safe only because this arm is confined to extrinsic_index IS NULL and no
-    // lifecycle row has one: 0 of 1746 XYK.PoolCreated/PoolDestroyed rows carry a null
-    // extrinsic_index, verified chain-wide. If a hook-dispatched pool destruction ever
-    // produces one — the same shape as the Omnipool offboarding force-removals above
-    // (fillMissingLiquidityAmounts) — it would own no hook sibling here, so its
-    // withdrawal legs would surface on the pool's page as raw transfers instead of
-    // folding behind the liquidity row.
+    // lifecycle row has one: no XYK.PoolCreated/PoolDestroyed row carries a null
+    // extrinsic_index. If a hook-dispatched pool destruction ever produces one it
+    // would own no hook sibling here, so its withdrawal legs would surface on the
+    // pool's page as raw transfers instead of folding behind the liquidity row.
     `SELECT block_height, ${who('who')} AS owner FROM price_data.liquidity_activity
        WHERE ${bound} AND who IN (${list}) AND event_name IN (${sqlEventNameList(LIQUIDITY_EVENTS)})
          AND extrinsic_index IS NULL`,
   ]
-  if (evmList) {
-    arms.push(`SELECT block_height, ${who('account_id')} AS owner FROM price_data.account_money_market_activity FINAL
-       WHERE ${bound} AND account_id IN (${evmList})
-         AND event_name IN (${sqlEventNameList([...MONEY_MARKET_EVENT_NAMES])})
-         AND lower(ifNull(pool_address, '')) IN (${configuredMmPoolsSql()})
-         AND (block_height, event_index) NOT IN (
-           SELECT block_height, event_index FROM price_data.raw_events
-           WHERE (block_height, event_index) IN (
-               SELECT block_height, event_index FROM price_data.account_money_market_activity FINAL
-               WHERE ${bound} AND account_id IN (${evmList}))
-             AND extrinsic_index IS NOT NULL)`)
-  }
   if (enumeratedOwners.length) {
     // Owners are account ids, so they are interned: an inbound-XCM-heavy account has
     // tens of thousands of hook rows but a handful of distinct owners, and repeating the
@@ -17077,7 +9161,6 @@ function accountTransferArm(args: {
   accounts: string[]
   accList: string
   list: string
-  evmList: string
   bound: string
   potFilters: string
   tokenFilter: string
@@ -17085,7 +9168,7 @@ function accountTransferArm(args: {
   enumeratedExtrinsics: [number, number][]
   enumeratedOwners: [number, string][]
 }): ActivityCountArm {
-  const { accounts, accList, list, evmList, bound, potFilters, tokenFilter, viewingTreasury } = args
+  const { accounts, accList, list, bound, potFilters, tokenFilter, viewingTreasury } = args
   // A transfer INTO the treasury pot is a fee or a deposit unless the extrinsic that
   // emitted it is itself a token-transfer call — only then is it a donation the account
   // made. Bounded to the candidates' own blocks so the 32.3M-row extrinsic table is
@@ -17097,8 +9180,8 @@ function accountTransferArm(args: {
         AND call_name IN (${sqlEventNameList([...TRANSFER_CALL_NAMES])})))`
   return `SELECT block_height, count() AS rows FROM (
       WITH cand AS (${transferCandidateSql(accList, bound, potFilters, tokenFilter)}),
-           sem_ext AS (${semanticExtrinsicSql(list, evmList, bound, args.enumeratedExtrinsics)}),
-           hook_owner AS (${hookOwnerSql(list, accounts, evmList, bound, args.enumeratedOwners)})
+           sem_ext AS (${semanticExtrinsicSql(list, bound, args.enumeratedExtrinsics)}),
+           hook_owner AS (${hookOwnerSql(list, accounts, bound, args.enumeratedOwners)})
       SELECT block_height FROM cand
       WHERE (xi = 4294967295 OR (block_height, xi) NOT IN (SELECT block_height, extrinsic_index FROM sem_ext))
         AND (xi != 4294967295 OR (
@@ -17242,21 +9325,14 @@ function voteActivityRow(v: VoteRow): ActivityRow {
 // (referral claims and incentive claims both render under other families' types, so a
 // flat list could not tell them from the liquidity and mm reads).
 interface EnumeratedActivity {
-  otc: ActivityRow[]
-  dcaFailures: ActivityRow[]
-  rewards: ActivityRow[]
-  staking: ActivityRow[]
   votes: ActivityRow[]
   xcm: ActivityRow[]
-  // Wormhole NTT sends and arrivals — cross-chain rows like xcm's, kept as their own
-  // slot because their reads, caps and builders are their own.
-  ntt: ActivityRow[]
 }
 
 // Every enumerated row. All of them are non-transfer, so a transfer feed needs each
 // one's extrinsic or hook owner to decide which transfers are its plumbing.
 function enumeratedActivityAll(e: EnumeratedActivity): ActivityRow[] {
-  return [...e.otc, ...e.dcaFailures, ...e.rewards, ...e.staking, ...e.votes, ...e.xcm, ...e.ntt]
+  return [...e.votes, ...e.xcm]
 }
 
 // Which enumerated sources one type's feed needs. Exactly the `want*` flags
@@ -17269,19 +9345,13 @@ function enumeratedActivityAll(e: EnumeratedActivity): ActivityRow[] {
 // therefore produce the same array, as do `liquidity` and `mm` with their one. That is
 // why the cache key names the SOURCE SET rather than the type — two types that read the
 // same history share one entry instead of reading it twice under two names.
-const ENUMERATED_SOURCE_NAMES = ['otc', 'dcaFailures', 'rewards', 'staking', 'votes', 'xcm', 'ntt'] as const
+const ENUMERATED_SOURCE_NAMES = ['votes', 'xcm'] as const
 type EnumeratedSourceName = typeof ENUMERATED_SOURCE_NAMES[number]
 function enumeratedSourceNeed(type: string): Record<EnumeratedSourceName, boolean> {
   const wantTransfers = type === 'all' || type === 'transfer'
   return {
-    otc: type === 'all' || type === 'otc' || type === 'trade' || wantTransfers,
-    dcaFailures: type === 'all' || type === 'trade' || wantTransfers,
-    // Referral claims render as liquidity, incentive claims as mm.
-    rewards: type === 'all' || type === 'transfer' || type === 'liquidity' || type === 'mm',
-    staking: type === 'all' || type === 'staking' || wantTransfers,
     votes: type === 'all' || type === 'vote' || wantTransfers,
     xcm: type === 'all' || type === 'xcm' || wantTransfers,
-    ntt: type === 'all' || type === 'xcm' || wantTransfers,
   }
 }
 
@@ -17353,11 +9423,7 @@ async function enumeratedActivityRowsUncached(
   const depth = EXACT_SMALL_SOURCE_ROWS + 1
   const xcmDepth = EXACT_XCM_SOURCE_ROWS + 1
   const need = enumeratedSourceNeed(type)
-  const [otc, dcaFailures, rewards, staking, voteLegs, xcmLegs, nttLegs] = await Promise.all([
-    need.otc ? getRecentOtc(depth, from, to, 0, {}, undefined, accounts) : [],
-    need.dcaFailures ? getRecentDcaFailures(depth, from, to, accounts) : [],
-    need.rewards ? getRecentRewardClaims(depth, from, to, accounts) : [],
-    need.staking ? getRecentStaking(depth, from, to, accounts, 0, {}, undefined, undefined) : [],
+  const [voteLegs, xcmLegs] = await Promise.all([
     // Two vote sources, each read to its own cap and landing in the one `votes`
     // slot the classifier expects: the indexed conviction/Democracy rows, and the
     // collective (Council / Technical Committee) votes out of raw_events. The
@@ -17376,19 +9442,13 @@ async function enumeratedActivityRowsUncached(
       getRecentXcmOutRemote(xcmDepth, from, to, accounts, 0, {}),
       getRecentXcmExecuted(xcmDepth, from, to, accounts, 0, {}),
     ]) : [],
-    need.ntt ? Promise.all([
-      getRecentNttOut(depth, from, to, accounts, 0, {}),
-      getRecentNttIn(depth, from, to, accounts, 0, {}),
-    ]) : [],
   ])
   const capped: [ActivityRow[], number][] = [
-    [otc, depth], [dcaFailures, depth], [rewards, depth], [staking, depth],
     ...voteLegs.map(leg => [leg, depth] as [ActivityRow[], number]),
     ...xcmLegs.map(leg => [leg, xcmDepth] as [ActivityRow[], number]),
-    ...nttLegs.map(leg => [leg, depth] as [ActivityRow[], number]),
   ]
   if (capped.some(([rows, cap]) => rows.length >= cap)) return null
-  return { otc, dcaFailures, rewards, staking, votes: voteLegs.flat(), xcm: xcmLegs.flat(), ntt: nttLegs.flat() }
+  return { votes: voteLegs.flat(), xcm: xcmLegs.flat() }
 }
 
 // Which types this path can count exactly, in the order the reasoning above splits
@@ -17468,9 +9528,6 @@ async function planExactActivity(
   // is the builder's own `isModuleAcct(accountRef(account_id))`, applied to the same
   // account_id values the arm restricts to: a truncated `modl…` H160 resolves back to
   // its substrate module account, which a prefix test on the H160 would miss.
-  const evmForms = [...new Set(accounts.map(evmAccountForm).filter((form): form is string => !!form))]
-  const evmList = evmForms.map(form => `'${form}'`).join(',')
-  const userEvmList = evmForms.filter(form => !isModuleAcct(accountRef(form))).map(form => `'${form}'`).join(',')
 
   const all = enumeratedActivityAll(enumerated)
   const perBlock = new Map<number, number>()
@@ -17489,29 +9546,20 @@ async function planExactActivity(
     perBlock.set(row.blockHeight, (perBlock.get(row.blockHeight) ?? 0) + 1)
   }
 
-  // Which COUNTED arms an action admits. A trade action picks between the two trade
-  // arms outright: `swap` is a non-DCA trade row and `dca` is a DCA one, while
-  // `dca-failed` and the otc actions are satisfied entirely by enumerated rows, so both
-  // arms stand down. Liquidity and money-market instead narrow their event list, each
-  // through the inverse of the mapping that labels the row.
+  // Which COUNTED arms an action admits. A trade action selects the swap arm
+  // outright; liquidity instead narrows its event list, through the inverse of the
+  // mapping that labels the row.
   const swapArmAction = !action || action === 'swap'
-  const dcaArmAction = !action || action === 'dca'
   const arms: ActivityCountArm[] = [enumeratedArm([...perBlock])]
   if (wantTrades) {
     arms.push(swapArmAction ? accountSwapTradeArm(list, bound, tokenIds) : emptyActivityCountArm())
-    arms.push(dcaArmAction ? accountDcaTradeArm(list, bound, tokenIds) : emptyActivityCountArm())
   }
   // The action applies whatever the TYPE is. `type=all&action=swap` keeps only the
-  // trade rows that are swaps, so the liquidity and money-market arms must select
-  // nothing for it — the page's activityRowMatchesAction drops those rows, and an arm
-  // that ignored the action because the type is not its own would count a feed the page
-  // never renders. (Measured: it inflated one account's `all&action=swap` total by its
-  // 319,179 liquidity rows.)
+  // trade rows that are swaps, so the liquidity arm must select nothing for it — the
+  // page's activityRowMatchesAction drops those rows, and an arm that ignored the
+  // action because the type is not its own would count a feed the page never renders.
   if (type === 'all' || type === 'liquidity') {
     arms.push(accountLiquidityArm(list, bound, liquidityActionEventNames(action), tokenIds))
-  }
-  if ((type === 'all' || type === 'mm') && userEvmList) {
-    arms.push(accountMoneyMarketArm(userEvmList, moneyMarketEventNames(action), bound, tokenIds))
   }
   const accCond = [...new Set(accounts.map(a => a.toLowerCase()))].filter(a => ACCOUNT_RE.test(a))
   if (wantTransfers && accCond.length) {
@@ -17526,7 +9574,7 @@ async function planExactActivity(
         .filter((id): id is string => !!id)
         .map(id => `${row.blockHeight}:${id.toLowerCase()}`)))
     arms.push(accountTransferArm({
-      accounts, accList: accCond.map(a => `'${a}'`).join(','), list, evmList, bound,
+      accounts, accList: accCond.map(a => `'${a}'`).join(','), list, bound,
       potFilters: await transferCandidatePotFiltersSql(accCond),
       // A transfer carries no action of its own, so every action keeps every transfer —
       // exactly what activityRowMatchesAction's default arm says.
@@ -17714,17 +9762,11 @@ async function collectAccountActivity(accounts: string[], type: string, catFetch
     sourceWindows.push({ fetched, limit: catFetch, oldestBlock })
   }
   const wantTransfers = type === 'all' || type === 'transfer'
-  // Classification context: Transfers excludes trade/staking/MM legs, Trades
-  // yields share-routed legs to Liquidity — fetch what the exclusions need.
+  // Classification context: Transfers excludes trade legs, Trades yields
+  // share-routed legs to Liquidity — fetch what the exclusions need.
   const wantTrades = type === 'all' || type === 'trade' || wantTransfers
-  const wantDca = type === 'all' || type === 'trade' || wantTransfers
   const wantLiquidity = type === 'all' || type === 'liquidity' || wantTrades
-  const wantMm = type === 'all' || type === 'mm' || wantTransfers
-  // otc folds under the trade chip/type — fetch it whenever trade is (wantTrades
-  // already implies wantTransfers), plus its own `type=otc` request.
-  const wantOtc = type === 'all' || type === 'otc' || wantTrades
   const wantXcm = type === 'all' || type === 'xcm' || wantTransfers
-  const wantStaking = type === 'all' || type === 'staking' || wantTransfers
   const wantVotes = type === 'all' || type === 'vote' || wantTransfers
   // 1. The account's signed swaps. Signer scope and value predicates are joined
   // before LIMIT so a rare token/value match cannot sit beyond a signer window.
@@ -17757,15 +9799,11 @@ async function collectAccountActivity(accounts: string[], type: string, catFetch
     })
     const swapRows = await swapRes.json<{ block_height: number; ts: string; event_index: number; extrinsic_index: number | null; event_name: string; asset_in: number; asset_out: number; amount_in: string; amount_out: string; signer: string }>()
     noteSource(swapRows.length, oldestWindowBlock(swapRows, r => r.block_height))
-    const liqExt = await liquidationExtrinsics(swapRows.map(r => [r.block_height, r.extrinsic_index] as [number, number | null]))
     for (const rep of swapRouteReps(swapRows)) {
-      // Mark the extrinsic as a swap (so its transfer legs are dropped as noise),
-      // but don't emit a trade row for a liquidation's internal collateral→debt
-      // swap — the liquidation shows as its mm row, not a user trade. A hook swap
-      // has no extrinsic to own, and claiming `block:null` would suppress the
-      // unrelated hook transfers that share the block.
+      // Mark the extrinsic as a swap (so its transfer legs are dropped as noise).
+      // A hook swap has no extrinsic to own, and claiming `block:null` would
+      // suppress the unrelated hook transfers that share the block.
       if (rep.extrinsic_index != null) tradeExt.add(`${rep.block_height}:${rep.extrinsic_index}`)
-      if (rep.extrinsic_index != null && liqExt.has(`${rep.block_height}:${rep.extrinsic_index}`)) continue
       if (!wantTrades) continue
       const who = rep.signer
       const aOut = asset(rep.asset_out)
@@ -17779,15 +9817,6 @@ async function collectAccountActivity(accounts: string[], type: string, catFetch
       trades.push(row)
     }
   }
-
-  // The enumerated sources come from the plan when a page is located, so the rows the
-  // page renders are literally the rows its total was counted from — reading them again
-  // at a different depth is the one way this path could publish a number it cannot
-  // serve. Without a plan they are read here exactly as before.
-  const otc = exact ? exact.enumerated.otc
-    : wantOtc ? await getRecentOtc(catFetch, from, to, 0, queryFilters, type === 'otc' ? action : undefined, accounts) : []
-  noteSource(otc.length, oldestWindowBlock(otc, r => r.blockHeight))
-  const otcExt = activityExtrinsicSet(otc)
 
   // 2. Genuine user↔user transfers, queried directly from the transfer events
   // (account-keyed on `from`/`to`). Deriving these from raw_balance_observations
@@ -17822,16 +9851,6 @@ async function collectAccountActivity(accounts: string[], type: string, catFetch
     const transferRefEvents = `event_name IN ('Balances.Transfer','Tokens.Transfer','Currencies.Transferred')`
     const transferRefsFilter = useTransferReadModel ? ''
       : `AND ${accountActivityRefsSql(accCond, transferRefEvents, bound, catFetch * 3)}`
-    // Supply/withdraw/borrow/repay move tokens between the user and a money-
-    // market contract; those extrinsics already activity as `mm` rows, so their
-    // transfer legs would duplicate them. Excluded by counterparty — UNLESS the
-    // viewed account IS a reserve contract, whose page is exactly those legs.
-    const mmAccounts = await mmReserveAccountIds()
-    const viewingMmContract = accCond.some(a => mmAccounts.has(a))
-    const mmList = [...mmAccounts].map(a => `'${a}'`).join(',')
-    const mmLegFilter = !viewingMmContract && mmList
-      ? `AND JSONExtractString(args_json,'from') NOT IN (${mmList}) AND JSONExtractString(args_json,'to') NOT IN (${mmList})`
-      : ''
     const poolAccs = ammPoolAccounts()
     const viewingPool = accCond.some(a => poolAccs.has(a))
     const poolLegFilter = !viewingPool && poolAccs.size
@@ -17848,10 +9867,6 @@ async function collectAccountActivity(accounts: string[], type: string, catFetch
     // The read-model form of all three exclusions, shared verbatim with the count arm
     // so the rows it counts and the rows this reads can never be a different set.
     const readModelPotFilters = await transferCandidatePotFiltersSql(accCond)
-    // The raw-events spelling of the NTT minter-leg exclusion the read-model path
-    // carries inside its pot filters (see transferCandidatePotFiltersSql).
-    const rawNttExclusion = nttMinterLegExclusionSql(await nttMinterAccounts(),
-      transferAssetIdSql(), `JSONExtractString(args_json,'to')`)
     const readTransfers = async (refsFilter: string): Promise<RawTransferEventRow[]> => {
       const res = await client.query({
         query: useTransferReadModel
@@ -17877,8 +9892,6 @@ async function collectAccountActivity(accounts: string[], type: string, catFetch
                 AND NOT match(JSONExtractString(args_json,'from'), '^0x(7369626c|70617261|506172656e74)')
                 AND NOT match(JSONExtractString(args_json,'to'), '^0x(7369626c|70617261|506172656e74)')
                 ${poolLegFilter}
-                ${mmLegFilter}
-                ${rawNttExclusion}
                 ${transferTokenFilter}
                 ${transferAmountFilter.predicateSql}
               ORDER BY block_height DESC, event_index DESC
@@ -17916,24 +9929,15 @@ async function collectAccountActivity(accounts: string[], type: string, catFetch
     // (payouts *from* the treasury are unaffected). Skipped when the viewed
     // account IS the treasury, whose page is exactly those legs.
     const viewingTreasury = accCond.includes(TREASURY_POT)
-    const transferPairs = rawTransferRows.map(r => [r.block_height, r.extrinsic_index] as [number, number | null])
-    const [treasuryTransferOk, otcSettlementExt] = await Promise.all([
-      viewingTreasury ? Promise.resolve(new Set<string>())
-        : transferCallExtrinsics(rawTransferRows.filter(r => r.to_acc === TREASURY_POT).map(r => [r.block_height, r.extrinsic_index] as [number, number | null])),
-      otcSettlementExtrinsics(transferPairs),
-    ])
+    const treasuryTransferOk = viewingTreasury ? new Set<string>()
+      : await transferCallExtrinsics(rawTransferRows.filter(r => r.to_acc === TREASURY_POT).map(r => [r.block_height, r.extrinsic_index] as [number, number | null]))
     const seenTr = new Set<string>()
     for (const r of dedupeTransferEvents(rawTransferRows)) {
       const key = `${r.block_height}:${r.event_index}`
       if (seenTr.has(key)) continue
       seenTr.add(key)
-      // Drop transfers that are a leg of one of our own signed trades or OTC
-      // fills (swap/settlement noise) — and of any OTC settlement at all, since the
-      // maker's side of a fill is the same plumbing without a row of its own to be
-      // recognised by (see otcSettlementExtrinsics).
-      if (r.extrinsic_index != null && (tradeExt.has(`${r.block_height}:${r.extrinsic_index}`)
-        || otcExt.has(`${r.block_height}:${r.extrinsic_index}`)
-        || otcSettlementExt.has(`${r.block_height}:${r.extrinsic_index}`))) continue
+      // Drop transfers that are a leg of one of our own signed trades (swap noise).
+      if (r.extrinsic_index != null && tradeExt.has(`${r.block_height}:${r.extrinsic_index}`)) continue
       // A transfer to the treasury that is not itself a transfer call is a
       // fee/deposit (register_code, an XCM inherent, a non-swap batch fee), not a
       // user transfer.
@@ -17948,85 +9952,6 @@ async function collectAccountActivity(accounts: string[], type: string, catFetch
         valueUsd: usdValue(prices, a.assetId, r.amount, a.decimals),
         linkBlock: r.block_height, linkIndex: r.extrinsic_index,
       })
-    }
-  }
-
-  // 3. DCA executions where this account is the owner. DCA trades run in unsigned
-  // block hooks, so they never show up as the account's signed extrinsics (step 1)
-  // — the owner is carried by DCA.TradeExecuted {who,id,amountIn,amountOut}. Resolve
-  // the traded assets from the swap leg in the same block (match amountIn) and link
-  // to the DCA.Scheduled extrinsic. Mirrors the global activity's DCA handling.
-  //
-  // Every read that emits one row per execution needs `FINAL`: dca_events replaces on
-  // (event_name, block_height, event_index, id), so a re-inserted raw range holds an
-  // execution twice until its parts merge and the feed renders that block twice.
-  const dcaTrades: ActivityRow[] = exact ? [...exact.enumerated.dcaFailures]
-    : wantDca ? await getRecentDcaFailures(catFetch, from, to, accounts, tokenIds)
-    : []
-  noteSource(dcaTrades.length, oldestWindowBlock(dcaTrades, r => r.blockHeight))
-  if (wantDca) {
-    const dcaTokenFilter = tokenIds == null ? '' : tokenIds.length
-      ? `AND (s.asset_in IN (${tokenIds.join(',')}) OR s.asset_out IN (${tokenIds.join(',')}))`
-      : 'AND 0'
-    const dcaValueFilter = eventValueFilterSql('s.asset_out', 'e.amount_out', 'e.block_timestamp', queryFilters, prices, 'account_dca_price')
-    const dcaExecRes = await client.query({
-      query: `SELECT e.block_height, e.event_index, toString(e.block_timestamp) AS ts, e.who AS who,
-                toString(e.id) AS id, e.amount_in, e.amount_out
-              FROM price_data.dca_events AS e FINAL
-              ${dcaScheduleJoinSql(['asset_in', 'asset_out'])}
-              ${dcaValueFilter.joinSql}
-              WHERE ${bound.replaceAll('block_height', 'e.block_height').replaceAll('block_timestamp', 'e.block_timestamp')}
-                AND e.event_name='DCA.TradeExecuted' AND e.who IN (${list})
-                ${dcaTokenFilter} ${dcaValueFilter.predicateSql}
-              ORDER BY e.block_height DESC LIMIT {n:UInt32}`,
-      query_params: { n: catFetch },
-      format: 'JSONEachRow',
-    })
-    const dcaExecs = await dcaExecRes.json<{ block_height: number; event_index: number; ts: string; who: string; id: string; amount_in: string; amount_out: string }>()
-    noteSource(dcaExecs.length, oldestWindowBlock(dcaExecs, r => r.block_height))
-    if (dcaExecs.length) {
-    const blocks = [...new Set(dcaExecs.map(d => d.block_height))]
-    const names = SWAP_EVENTS.map(n => `'${n}'`).join(',')
-    // Bound-parameter chunks, not an interpolated list: a deep page carries tens
-    // of thousands of blocks and the literal would exceed max_query_size.
-    type DcaSwapLegRow = { block_height: number; event_index: number; event_name: string; asset_in: number; asset_out: number; amount_in: string }
-    const swapLegs: DcaSwapLegRow[] = []
-    const fetchSwapLegs = async (): Promise<void> => {
-      const chunks = await mapChunksConcurrently(blocks, 2_000, CHUNK_QUERY_CONCURRENCY, async chunk => {
-        const res = await client.query({
-          query: `SELECT block_height, event_index, event_name, JSONExtractInt(args_json,'assetIn') AS asset_in, JSONExtractInt(args_json,'assetOut') AS asset_out,
-                    JSONExtractString(args_json,'amountIn') AS amount_in
-                  FROM price_data.raw_events WHERE block_height IN {blocks:Array(UInt32)} AND event_name IN (${names})`,
-          query_params: { blocks: chunk },
-          format: 'JSONEachRow',
-        })
-        return res.json<DcaSwapLegRow>()
-      })
-      for (const rows of chunks) swapLegs.push(...rows)
-    }
-    const [, schedById] = await Promise.all([fetchSwapLegs(), getDcaScheduleLinks(dcaExecs.map(d => d.id))])
-    // Pair each execution with its OWN swap leg, one to one. A plain
-    // (block, amountIn) lookup collides whenever one block settles two schedules of
-    // the same size — a popular round DCA amount does this constantly — and the
-    // collision is silent: both rows take the surviving map entry, so one renders
-    // against the other's swap and the two share a (block, eventIndex) identity.
-    // DCA.TradeExecuted is emitted immediately after the swap it settles, so the
-    // nearest unclaimed leg BEFORE the execution is its own; claiming consumes it.
-    const legs = adjacencyClaimIndex(swapLegs, s => `${s.block_height}:${s.amount_in}`, s => s.event_index)
-    for (const d of [...dcaExecs].sort((a, b) => a.block_height - b.block_height || a.event_index - b.event_index)) {
-      const sw = legs.claimBefore(`${d.block_height}:${d.amount_in}`, d.event_index)
-      const aIn = sw ? asset(sw.asset_in) : null
-      const aOut = sw ? asset(sw.asset_out) : null
-      const sched = schedById.get(d.id)
-      const row: ActivityRow = {
-        type: 'trade', blockHeight: d.block_height, timestamp: d.ts, eventIndex: sw?.event_index ?? null, extrinsicIndex: null,
-        who: accountRef(d.who), to: null, asset: null, assetIn: aIn, assetOut: aOut,
-        amount: null, amountIn: d.amount_in, amountOut: d.amount_out,
-        valueUsd: aOut ? usdValue(prices, aOut.assetId, d.amount_out, aOut.decimals) : null,
-        dca: true, dcaScheduleId: Number(d.id) || undefined, linkBlock: sched?.block ?? d.block_height, linkIndex: sched?.idx ?? null,
-      }
-      dcaTrades.push(row)
-    }
     }
   }
 
@@ -18056,11 +9981,9 @@ async function collectAccountActivity(accounts: string[], type: string, catFetch
                 pool_account AS pool_acc,
                 asset_refs AS asset_refs
               FROM price_data.liquidity_activity
-              ${routerHopLiquiditySql(pageBound, liquidityAssetExpr, liquidityWhoOrPoolSql(list)).joinSql}
               WHERE ${pageBound}
                 AND event_name IN (${sqlEventNameList(LIQUIDITY_EVENTS)})
                 AND ${liquidityWhoOrPoolSql(list)}
-                ${routerHopLiquiditySql(pageBound, liquidityAssetExpr).predicateSql}
                 ${liquidityTokenFilter}
               ORDER BY block_height DESC, event_index DESC LIMIT {n:UInt32}`,
         query_params: { n: pageLimit },
@@ -18100,76 +10023,20 @@ async function collectAccountActivity(accounts: string[], type: string, catFetch
     }
   }
 
-  // 5. Money-market transactions (supply / borrow / repay / withdraw / liquidation).
-  // These are EVM-side, indexed under the account's truncated-H160 form.
-  const mmTx: ActivityRow[] = []
-  const evmForms = [...new Set(accounts.map(evmAccountForm).filter(Boolean) as string[])]
-  // Same rule as the token filter above: under an exact plan the action is applied to
-  // the assembled rows, because a supply the action excludes still owns its transfer
-  // legs and narrowing the read here would republish them.
-  const mmEventNames = exact ? MONEY_MARKET_EVENT_NAMES : moneyMarketEventNames(type === 'mm' ? action : undefined)
-  if (wantMm && evmForms.length && mmEventNames.length) {
-    const mmList = evmForms.map(a => `'${a}'`).join(',')
-    const reserveFilter = tokenIds == null ? '' : tokenIds.length
-      ? `AND asset_address IN (${mmReserveAddressesForTokens(tokenIds).map(a => `'${a}'`).join(',')})`
-      : 'AND 0'
-    const mmAssetExpr = mmAssetIdSql('asset_address')
-    const mmAmountExpr = `if(event_name='LiquidationCall', liquidated_collateral_amount, amount)`
-    const mmValueFilter = eventValueFilterSql(mmAssetExpr, mmAmountExpr, 'block_timestamp', queryFilters, prices, 'account_mm_price')
-    const mmTxRes = await client.query({
-      query: `SELECT block_height, event_index, toString(block_timestamp) AS ts, event_name, account_id, asset_address, pool_address,
-                ${mmAmountExpr} AS amount
-              FROM price_data.account_money_market_activity FINAL
-              ${mmValueFilter.joinSql}
-              WHERE ${bound} AND account_id IN (${mmList}) AND event_name IN (${mmEventNames.map(n => `'${n}'`).join(',')})
-                AND lower(ifNull(pool_address, '')) IN (${configuredMmPoolsSql()})
-                ${mmStakingPlumbingExclusionSql()}
-                ${reserveFilter}
-                ${mmValueFilter.predicateSql}
-              ORDER BY block_height DESC LIMIT {n:UInt32}`,
-      query_params: { n: catFetch },
-      format: 'JSONEachRow',
-    })
-    const mmEv = await mmTxRes.json<{ block_height: number; event_index: number; ts: string; event_name: string; account_id: string | null; asset_address: string; pool_address: string | null; amount: string }>()
-    noteSource(mmEv.length, oldestWindowBlock(mmEv, r => r.block_height))
-    // MM events are EVM logs (Ethereum.transact); resolve the substrate extrinsic
-    // that emitted them so the row links/hovers to its extrinsic like the others.
-    const mmExt = await extrinsicIndexFor(mmEv.map(r => [r.block_height, r.event_index] as [number, number | null]))
-    for (const r of mmEv) {
-      const aid = assetIdFromMmAddress(r.asset_address)
-      const a = aid != null ? asset(aid) : null
-      const xi = mmExt.get(`${r.block_height}:${r.event_index}`) ?? null
-      const row: ActivityRow = {
-        type: 'mm', blockHeight: r.block_height, timestamp: r.ts, eventIndex: r.event_index, extrinsicIndex: xi,
-        who: r.account_id ? accountRef(r.account_id) : accounts[0] ? accountRef(accounts[0]) : null, to: null, asset: a, assetIn: null, assetOut: null,
-        amount: r.amount, amountIn: null, amountOut: null,
-        valueUsd: a ? usdValue(prices, a.assetId, r.amount, a.decimals) : null,
-        assetRefs: a ? mmReserveAliasIds(a.assetId) : undefined,
-        mmAction: r.event_name, ...moneyMarketActivityFields(r.pool_address), linkBlock: r.block_height, linkIndex: xi,
-      }
-      mmTx.push(row)
-    }
-  }
-
   // 6. Cross-chain (XCM) transfers sent (outbound) or received (inbound) by this account.
   // Each XCM leg has its own window, so saturation is per leg: the concatenation
   // reaching catFetch says nothing about whether any single leg was exhausted.
-  const xcmLegs = exact ? [exact.enumerated.xcm, exact.enumerated.ntt]
+  const xcmLegs = exact ? [exact.enumerated.xcm]
     : wantXcm
     ? await Promise.all([
       getRecentXcm(catFetch, from, to, accounts, 0, queryFilters),
       getRecentXcmIn(catFetch, from, to, accounts, 0, queryFilters),
       getRecentXcmOutRemote(catFetch, from, to, accounts, 0, queryFilters),
       getRecentXcmExecuted(catFetch, from, to, accounts, 0, queryFilters),
-      getRecentNttOut(catFetch, from, to, accounts, 0, queryFilters),
-      getRecentNttIn(catFetch, from, to, accounts, 0, queryFilters),
     ])
     : []
   for (const leg of xcmLegs) noteSource(leg.length, oldestWindowBlock(leg, r => r.blockHeight))
   const xcm = xcmLegs.flat()
-  const staking = exact ? exact.enumerated.staking
-    : wantStaking ? await getRecentStaking(catFetch, from, to, accounts, 0, queryFilters, undefined, action) : []
-  noteSource(staking.length, oldestWindowBlock(staking, r => r.blockHeight))
   const govVotes = exact || !wantVotes ? []
     : (await getRecentVotes(catFetch, from, to, 0, {}, accounts, queryFilters)).map(voteActivityRow)
   // Collective (Council / Technical Committee) votes are a source of their own,
@@ -18184,27 +10051,17 @@ async function collectAccountActivity(accounts: string[], type: string, catFetch
     noteSource(govVotes.length, oldestWindowBlock(govVotes, r => r.blockHeight))
     noteSource(collectiveVotes.length, oldestWindowBlock(collectiveVotes, r => r.blockHeight))
   }
-  const rewards = exact ? exact.enumerated.rewards
-    : (type === 'all' || type === 'transfer' || type === 'liquidity' || type === 'mm')
-    ? await getRecentRewardClaims(catFetch, from, to, accounts, tokenIds, undefined, undefined, queryFilters)
-    : []
-  noteSource(rewards.length, oldestWindowBlock(rewards, r => r.blockHeight))
   if (filters.min != null && filters.unit !== 'token') {
-    await applyHistoricalUsd([...trades, ...transfers, ...dcaTrades, ...rewards, ...liq, ...voteRows, ...mmTx, ...otc], activityHistPick)
+    await applyHistoricalUsd([...trades, ...transfers, ...liq, ...voteRows], activityHistPick)
   }
 
-  // The assembled feed carries each row's category in `type` ('dca' is a kind of
-  // trade — see toTradeRow). When a single category is requested, filter to it so
-  // rare types (e.g. dca, mm) aren't starved out by the slice below.
-  const stakingExtrinsics = activityExtrinsicSet(staking)
-  const mmExtrinsics = activityExtrinsicSet(mmTx)
+  // The assembled feed carries each row's category in `type`. When a single
+  // category is requested, filter to it so rare types aren't starved out by the
+  // slice below.
   const scopedTransfers = transfers.filter(t =>
-    !(t.extrinsicIndex != null && stakingExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)) &&
-    !(t.extrinsicIndex != null && mmExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)) &&
     !(t.extrinsicIndex != null && liqCreateExt.has(`${t.blockHeight}:${t.extrinsicIndex}`)))
   const userTrades = dropShareRoutedTrades(trades, activityExtrinsicSet(liq))
-  const userMm = mmTx.filter(r => !isModuleAcct(r.who))
-  let merged = await suppressActivityPlumbing([...userTrades, ...scopedTransfers, ...dcaTrades, ...rewards, ...liq, ...staking, ...voteRows, ...userMm, ...otc, ...xcm])
+  let merged = await suppressActivityPlumbing([...userTrades, ...scopedTransfers, ...liq, ...voteRows, ...xcm])
   if (type && type !== 'all') merged = merged.filter(r => activityTypeMatchesFamily(r.type, type))
   merged = merged.filter(r => activityRowMatchesFilters(r, filters) && activityRowMatchesAction(r, action))
   if (exact) {
@@ -18268,24 +10125,11 @@ async function growAccountActivityWindow(
 // it holds, so the page is refused rather than silently omitting older history — and
 // a page that only ENDS past it is served short rather than withheld, because a total
 // counts a complete window to exactly there.
-async function getAccountActivity(accounts: string[], limit: number, type = 'all', offset = 0, action?: string, filters: ValueListFilters = {}, from?: string, to?: string, opts: ActivityPageOptions = {}): Promise<ActivityRow[]> {
-  // A revenue floor can only be judged once the rows carry the figure, which happens
-  // below — so the page is read WIDER and cut to size afterwards, or a filtered list
-  // would return a near-empty page whatever it actually holds. An account's feed is
-  // bounded by the account, so reading deeper is cheap here in a way it is not on the
-  // chain-wide feed (which answers the same filter from revenue_events instead).
-  const floor = filters.minRevenue
-  const readLimit = floor == null ? limit : (offset + limit) * REVENUE_FLOOR_SCOPED_OVERREAD
-  const readOffset = floor == null ? offset : 0
-  const located = await locatedAccountActivityPage(accounts, type, readLimit, readOffset, action, filters, from, to)
-  const page = located ?? await windowedAccountActivityPage(accounts, type, readLimit, readOffset, action, filters, from, to)
-  await Promise.all([
-    applyHistoricalUsd(page, activityHistPick),
-    applyXcmJourneys(page),
-    ...(opts.revenue !== false || floor != null ? [applyActivityRevenue(page)] : []),
-  ])
-  if (floor == null) return page
-  return page.filter(row => revenueFloorPasses(row, floor)).slice(offset, offset + limit)
+async function getAccountActivity(accounts: string[], limit: number, type = 'all', offset = 0, action?: string, filters: ValueListFilters = {}, from?: string, to?: string): Promise<ActivityRow[]> {
+  const located = await locatedAccountActivityPage(accounts, type, limit, offset, action, filters, from, to)
+  const page = located ?? await windowedAccountActivityPage(accounts, type, limit, offset, action, filters, from, to)
+  await applyHistoricalUsd(page, activityHistPick)
+  return page
 }
 
 // Null when this request has no exact plan, when the located blocks and the classifier
@@ -18448,7 +10292,6 @@ async function getScopedAccountActivity(
   filters: ValueListFilters,
   from?: string,
   to?: string,
-  opts: ActivityPageOptions = {},
 ): Promise<ActivityRow[]> {
   const window = timeWindow(from, to)
   noteHotActivityScope(cacheScope, accounts)
@@ -18456,11 +10299,8 @@ async function getScopedAccountActivity(
   // still reaching today — is keyed by the account's own activity height, so the
   // TTL is only a backstop (see datedWindowIsClosed).
   const mark = window && datedWindowIsClosed(to) ? 0 : await accountActivityWatermark(accounts)
-  // The revenue flag changes what the entry HOLDS, so it is part of the key: a page
-  // cached without revenue must never be served to a caller that needs it.
-  const revTag = opts.revenue === false ? 'norev' : 'rev'
-  return cached(`explorer:${cacheScope}:activity:w${mark}:${type}:${limit}:${offset}:${action ?? ''}:${from ?? ''}:${to ?? ''}:${filterKey(filters)}:${revTag}`, window ? 30_000 : 60_000,
-    () => getAccountActivity(accounts, limit, type, offset, action, filters, from, to, opts))
+  return cached(`explorer:${cacheScope}:activity:w${mark}:${type}:${limit}:${offset}:${action ?? ''}:${from ?? ''}:${to ?? ''}:${filterKey(filters)}`, window ? 30_000 : 60_000,
+    () => getAccountActivity(accounts, limit, type, offset, action, filters, from, to))
 }
 
 // ── Keeping the shared enumerated read warm ───────────────────────────────────
@@ -18554,10 +10394,10 @@ async function prewarmHotActivitySnapshots(): Promise<void> {
 // Account detail feeds resolve the address to the same related-account set used
 // by getAddress. Unknown addresses return null so routes can distinguish them
 // from recognized accounts with no activity.
-export async function getAddressActivity(addressInput: string, type = 'all', limit = 40, offset = 0, action?: string, filters: ValueListFilters = {}, from?: string, to?: string, opts: ActivityPageOptions = {}): Promise<ActivityRow[] | null> {
+export async function getAddressActivity(addressInput: string, type = 'all', limit = 40, offset = 0, action?: string, filters: ValueListFilters = {}, from?: string, to?: string): Promise<ActivityRow[] | null> {
   const resolved = await resolveRelatedAccounts(addressInput)
   if (!resolved) return null
-  return getScopedAccountActivity(resolved.related, `account:${resolved.norm.accountId}`, type, limit, offset, action, filters, from, to, opts)
+  return getScopedAccountActivity(resolved.related, `account:${resolved.norm.accountId}`, type, limit, offset, action, filters, from, to)
 }
 
 // The account's signed extrinsics (paginated). Same shape as getRecentExtrinsics
@@ -18960,7 +10800,7 @@ export interface ValueEvent {
   eventIndex: number
   extrinsicIndex: number | null
   timestamp: string
-  kind: 'transfer-in' | 'transfer-out' | 'swap' | 'liquidity' | 'liquidation' | 'dca' | 'cross-chain' | 'price' | 'other'
+  kind: 'transfer-in' | 'transfer-out' | 'swap' | 'liquidity' | 'cross-chain' | 'price' | 'other'
   // 'price' markers carry the SIGNED bucket delta (no discrete event to value).
   valueUsd: number
   // null only for 'price' markers — a market move has no single asset.
@@ -18972,11 +10812,7 @@ export interface ValueEvent {
   // the XCM activity feed (reserved-account credits, non-contiguous walk-backs):
   // the marker still annotates the jump but renders WITHOUT a dead detail link.
   linkable?: boolean
-  // A 'dca' marker summarizes a whole schedule: id links to /dca/:id, trades is
-  // the execution count behind valueUsd; block/event point at the peak execution.
-  dcaScheduleId?: number
-  dcaTrades?: number
-  // Traded pair for swap/DCA markers (resolved for the chosen markers only);
+  // Traded pair for swap markers (resolved for the chosen markers only);
   // `asset` stays the value-bearing leg the marker was scored on.
   assetIn?: AssetRef | null
   assetOut?: AssetRef | null
@@ -18986,11 +10822,7 @@ export interface ValueEvent {
 }
 
 const VALUE_EVENT_TRANSFER_NAMES = ['Balances.Transfer', 'Tokens.Transfer', 'Currencies.Transferred']
-const VALUE_EVENT_LIQUIDITY_NAMES = [
-  'Omnipool.LiquidityAdded', 'Omnipool.LiquidityRemoved',
-  'Stableswap.LiquidityAdded', 'Stableswap.LiquidityRemoved',
-  'XYK.LiquidityAdded', 'XYK.LiquidityRemoved',
-]
+const VALUE_EVENT_LIQUIDITY_NAMES = ['XYK.LiquidityAdded', 'XYK.LiquidityRemoved']
 // Cross-chain movements are indexed as deposit/withdraw events, not transfers:
 // an inbound XCM credit is a hook-context Currencies/Tokens.Deposited in a
 // barrier block (XCM_BARRIER_EVENTS); an outbound send is the Currencies/Tokens.
@@ -18999,14 +10831,6 @@ const VALUE_EVENT_LIQUIDITY_NAMES = [
 const VALUE_EVENT_XCM_IN_NAMES = ['Currencies.Deposited', 'Tokens.Deposited']
 const VALUE_EVENT_XCM_OUT_NAMES = ['Currencies.Withdrawn', 'Tokens.Withdrawn']
 const VALUE_EVENT_DEFAULT_LIMIT = 12
-// A liquidation is a high-signal event even when a routine transfer moved more
-// value, so guarantee the top few always surface rather than letting a whale's
-// larger transfers crowd every liquidation out of the value-ranked budget.
-const VALUE_EVENT_LIQUIDATION_SLOTS = 3
-// DCA schedules are a shipped, first-class marker (one flag per schedule, linked
-// to /dca/:id). Like liquidations, reserve slots for the largest ones so the
-// jump-driven price/cross-chain markers can't crowd every schedule off the chart.
-const VALUE_EVENT_DCA_SLOTS = 3
 // Jump detection: a point-to-point move of the reconstructed value series is
 // "big" when it clears both an absolute floor and a fraction of the series'
 // peak — dust accounts don't spam markers, whale noise doesn't drown them. The
@@ -19072,7 +10896,6 @@ function assetDecimalsPowSql(assetIdExpr: string): string {
 function valueEventKind(eventName: string): ValueEvent['kind'] {
   if (SWAP_EVENTS.includes(eventName)) return 'swap'
   if (VALUE_EVENT_LIQUIDITY_NAMES.includes(eventName)) return 'liquidity'
-  if (/Liquidat/.test(eventName)) return 'liquidation'
   return 'other'
 }
 
@@ -19090,17 +10913,15 @@ interface ValueEventCandidateRow {
 // Value-chart markers for an explicit account set, bounded to the optional day
 // window (default: the full indexed range, matching the value-history chart's
 // span). Two selection passes share one candidate machinery:
-//  - the globally largest-USD events (transfers, swaps, liquidity, collapsed
-//    DCA schedules, liquidations), each valued at its block-time hourly close;
+//  - the globally largest-USD events (transfers, swaps, liquidity), each valued
+//    at its block-time hourly close;
 //  - one marker per big JUMP of the reconstructed value series itself, so a
 //    large move never renders unannotated: each jump's block window is scored
-//    per cause (transfer / cross-chain / liquidity / DCA / liquidation / swap)
-//    and the dominant one wins, or an explicit 'price' marker when no discrete
-//    activity plausibly explains the move.
+//    per cause (transfer / cross-chain / liquidity / swap) and the dominant one
+//    wins, or an explicit 'price' marker when no discrete activity plausibly
+//    explains the move.
 // All event reads are bounded account_activity_v3 scans (sort key leads with
-// account) valued via the ASOF hourly-close join the value filters use, plus
-// one LiquidationCall read of the MM read model — liquidations are EVM-side
-// and never hit the substrate event index.
+// account) valued via the ASOF hourly-close join the value filters use.
 async function getAccountValueEvents(accounts: string[], cacheKey: string, from?: string, to?: string, limit = VALUE_EVENT_DEFAULT_LIMIT, historyAccounts: string[] = accounts): Promise<ValueEvent[]> {
   const list = sqlAccountList(accounts)
   if (list === "''") return []
@@ -19132,17 +10953,7 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
     const xcmSentPairsSql = `SELECT block_height, assumeNotNull(extrinsic_index) FROM price_data.raw_xcm_activity
                     WHERE source_kind = 'event' AND name IN (${xcmSentEventNames})
                       AND extrinsic_index IS NOT NULL AND (${windowCondFor('block_height')})`
-    const mmList = sqlAccountList([...new Set(accounts.map(evmAccountForm).filter(Boolean) as string[])])
-    const mmAssetExpr = mmAssetIdSql('m.asset_address')
-    // A DCA schedule executes as many small block-hook trades; each would rank as
-    // its own swap (+ mirrored liquidity leg) and a long-running schedule floods
-    // the chart with identical markers. Its executions collapse into ONE 'dca'
-    // marker instead: the blocks holding a DCA.TradeExecuted for a scoped account
-    // are excluded from the per-event candidates below (extrinsic-null only, so a
-    // signed swap the account happens to make in the same block still surfaces).
-    const dcaExecsSql = `SELECT id, block_height, event_index, block_timestamp, who, amount_out FROM price_data.dca_events
-                    WHERE event_name = 'DCA.TradeExecuted' AND who IN (${list}) AND ${bound}`
-    const [eventRes, liqRes, dcaRes, windowRes, xcmSentRes, dcaWindowRes] = await Promise.all([
+    const [eventRes, windowRes, xcmSentRes] = await Promise.all([
       client.query({
         query: `
           SELECT block_height, event_index, any(extrinsic_index) AS extrinsic_index, any(event_name) AS event_name,
@@ -19161,9 +10972,6 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
               AND a.has_amount = 1
               AND (a.event_name IN (${namedEvents})
                 OR (a.event_name IN (${transferNames}) AND NOT a.is_module_transfer))
-              AND NOT (a.extrinsic_index IS NULL
-                AND a.event_name IN (${namedEvents})
-                AND a.block_height IN (SELECT block_height FROM (${dcaExecsSql})))
           )
           GROUP BY block_height, event_index
           HAVING value_usd > 0
@@ -19174,89 +10982,10 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
         // event-identity dedup to disk instead of hitting the memory ceiling.
         clickhouse_settings: { max_bytes_before_external_group_by: '1500000000' },
       }),
-      mmList === "''" ? Promise.resolve(null) : client.query({
-        query: `
-          SELECT block_height, event_index, any(ts) AS ts, any(asset_id) AS asset_id, any(value_usd) AS value_usd
-          FROM (
-            SELECT m.block_height AS block_height, m.event_index AS event_index, toString(m.block_timestamp) AS ts,
-                   ${mmAssetExpr} AS asset_id,
-                   toFloat64OrZero(m.liquidated_collateral_amount) / ${assetDecimalsPowSql(mmAssetExpr)} * liq_price.close AS value_usd
-            FROM price_data.account_money_market_activity AS m FINAL
-            ASOF LEFT JOIN ${closes} liq_price
-              ON liq_price.asof_join_key = toUInt8(isNotNull(m.block_timestamp))
-             AND liq_price.asset_id = ${priceAliasIdSql(mmAssetExpr)}
-             AND liq_price.price_time <= m.block_timestamp
-            WHERE m.account_id IN (${mmList}) AND ${bound}
-              AND m.event_name = 'LiquidationCall'
-              AND lower(ifNull(m.pool_address, '')) IN (${configuredMmPoolsSql()})
-          )
-          GROUP BY block_height, event_index
-          ORDER BY value_usd DESC
-          LIMIT {fetch:UInt32}`,
-        query_params: { fetch }, format: 'JSONEachRow',
-      }),
-      // One row per DCA schedule: total = SUM of its executions' USD value at the
-      // same ASOF hourly close the swap markers use, marker at the single
-      // highest-value execution. Two eras value differently: OLD-format
-      // executions index their AMM events under the OWNER's account (and their
-      // dca_schedules row carries no asset/direction), so they're valued from
-      // that swap leg — max per block, since Router.Executed and its hop events
-      // describe one trade. NEW-format executions route through the router pallet
-      // account (nothing valued lands under the owner), but their dca_schedules
-      // row reliably carries asset_out — those value dca_events.amount_out at
-      // asset_out's close, gated on direction != '' so an old unknown-asset
-      // schedule can never be mis-valued as asset 0 (HDX).
-      client.query({
-        query: `
-          SELECT schedule_id, sum(exec_value) AS total_value_usd, count() AS trades,
-                 argMax(block_height, exec_value) AS block_height, argMax(event_index, exec_value) AS event_index,
-                 argMax(ts, exec_value) AS ts, argMax(asset_id, exec_value) AS asset_id
-          FROM (
-            SELECT d.schedule_id AS schedule_id, d.block_height AS block_height,
-                   if(max(s.value_usd) > 0, max(s.value_usd), any(d.event_value)) AS exec_value,
-                   if(max(s.value_usd) > 0, argMax(s.event_index, s.value_usd), any(d.event_index)) AS event_index,
-                   if(max(s.value_usd) > 0, argMax(s.asset_id, s.value_usd), any(d.sched_asset_out)) AS asset_id,
-                   any(d.ts) AS ts
-            FROM (
-              SELECT toUInt32(d0.id) AS schedule_id, d0.block_height AS block_height, d0.event_index AS event_index,
-                     toString(d0.block_timestamp) AS ts, d0.who AS who, sched.asset_out AS sched_asset_out,
-                     if(sched.direction != '',
-                        toFloat64OrZero(d0.amount_out) / ${assetDecimalsPowSql('sched.asset_out')} * out_price.close, 0) AS event_value
-              FROM (${dcaExecsSql}) AS d0
-              LEFT JOIN (SELECT id, asset_out, direction FROM price_data.dca_schedules FINAL WHERE who IN (${list})) AS sched
-                ON sched.id = d0.id
-              ASOF LEFT JOIN ${closes} out_price
-                ON out_price.asof_join_key = toUInt8(isNotNull(d0.block_timestamp))
-               AND out_price.asset_id = ${priceAliasIdSql('sched.asset_out')}
-               AND out_price.price_time <= d0.block_timestamp
-            ) AS d
-            LEFT JOIN (
-              SELECT a.block_height AS block_height, a.account AS account, a.event_index AS event_index,
-                     a.asset_id AS asset_id,
-                     toFloat64(a.amount) / ${assetDecimalsPowSql('a.asset_id')} * value_price.close AS value_usd
-              FROM price_data.account_activity_v3 AS a FINAL
-              ASOF LEFT JOIN ${closes} value_price
-                ON value_price.asof_join_key = toUInt8(isNotNull(a.block_timestamp))
-               AND value_price.asset_id = ${priceAliasIdSql('a.asset_id')}
-               AND value_price.price_time <= a.block_timestamp
-              WHERE a.account IN (${list}) AND ${bound}
-                AND a.has_amount = 1 AND a.extrinsic_index IS NULL
-                AND a.event_name IN (${SWAP_EVENTS.map(n => `'${n}'`).join(',')})
-            ) AS s ON s.block_height = d.block_height AND s.account = d.who
-            GROUP BY schedule_id, block_height
-          )
-          GROUP BY schedule_id
-          HAVING total_value_usd > 0
-          ORDER BY total_value_usd DESC
-          LIMIT {fetch:UInt32}`,
-        query_params: { fetch }, format: 'JSONEachRow',
-        clickhouse_settings: { max_bytes_before_external_group_by: '1500000000' },
-      }),
       // Per-jump-window candidates: the same families the global pass ranks,
       // EXTENDED with the cross-chain deposit/withdraw events (gated to real
-      // XCM contexts) and WITHOUT the DCA-block exclusion — hook executions are
-      // classified (and collapsed) per schedule in the scoring below. Top rows
-      // per window; the per-cause sums drive the jump attribution.
+      // XCM contexts). Top rows per window; the per-cause sums drive the jump
+      // attribution.
       !windows.length ? Promise.resolve(null) : client.query({
         query: `
           SELECT w, block_height, event_index, any(extrinsic_index) AS extrinsic_index, any(event_name) AS event_name,
@@ -19297,21 +11026,10 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
                   AND extrinsic_index IS NOT NULL AND event_index IS NOT NULL AND (${windowCondFor('block_height')})`,
         format: 'JSONEachRow',
       }),
-      // Which windows' blocks are DCA executions, and of which schedule — the
-      // scoring collapses their hook swaps under the schedule, not 'swap'.
-      !windows.length ? Promise.resolve(null) : client.query({
-        query: `SELECT toUInt32(id) AS schedule_id, block_height FROM price_data.dca_events
-                WHERE event_name = 'DCA.TradeExecuted' AND who IN (${list}) AND (${windowCondFor('block_height')})
-                GROUP BY schedule_id, block_height`,
-        format: 'JSONEachRow',
-      }),
     ])
     const rows = await eventRes.json<ValueEventCandidateRow>()
-    const liqRows = liqRes ? await liqRes.json<{ block_height: number; event_index: number; ts: string; asset_id: number; value_usd: number }>() : []
-    const dcaRows = await dcaRes.json<{ schedule_id: number; total_value_usd: number; trades: number; block_height: number; event_index: number; ts: string; asset_id: number }>()
     const windowRows = windowRes ? await windowRes.json<ValueEventCandidateRow & { w: number }>() : []
     const xcmSentRows = xcmSentRes ? await xcmSentRes.json<{ block_height: number; extrinsic_index: number; event_index: number; name: string }>() : []
-    const dcaWindowRows = dcaWindowRes ? await dcaWindowRes.json<{ schedule_id: number; block_height: number }>() : []
 
     // Transfer direction + counterparty from the transfer read model (the v3
     // index carries no from/to): a bounded point lookup for at most `fetch`
@@ -19333,10 +11051,10 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
       }
     }
     const scoped = new Set(accounts.map(a => a.toLowerCase()))
-    // Pool + money-market contracts (all markets): a transfer whose counterparty
-    // is one of these is a swap/LP/MM leg represented elsewhere, never a user
-    // transfer marker (and never a cross-chain one).
-    const plumbing = new Set([...ammPoolAccounts(), ...(await mmReserveAccountIds()), ...(await mmContractAccountIds())])
+    // Pool accounts: a transfer whose counterparty is one of these is a swap/LP
+    // leg represented elsewhere, never a user transfer marker (and never a
+    // cross-chain one).
+    const plumbing = new Set(ammPoolAccounts())
     // The same movement is often indexed twice (Currencies.Transferred mirrors
     // Tokens.Transfer): keep the highest-priority mirror per movement identity —
     // the dedupeTransferEvents rule, applied post-lookup since identity needs
@@ -19365,10 +11083,10 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
       if (!leg) return 'other'
       if (transferEventPriority(r.event_name) !== priority.get(mirrorKey(r, leg))) return null
       const fromIn = scoped.has(leg.from), toIn = scoped.has(leg.to)
-      // Internal shuffles between the scoped accounts change no value; a pool/
-      // MM-contract COUNTERPARTY marks a swap or MM leg represented elsewhere
-      // (the viewed set itself may be such an account — its legs are its
-      // activity, the feed's viewingPool exception).
+      // Internal shuffles between the scoped accounts change no value; a pool
+      // COUNTERPARTY marks a swap or LP leg represented elsewhere (the viewed
+      // set itself may be such an account — its legs are its activity, the
+      // feed's viewingPool exception).
       if (fromIn && toIn) return null
       const counterparty = toIn ? leg.from : leg.to
       if (plumbing.has(counterparty)) return null
@@ -19401,60 +11119,6 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
       }
       out.push({ ...base, kind, counterparty: null })
     }
-    // One collapsed marker per DCA schedule (summed value, /dca/:id link, at the
-    // peak execution). Reserved slots below guarantee the largest surface.
-    for (const r of dcaRows) {
-      out.push({
-        blockHeight: Number(r.block_height), eventIndex: Number(r.event_index), extrinsicIndex: null,
-        timestamp: r.ts, kind: 'dca', valueUsd: +Number(r.total_value_usd).toFixed(2),
-        asset: asset(r.asset_id), counterparty: null,
-        dcaScheduleId: Number(r.schedule_id), dcaTrades: Number(r.trades),
-      })
-    }
-    // Share-token collateral (2-Pool-*) has no historical NAV, valuing those
-    // seizures at 0. Fall back to the DEBT side (debtToCover at the debt
-    // asset's close) — for GigaHDX liquidations that's HOLLAR, which prices.
-    const unpricedLiq = liqRows.filter(r => !(Number(r.value_usd) > 0))
-    const liqDebtValue = new Map<string, { assetId: number; valueUsd: number }>()
-    if (unpricedLiq.length) {
-      const tuples = unpricedLiq.map(r => `(${r.block_height},${r.event_index})`).join(',')
-      const debtRes = await client.query({
-        query: `SELECT block_height, event_index, any(decoded_args_json) AS args
-                FROM price_data.raw_money_market_events
-                WHERE (block_height, event_index) IN (${tuples}) AND event_name = 'LiquidationCall'
-                GROUP BY block_height, event_index`,
-        format: 'JSONEachRow',
-      })
-      const debtLegs = (await debtRes.json<{ block_height: number; event_index: number; args: string }>())
-        .flatMap(r => {
-          const args = (safeJson(r.args) ?? {}) as Record<string, unknown>
-          const assetId = assetIdFromMmAddress(typeof args.debtAsset === 'string' ? args.debtAsset : '')
-          const raw = typeof args.debtToCover === 'string' ? args.debtToCover : ''
-          const row = unpricedLiq.find(l => l.block_height === r.block_height && l.event_index === r.event_index)
-          return assetId != null && raw && row ? [{ key: `${r.block_height}:${r.event_index}`, assetId, raw, ts: row.ts }] : []
-        })
-      const closes = await historicalCloses(debtLegs.map(leg => ({ assetId: leg.assetId, ts: leg.ts })))
-      for (const leg of debtLegs) {
-        const close = closes.get(historicalPriceKey(leg.assetId, leg.ts))
-        if (!close) continue
-        const value = Number(leg.raw) / 10 ** asset(leg.assetId).decimals * Number(close)
-        if (Number.isFinite(value) && value > 0) liqDebtValue.set(leg.key, { assetId: leg.assetId, valueUsd: value })
-      }
-    }
-    const liqEvents: ValueEvent[] = []
-    for (const r of liqRows) {
-      const priced = Number(r.value_usd) > 0
-      const fallback = priced ? undefined : liqDebtValue.get(`${r.block_height}:${r.event_index}`)
-      const valueUsd = priced ? Number(r.value_usd) : fallback?.valueUsd ?? 0
-      if (!(valueUsd > 0)) continue
-      liqEvents.push({
-        blockHeight: Number(r.block_height), eventIndex: Number(r.event_index), extrinsicIndex: null,
-        timestamp: r.ts, kind: 'liquidation', valueUsd: +valueUsd.toFixed(2),
-        asset: asset(fallback ? fallback.assetId : r.asset_id), counterparty: null,
-      })
-    }
-    out.push(...liqEvents)
-
     // Jump attribution: score every window candidate under its cause (mirror-
     // deduped, echo-collapsed), then give each selected jump ONE marker — the
     // direction-consistent cause with the largest summed USD when it plausibly
@@ -19475,8 +11139,6 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
         const p = xcmEventPriority(r.event_name)
         if (p > (xcmPriority.get(key) ?? 0)) xcmPriority.set(key, p)
       }
-      const dcaScheduleByBlock = new Map<number, number>()
-      for (const r of dcaWindowRows) dcaScheduleByBlock.set(Number(r.block_height), Number(r.schedule_id))
       // Outbound markers point at the XTokens/pallet-xcm Sent event — the row
       // the activity feed keeps (the legacy event wins over its mirror), so the
       // marker's link resolves; the withdrawal is just its funding leg.
@@ -19490,7 +11152,7 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
       }
 
       interface JumpCause { score: number; best: ValueEvent | null; bestValue: number; hits: number }
-      const causes = new Map<string, JumpCause>() // `${w}:<class>` / `${w}:dca:<scheduleId>`
+      const causes = new Map<string, JumpCause>() // `${w}:<class>`
       const bump = (key: string, value: number, event: ValueEvent, mode: 'sum' | 'max') => {
         const cur = causes.get(key) ?? { score: 0, best: null, bestValue: 0, hits: 0 }
         cur.score = mode === 'sum' ? cur.score + value : Math.max(cur.score, value)
@@ -19499,7 +11161,6 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
         causes.set(key, cur)
       }
       const seenWindowSwaps = new Set<string>()
-      const seenDcaBlocks = new Set<string>()
       // Value-descending so per-trade/per-execution dedup keeps the largest leg.
       const sortedWindowRows = [...windowRows].sort((x, y) => Number(y.value_usd) - Number(x.value_usd))
       for (const r of sortedWindowRows) {
@@ -19528,17 +11189,6 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
           continue
         }
         if (SWAP_EVENTS.includes(r.event_name)) {
-          const scheduleId = r.extrinsic_index == null ? dcaScheduleByBlock.get(Number(r.block_height)) : undefined
-          if (scheduleId != null) {
-            // DCA executions sum under their schedule — tracked so a schedule-
-            // driven jump doesn't get a bogus 'price' marker, but they surface
-            // through the DCA reservation (below), never as a jump marker.
-            const blockKey = `${w}:${r.block_height}`
-            if (seenDcaBlocks.has(blockKey)) continue
-            seenDcaBlocks.add(blockKey)
-            bump(`${w}:dca:${scheduleId}`, value, { ...base, kind: 'dca', dcaScheduleId: scheduleId }, 'sum')
-            continue
-          }
           // A swap between priced assets is value-neutral churn and must never
           // "explain" a jump. Only a swap INTO an unpriced asset (a share token,
           // valued off the wallet curve) actually moves the reconstructed line.
@@ -19554,21 +11204,13 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
         // entering/leaving the LP-valued curve).
         bump(`${w}:liquidity`, value, { ...base, kind: 'liquidity' }, 'sum')
       }
-      for (const e of liqEvents) {
-        const i = windows.findIndex(win => e.blockHeight > win.startBlock && e.blockHeight <= win.endBlock)
-        if (i >= 0) bump(`${i + 1}:liquidation`, e.valueUsd, e, 'sum')
-      }
 
       for (const jump of jumps) {
         const w = windowId.get(jump)!
         // Direction-consistent causes only: an inflow can't explain a drop.
-        const allowed = jump.delta > 0
+        const candidateKeys = jump.delta > 0
           ? [`${w}:transfer-in`, `${w}:cross-chain-in`, `${w}:liquidity`, `${w}:swap`]
-          : [`${w}:transfer-out`, `${w}:cross-chain-out`, `${w}:liquidity`, `${w}:liquidation`, `${w}:swap`]
-        // DCA is a candidate cause only to WIN (and thereby suppress a 'price'
-        // marker) — a schedule that dominates the window annotates it via the
-        // reservation, not a duplicate jump marker.
-        const candidateKeys = [...allowed, ...[...causes.keys()].filter(k => k.startsWith(`${w}:dca:`))]
+          : [`${w}:transfer-out`, `${w}:cross-chain-out`, `${w}:liquidity`, `${w}:swap`]
         let winner: { key: string; cause: JumpCause } | null = null
         for (const key of candidateKeys) {
           const cause = causes.get(key)
@@ -19630,37 +11272,21 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
     }
 
     out.sort((x, y) => y.valueUsd - x.valueUsd)
-    // Selection order: reserve the largest liquidations and DCA schedules (both
-    // shipped, high-signal markers that raw jumps must not crowd out), then one
-    // marker per big jump (largest |Δ| first — annotating distinct moves beats
-    // raw event size), then a value-fill of the remaining budget. The fill is
-    // GATED to the account's own significance threshold, so a flat account never
-    // surfaces its dust; a jump that IS a top event dedups by identity, and a
-    // DCA schedule never renders twice.
+    // Selection order: one marker per big jump (largest |Δ| first — annotating
+    // distinct moves beats raw event size), then a value-fill of the remaining
+    // budget. The fill is GATED to the account's own significance threshold, so
+    // a flat account never surfaces its dust; a jump that IS a top event dedups
+    // by identity.
     const fillThreshold = history ? valueJumpThreshold(history.portfolioSeries) : VALUE_JUMP_MIN_USD
-    const reservedLiq = out.filter(e => e.kind === 'liquidation').slice(0, VALUE_EVENT_LIQUIDATION_SLOTS)
-    const reservedDca = out.filter(e => e.kind === 'dca').slice(0, VALUE_EVENT_DCA_SLOTS)
     const chosen: ValueEvent[] = []
     const usedRefs = new Set<string>()
-    const usedSchedules = new Set<number>()
     const take = (e: ValueEvent) => {
       if (chosen.length >= limit) return
-      // DCA markers dedup by SCHEDULE, not by (block,event): paired buy/sell
-      // schedules argMax to the same peak swap leg, so they legitimately share a
-      // ref — collapsing on it would drop a distinct schedule.
-      if (e.kind === 'dca' && e.dcaScheduleId != null) {
-        if (usedSchedules.has(e.dcaScheduleId)) return
-        usedSchedules.add(e.dcaScheduleId)
-        chosen.push(e)
-        return
-      }
       const ref = `${e.blockHeight}:${e.eventIndex}`
       if (usedRefs.has(ref)) return
       usedRefs.add(ref)
       chosen.push(e)
     }
-    for (const e of reservedLiq) take(e)
-    for (const e of reservedDca) take(e)
     for (const e of jumpMarkers) take(e)
     // Value-fill: only genuinely significant events (≥ this account's jump
     // threshold). 'price'/'cross-chain' jump markers already annotate the moves;
@@ -19690,27 +11316,6 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
         if (rep) { e.assetIn = asset(Number(rep.asset_in)); e.assetOut = asset(Number(rep.asset_out)) }
       }
     }
-    const dcaMarkers = chosen.filter(e => e.kind === 'dca' && e.dcaScheduleId != null)
-    if (dcaMarkers.length) {
-      const res = await client.query({
-        query: `SELECT id, any(asset_in) AS asset_in, any(asset_out) AS asset_out
-                FROM price_data.dca_schedules WHERE id IN (${dcaMarkers.map(e => e.dcaScheduleId).join(',')})
-                GROUP BY id`,
-        format: 'JSONEachRow',
-      })
-      const byId = new Map((await res.json<{ id: string; asset_in: number; asset_out: number }>())
-        .map(r => [Number(r.id), r]))
-      for (const e of dcaMarkers) {
-        const s = byId.get(e.dcaScheduleId!)
-        // Legacy schedules created before the order landed in the event store
-        // asset_in = asset_out = 0 — no honest pair to show.
-        if (s && !(Number(s.asset_in) === 0 && Number(s.asset_out) === 0)) {
-          e.assetIn = asset(Number(s.asset_in))
-          e.assetOut = asset(Number(s.asset_out))
-        }
-      }
-    }
-
     // Chronological order for rendering.
     return chosen.sort((x, y) => x.blockHeight - y.blockHeight || x.eventIndex - y.eventIndex)
   })
@@ -20155,195 +11760,14 @@ async function getAccountEvents(accounts: string[], limit = 25, offset = 0, cach
   })
 }
 
-// money market directory
-export interface MoneyMarketRow {
-  account: AccountRef
-  supplyUsd: number
-  debtUsd: number
-  netWorthUsd: number
-  healthFactor: string
-  blockHeight: number
-}
-export async function getMoneyMarket(limit: number): Promise<{ totalSupplyUsd: number; totalDebtUsd: number; positions: MoneyMarketRow[] }> {
-  return cached(`explorer:money-market:${limit}`, 15000, async () => {
-    // This legacy directory contract is intentionally PRIMARY-only: its single
-    // health factor and DefiSim semantics cannot represent isolated markets. The
-    // account/tag payloads expose supplemental positions contextually instead.
-    const res = await client.query({
-      query: `
-        WITH primary_positions AS (
-          SELECT ${mmPositionField('account_id')} AS account_id,
-            toString(${mmPositionField('total_collateral_base')}) AS col,
-            toString(${mmPositionField('total_debt_base')}) AS debt,
-            toString(${mmPositionField('health_factor')}) AS hf,
-            ${mmPositionField('block_height')} AS lb
-          FROM (${latestMoneyMarketPositionsSql(`pool_address = '${CORE_MM_MARKET.poolProxy}'`)})
-          WHERE ${mmPositionField('account_id')} != ''
-        )
-        SELECT account_id,
-          col, debt, hf, lb,
-          toString(sum(toUInt256OrZero(col)) OVER ()) AS total_col,
-          toString(sum(toUInt256OrZero(debt)) OVER ()) AS total_debt
-        FROM primary_positions
-        WHERE toUInt256OrZero(col) > 0 OR toUInt256OrZero(debt) > 0
-        ORDER BY if(toUInt256OrZero(debt) > 0, toUInt256OrZero(hf), toUInt256('${MAX_UINT256}')) ASC
-        LIMIT {limit:UInt32}`,
-      query_params: { limit }, format: 'JSONEachRow',
-    })
-    const rows = await res.json<{ account_id: string; col: string; debt: string; hf: string; lb: number; total_col: string; total_debt: string }>()
-    const positions: MoneyMarketRow[] = rows.map(r => {
-      const supplyUsd = Number(r.col) / 1e8
-      const debtUsd = Number(r.debt) / 1e8
-      return {
-        account: accountRef(r.account_id), supplyUsd, debtUsd, netWorthUsd: supplyUsd - debtUsd,
-        healthFactor: r.hf === MAX_UINT256 ? 'inf' : r.hf, blockHeight: r.lb,
-      }
-    })
-    return {
-      totalSupplyUsd: Number(rows[0]?.total_col ?? 0) / 1e8,
-      totalDebtUsd: Number(rows[0]?.total_debt ?? 0) / 1e8,
-      positions,
-    }
-  })
-}
-
-// asset detail
-// Collateral seized from borrowers in the primary money market, per day. This is
-// what "liquidated" measures on an asset surface: the LiquidationCall's
-// `collateralAsset` leg, the same side the account/tag liquidation volume values.
-// The debt-repaid side is a different asset's flow and is not folded in here.
-//
-// Legs come from the money_market_liquidation_calls projection for the reasons
-// documented on liquidationVolumeCtes — raw_money_market_events is ordered
-// (block_height, event_index, event_name), so a LiquidationCall predicate prunes
-// nothing there and every read would decompress the ZSTD(6) decoded args. FINAL
-// because the legs are summed, and bounded by the projection's own size (a few
-// thousand rows chain-wide).
-export interface AssetLiquidationDay { date: string; valueUsd: number; amount: string; count: number }
-export interface AssetLiquidationTotal { valueUsd: number; amount: string; count: number }
-export interface AssetLiquidations {
-  // The decimals every `amount` below is expressed in. It is NOT necessarily the
-  // page asset's own: the reserve can be a pool-share token carrying different
-  // decimals than the asset it displays as (2-Pool-PRIME 18 vs PRIME 6).
-  decimals: number
-  // Full-history daily buckets, ascending; only days that had a liquidation.
-  days: AssetLiquidationDay[]
-  total: AssetLiquidationTotal
-}
 export interface AssetDetail {
   asset: AssetListItem
   holderCount: number
-  // Ongoing DCA schedules buying or selling this asset — the DCAs tab's badge,
-  // counted exactly as getAssetDcas lists them so the two never disagree.
-  dcaCount: number
   totalUsd: number
   priceSeries: number[]
   priceDates: string[]
-  // Null for an asset that has never been a primary-market reserve — the surface
-  // omits the figure rather than claiming a zero for an asset the market never held.
-  liquidations: AssetLiquidations | null
-}
-// The market whose liquidations an asset page reports. Env-configured markets are
-// always supplemental, so this is the core market; isolated markets are never
-// blended, and a supplemental market's liquidations belong to its own surface.
-const primaryMmPools = (): string[] => MM_MARKETS.filter(m => m.role === 'primary').map(m => m.poolProxy)
-
-// The reserve addresses of one asset's page (see mmReserveIdsForAsset for the
-// aliases they come from), each carrying the decimals ITS rows are denominated in.
-//
-// What a per-asset read needs beyond a filter's address set: every candidate must
-// price through the SAME feed as the page asset, which is what makes one bounded
-// ASOF join valid for all of them, so a candidate that does not is dropped rather
-// than valued at the wrong feed. And decimals are per candidate, not per page —
-// 2-Pool-PRIME carries 18 where PRIME carries 6 — so amounts are reported in the
-// widest basis present rather than assumed uniform.
-export interface MmReserveScope { priceId: number; decimals: number; byAddress: Map<string, number> }
-export function mmReserveScope(assetId: number): MmReserveScope {
-  const priceId = historicalPriceAssetId(assetId)
-  const byAddress = new Map<string, number>()
-  for (const candidate of mmReserveIdsForAsset(assetId)) {
-    if (historicalPriceAssetId(candidate) !== priceId) continue
-    const decimals = assetDescriptor(candidate).decimals
-    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 65) continue
-    for (const address of mmReserveAddressForAsset(candidate)) {
-      byAddress.set(address.toLowerCase(), Math.max(byAddress.get(address.toLowerCase()) ?? 0, decimals))
-    }
-  }
-  return { priceId, decimals: Math.max(0, ...byAddress.values()), byAddress }
 }
 
-async function isPrimaryMmReserve(scope: MmReserveScope): Promise<boolean> {
-  return (await getMmReserveTokens()).some(t =>
-    MM_MARKET_BY_KEY.get(t.marketKey)?.role === 'primary' && scope.byAddress.has(t.asset.toLowerCase()))
-}
-
-// Raw amounts from reserves with different decimals cannot be summed as they stand,
-// so each leg is scaled to the widest basis in the scope by an exact power of ten,
-// as overflow-checked fixed point. A silent UInt256 wrap or a float would move the
-// figure by orders of magnitude on precisely the assets that need this (2-Pool-PRIME
-// legs scale by 10^12 to sit beside PRIME's).
-export function mmAmountInScopeSql(scope: MmReserveScope, column: string): string {
-  const addresses = [...scope.byAddress.keys()]
-  const factors = addresses.map(a => `'${10n ** BigInt(scope.decimals - (scope.byAddress.get(a) ?? scope.decimals))}'`)
-  // A single reserve needs no per-row lookup; more than one does, and only then is
-  // the address read at all. Both branches emit an already-quoted literal.
-  const factor = addresses.length > 1
-    ? `transform(lower(asset_address), [${addresses.map(a => `'${a}'`).join(',')}], [${factors.join(',')}], '1')`
-    : factors[0] ?? `'1'`
-  return `multiplyDecimal(toDecimal256(${column}, 0), toDecimal256(${factor}, 0), 0)`
-}
-
-// Day buckets use `toStartOfDay(block_timestamp)` — the expression ohlc_1d_mv
-// buckets its candles by — so a bar lands on the price point it belongs to by
-// construction rather than by matching two independently chosen boundaries.
-//
-// Each leg is valued at the last hourly close completed before it happened, like
-// every other displayed historical flow. The ASOF right side is one asset's feed,
-// so it stays small. A leg older than the asset's first close contributes its
-// tokens with no USD, which understates the value rather than inventing one.
-async function assetLiquidationDays(scope: MmReserveScope): Promise<AssetLiquidationDay[]> {
-  if (!scope.byAddress.size) return []
-  const res = await client.query({
-    query: `
-      WITH legs AS (
-        SELECT toStartOfDay(block_timestamp) AS day,
-               block_timestamp AS block_time,
-               ${mmAmountInScopeSql(scope, 'liquidated_collateral_amount')} AS amount,
-               {priceId:UInt32} AS price_asset_id
-        FROM price_data.money_market_liquidation_calls FINAL
-        WHERE pool_address IN {pools:Array(String)}
-          AND asset_address IN {reserves:Array(String)}
-      )
-      SELECT toString(l.day) AS day,
-             toString(sum(l.amount)) AS amount,
-             toUInt32(count()) AS legs,
-             toFloat64(sum(multiplyDecimal(l.amount, toDecimal256(p.close, 12), 12))) / 1e${scope.decimals} AS value_usd
-      FROM legs l
-      ASOF LEFT JOIN (
-        SELECT asset_id, interval_start + INTERVAL 1 HOUR AS price_time, argMaxMerge(close_state) AS close
-        FROM price_data.ohlc_1h
-        WHERE asset_id = {priceId:UInt32}
-        GROUP BY asset_id, interval_start
-      ) p ON p.asset_id = l.price_asset_id AND p.price_time <= l.block_time
-      GROUP BY l.day
-      ORDER BY l.day`,
-    query_params: { pools: primaryMmPools(), reserves: [...scope.byAddress.keys()], priceId: scope.priceId },
-    format: 'JSONEachRow',
-  })
-  return (await res.json<{ day: string; amount: string; legs: number; value_usd: number }>())
-    .map(r => ({ date: r.day, valueUsd: Number(r.value_usd) || 0, amount: r.amount, count: Number(r.legs) }))
-}
-
-// The headline total is folded from the very rows the bars are drawn from, so the
-// card and the chart can never disagree — including for a day whose bar lands
-// outside the price series.
-function totalAssetLiquidations(days: AssetLiquidationDay[]): AssetLiquidationTotal {
-  return {
-    valueUsd: days.reduce((s, d) => s + d.valueUsd, 0),
-    amount: days.reduce((s, d) => s + BigInt(d.amount || '0'), 0n).toString(),
-    count: days.reduce((s, d) => s + d.count, 0),
-  }
-}
 export async function getAssetDetail(assetId: number): Promise<AssetDetail> {
   return cached(`explorer:asset:${assetId}`, 30000, async () => {
     const prices = await ensurePrices()
@@ -20381,38 +11805,19 @@ export async function getAssetDetail(assetId: number): Promise<AssetDetail> {
         priceSeries.push(r.px)
       }
     })().catch(() => { /* asset may have no OHLC */ })
-    // The liquidation history is an independent read, so it costs no extra latency.
-    // A reserve with no seizures still reports a total (zero) — "in the market,
-    // never liquidated" is a fact, not missing data.
-    const scope = mmReserveScope(assetId)
-    const [days, isReserve, dcaCount] = await Promise.all([
-      assetLiquidationDays(scope), isPrimaryMmReserve(scope), countAssetDcas(assetId), closesP,
-    ])
-    const liquidations: AssetLiquidations | null = isReserve || days.length
-      ? { decimals: scope.decimals, days, total: totalAssetLiquidations(days) }
-      : null
+    await closesP
 
-    return { asset: assetItem, holderCount: hsummary.total, dcaCount, totalUsd: hsummary.totalUsd, priceSeries, priceDates, liquidations }
+    return { asset: assetItem, holderCount: hsummary.total, totalUsd: hsummary.totalUsd, priceSeries, priceDates }
   })
 }
 
 // all accounts ranked by portfolio (tag-grouped)
 export interface TopAccountRow {
   account: AccountRef | null
-  // `userTagId`/`listId` are additive: set only when this group row folded
-  // under a VIEWER's own tag (getAccountsForViewerFold) rather than a system
-  // one — `tagId` is the same id either way (system label id, or the user
-  // tag's uuid), so a caller that only reads `tagId` needs no change at all.
-  tag: { tagId: string; name: string; color: string; icon: string; memberCount: number; userTagId?: string; listId?: string } | null
+  tag: { tagId: string; name: string; color: string; icon: string; memberCount: number } | null
   portfolioUsd: number
   lastBlock: number
-  healthFactor?: string | null
   identity?: string | null
-  suppliedUsd: number | null
-  borrowedUsd: number | null
-  // Account holding the group's worst-HF position (DefiSim link target for tags).
-  simAccount?: string | null
-  supplementalMarket?: { marketKey: string; market: string; borrowedUsd: number; healthFactor?: string | null }
   // 1Y wallet-value sparkline (SPARK_WEEKS weekly points, zero-padded so every
   // row spans the same trailing year) + activity counter. Optional — the page
   // still renders if the enrichment pass fails.
@@ -20423,9 +11828,6 @@ export interface TopAccountRow {
   activityCount?: number
   activityCountComplete?: boolean
   tradingVolumeUsd?: number
-  liquidationVolumeUsd?: number
-  // Protocol revenue earned from this account/group (see revenueByAccount).
-  revenueUsd?: number
   // Up to 4 largest holdings (> $10, highest USD first) for the icon cluster
   // shown after the row's value. Tag rows aggregate holdings across members.
   topAssets?: { asset: AssetRef; valueUsd: number }[]
@@ -20487,7 +11889,7 @@ export function buildValueSparkline(
   }
   return series.map(v => +v.toFixed(2))
 }
-export type AccountSort = 'value' | 'supplied' | 'borrowed' | 'health' | 'identity' | 'activity' | 'volume' | 'liquidation' | 'revenue'
+export type AccountSort = 'value' | 'identity' | 'activity' | 'volume'
 // The activity sort briefly shipped as `updates`; both resolve to the same column.
 export function normalizeAccountSort(sort: string): string {
   return sort === 'updates' ? 'activity' : sort
@@ -20857,46 +12259,23 @@ const ACCOUNT_DIRECTORY_SNAPSHOT_MAX_AGE_SECONDS = 10 * 60
 //    that remains to bound is how old the numbers are, and that is exactly what
 //    the tolerance says. A page one generation behind is the stale value the
 //    directory is supposed to serve while the next one computes.
-//  - `currentGenerationOnly: true` (refreshing) additionally requires the page
-//    to be at least as new as the published Omnipool-claim and money-market
-//    generations. A refresh that accepted a superseded page would keep handing
-//    back the value it exists to replace, and the directory would never advance.
 async function loadAccountDirectorySnapshot(
   snapshotKey: string,
-  currentGenerationOnly: boolean,
 ): Promise<{ page: AccountsPage; ageSeconds: number } | null> {
-  const coversCurrentGeneration = currentGenerationOnly
-    ? `${omnipoolAccountClaimsReady
-        ? `computed_at >= (SELECT max(computed_at)
-            FROM price_data.omnipool_account_claim_snapshot_state FINAL
-            WHERE snapshot_key = 'current')`
-        : '1'}
-       AND ${moneyMarketAccountValuesReady
-        ? `computed_at >= (SELECT max(computed_at)
-            FROM price_data.money_market_account_value_snapshot_state FINAL
-            WHERE snapshot_key = 'current')`
-        : '1'}`
-    : '1'
   const res = await client.query({
-    query: `SELECT payload_json,dateDiff('second',computed_at,now()) AS age,
-        ${coversCurrentGeneration} AS covers_current_generation
+    query: `SELECT payload_json,dateDiff('second',computed_at,now()) AS age
       FROM price_data.account_directory_snapshots FINAL
       WHERE snapshot_key={snapshotKey:String} LIMIT 1`,
     query_params: { snapshotKey }, format: 'JSONEachRow',
   })
-  const row = (await res.json<{ payload_json: string; age: number; covers_current_generation: number }>())[0]
-  if (!row || Number(row.age) > ACCOUNT_DIRECTORY_SNAPSHOT_MAX_AGE_SECONDS || Number(row.covers_current_generation) !== 1) return null
+  const row = (await res.json<{ payload_json: string; age: number }>())[0]
+  if (!row || Number(row.age) > ACCOUNT_DIRECTORY_SNAPSHOT_MAX_AGE_SECONDS) return null
   try {
     const page = JSON.parse(row.payload_json) as AccountsPage
     return Array.isArray(page?.rows) && Number.isSafeInteger(page.total)
       ? { page, ageSeconds: Math.max(0, Number(row.age)) }
       : null
   } catch { return null }
-}
-
-function accountDirectoryModelVersion(): string {
-  if (omnipoolAccountClaimsReady && moneyMarketAccountValuesReady) return 'v3'
-  return omnipoolAccountClaimsReady ? 'v2' : 'v1'
 }
 
 async function persistAccountDirectorySnapshot(snapshotKey: string, page: AccountsPage): Promise<void> {
@@ -20915,19 +12294,12 @@ async function persistAccountDirectorySnapshot(snapshotKey: string, page: Accoun
 // column sort last; ties fall back to portfolio value.
 const ACCOUNT_SORT_SQL: Record<AccountSort, string> = {
   value: 'isNull(usd_total) ASC, usd_total DESC',
-  supplied: 'if(mm_col <= 0, 1, 0) ASC, mm_col DESC, usd_total DESC',
-  borrowed: 'if(mm_debt <= 0, 1, 0) ASC, mm_debt DESC, usd_total DESC',
-  // Riskiest first: real debt positions before pure suppliers/no-position rows,
-  // then by ascending health factor (smaller is closer to liquidation).
-  health: 'if(mm_debt <= 0, 1, 0) ASC, mm_hf_num ASC, usd_total DESC',
   // Named accounts (tag or on-chain identity) first, alphabetically; the unnamed
   // rest by value.
   identity: 'if(has_identity = 0, 1, 0) ASC, lowerUTF8(disp_name) ASC, usd_total DESC',
   // Exact totals first, then by total. See the activity-ordering note.
   activity: 'activity_count_complete DESC, activity_count DESC, usd_total DESC',
   volume: 'trading_volume_usd DESC, usd_total DESC',
-  liquidation: 'if(liquidation_volume_usd <= 0, 1, 0) ASC, liquidation_volume_usd DESC, usd_total DESC',
-  revenue: 'if(revenue_usd <= 0, 1, 0) ASC, revenue_usd DESC, usd_total DESC',
 }
 
 // Total number of account rows (single accounts + tagged groups, tag members
@@ -20941,8 +12313,7 @@ const ACCOUNT_SORT_SQL: Record<AccountSort, string> = {
 // rebuild that is already running in the background, so invalidating it costs
 // no request any latency.
 async function getAccountsTotal(): Promise<number> {
-  const modelVersion = accountDirectoryModelVersion()
-  return cachedSwr(`explorer:accounts-total:${accountValueGenerationEpoch}:${modelVersion}`, 60_000, 30 * 60_000, async () => {
+  return cachedSwr(`explorer:accounts-total:${accountValueGenerationEpoch}`, 60_000, 30 * 60_000, async () => {
     const res = await client.query({
       query: `
         WITH tags AS (SELECT account_id, any(label_id) AS lid
@@ -20950,13 +12321,6 @@ async function getAccountsTotal(): Promise<number> {
         SELECT uniqExact(if(t.lid = '', o.account_id, t.lid)) AS total
         FROM (
           SELECT account_id FROM price_data.account_asset_latest_balances GROUP BY account_id
-          ${omnipoolAccountClaimsReady ? `UNION ALL
-          SELECT account_id FROM price_data.omnipool_account_claim_snapshots
-          WHERE snapshot_id = (
-            SELECT argMax(snapshot_id, computed_at)
-            FROM price_data.omnipool_account_claim_snapshot_state
-            WHERE snapshot_key = 'current'
-          ) GROUP BY account_id` : ''}
         ) o
         LEFT JOIN tags t ON t.account_id = o.account_id`,
       format: 'JSONEachRow',
@@ -20979,8 +12343,8 @@ const ACCOUNTS_STALE_MS = 30 * 60_000
 // buys nothing but eviction pressure; this sits on that same order.
 const ACCOUNTS_VIEWER_STALE_MS = 5 * 60_000
 
-function accountsCacheKey(modelVersion: string, sort: AccountSort, offset: number, limit: number): string {
-  return `explorer:accounts:${modelVersion}:${sort}:${offset}:${limit}`
+function accountsCacheKey(sort: AccountSort, offset: number, limit: number): string {
+  return `explorer:accounts:${sort}:${offset}:${limit}`
 }
 
 // Paginated directory of every account that has a balance observation (seeded
@@ -20996,21 +12360,6 @@ export function getAccounts(offset: number, limit: number, sort: AccountSort = '
 // refresh must not be satisfied by the value it exists to replace.
 function refreshAccountsPage(offset: number, limit: number, sort: AccountSort): Promise<AccountsPage> {
   return accountsPage(offset, limit, sort, true)
-}
-
-// One winning group per account, resolved from a VIEWER's own (or subscribed)
-// tags — userListService.directoryFoldFor's return shape, structurally, but
-// this file never imports that module (see its own "User-tag aggregate view"
-// comment for the established, deliberate boundary: explorerService is handed
-// resolved member/presentation data, never reads userListService's maps
-// itself). The route composes both services, exactly like the list-tag
-// endpoints already do for a single tag's own aggregate view.
-export interface ViewerFoldGroup { tagId: string; listId: string; name: string; color: string; icon: string; memberCount: number }
-export interface ViewerFold {
-  ids: string[]                          // account_id, parallel to keys
-  keys: string[]                         // this account's winning group key, `u:<tagId>`
-  fingerprint: string
-  groups: Map<string, ViewerFoldGroup>   // group key -> presentation
 }
 
 // The accounts directory, folded under one viewer's OWN tags in addition to
@@ -21039,7 +12388,7 @@ export function getTagMemberAccounts(tagId: string, sort: AccountSort = 'value')
 export async function getAccountsForMembers(members: string[], sort: AccountSort = 'value', keepOrder = false): Promise<AccountsPage> {
   const ids = [...new Set(members.map(m => m.toLowerCase()))].sort()
   if (!ids.length) return { rows: [], total: 0 }
-  const page = await accountsPage(0, Math.min(ids.length, 500), sort, false, undefined, ids)
+  const page = await accountsPage(0, Math.min(ids.length, 500), sort, false, ids)
   if (!keepOrder) return page
   const position = new Map(members.map((m, i) => [m.toLowerCase(), i]))
   const rows = [...page.rows].sort((a, b) =>
@@ -21048,127 +12397,7 @@ export async function getAccountsForMembers(members: string[], sort: AccountSort
   return { ...page, rows }
 }
 
-export function getAccountsForViewerFold(offset: number, limit: number, sort: AccountSort, fold: ViewerFold): Promise<AccountsPage> {
-  if (!fold.ids.length) return getAccounts(offset, limit, sort)
-  return accountsPage(offset, limit, sort, false, fold)
-}
-
-// Activity totals for a VIEWER's own fold groups (subscribed lists and personal
-// tags). Those rows group under `u:<tagId>`, a key the activity leaderboard cannot
-// contain — it only ever counts a system tag id or a bare account id, verified
-// against both persisted generations — so they were the one kind of directory row
-// left with an empty Activity cell while every row around them showed a number.
-//
-// Counted through getListTagListTotal, which is exactly what the group's OWN
-// aggregate page calls, so the directory row and that page can never state
-// different numbers. That is the API's heaviest read, which is why the shared
-// directory amortizes it over a throttled leaderboard — but a fold is per-viewer
-// and a viewer has a handful of groups, not 250, and `scopedListTotal` caches on
-// the very key that page will hit (120 s fresh / 900 s stale), so the cost lands
-// once and is then shared.
-//
-// A request NEVER computes a fold total. Measured the hard way: a curated list's
-// count reads 2.7–4.8 GiB and takes 3–4.3 s (far heavier than a single account's
-// ~0.76 s), so starting a dozen of them per page build saturated ClickHouse and made
-// /accounts take 15 s — the page paying for work it then abandoned.
-//
-// Requests only REGISTER their groups; the paced background pass counts them, exactly
-// as the shared ranking is counted, and the page reads whatever is ready. A group not
-// yet counted shows no number, which is the same honest state an unswept account has.
-//
-// These stay in memory and never reach the shared table or a log line: the keys are
-// `u:<tagId>` from a viewer's own lists, which are user_* data.
-interface FoldGroupSpec { listId: string; tagId: string; members: string[] }
-const FOLD_GROUPS_TRACKED_MAX = 2_000
-const FOLD_TOTAL_TTL_MS = 12 * 3_600_000
-// Strictly one count at a time — concurrency is what broke this before (four
-// 4.8 GiB reads at once saturated the instance), not the total volume, which is
-// small: 88 groups at ~3.5s each is ~5 minutes of ClickHouse once per TTL. So the
-// sweep drains its queue continuously with a short gap and then idles, rather than
-// rationing a few per quarter hour — at 2 per 15-minute cycle those 88 groups would
-// have taken 11 hours, and the map is in memory, so every deploy restarted the wait.
-const FOLD_COUNT_COOLDOWN_MS = 2_000
-const FOLD_SWEEP_IDLE_MS = 30_000
-const foldGroupsSeen = new Map<string, FoldGroupSpec>()
-const foldTotals = new Map<string, ActivityLeaderboardEntry>()
-
-export function viewerFoldMembers(fold: { ids: string[]; keys: string[] }): Map<string, string[]> {
-  const byKey = new Map<string, string[]>()
-  fold.ids.forEach((accountId, i) => {
-    const key = fold.keys[i]
-    if (!key) return
-    ;(byKey.get(key) ?? byKey.set(key, []).get(key)!).push(accountId)
-  })
-  return byKey
-}
-
-function viewerFoldActivityEntries(fold: ViewerFold): ActivityLeaderboardEntry[] {
-  const out: ActivityLeaderboardEntry[] = []
-  for (const [gkey, members] of viewerFoldMembers(fold)) {
-    const group = fold.groups.get(gkey)
-    if (!group) continue
-    if (!foldGroupsSeen.has(gkey) && foldGroupsSeen.size < FOLD_GROUPS_TRACKED_MAX) {
-      foldGroupsSeen.set(gkey, { listId: group.listId, tagId: group.tagId, members })
-    }
-    const known = foldTotals.get(gkey)
-    if (known) out.push(known)
-  }
-  return out
-}
-
-// The single most-overdue group whose total has aged out, or null when none has.
-function dueFoldGroup(): [string, FoldGroupSpec] | null {
-  const now = Date.now()
-  const age = (gkey: string): number => {
-    const at = foldTotals.get(gkey)?.countedAt
-    const parsed = at ? Date.parse(at) : NaN
-    return Number.isFinite(parsed) ? now - parsed : Infinity
-  }
-  let best: [string, FoldGroupSpec] | null = null
-  let bestAge = FOLD_TOTAL_TTL_MS
-  for (const entry of foldGroupsSeen) {
-    const entryAge = age(entry[0])
-    if (entryAge > bestAge) { best = entry; bestAge = entryAge }
-  }
-  return best
-}
-
-// Counts one group, then reschedules: a continuous single-file lane rather than a
-// burst. Idles when nothing is due, so a warm process costs nothing.
-async function sweepOneFoldGroup(): Promise<boolean> {
-  const due = dueFoldGroup()
-  if (!due) return false
-  const [gkey, spec] = due
-  const total = await getListTagListTotal(spec.listId, spec.tagId, spec.members, { tab: 'activity', type: 'all' })
-    .catch(error => { console.warn('[explorer] fold activity count failed', error); return null })
-  if (!total || total.total == null) {
-    // Store the attempt so an ungroupable set does not hold the front of the queue.
-    foldTotals.set(gkey, { gkey, total: 0, complete: false, countedAt: new Date().toISOString() })
-    return true
-  }
-  foldTotals.set(gkey, { gkey, total: total.total, complete: total.complete, countedAt: new Date().toISOString() })
-  console.info('[explorer] fold activity totals', { tracked: foldGroupsSeen.size, known: foldTotals.size })
-  return true
-}
-
-let foldSweepTimer: ReturnType<typeof setTimeout> | null = null
-export function startFoldActivitySweep(): void {
-  if (foldSweepTimer) return
-  const tick = async (): Promise<void> => {
-    let worked = false
-    try { worked = await sweepOneFoldGroup() } catch (error) { console.warn('[explorer] fold activity sweep failed', error) }
-    foldSweepTimer = setTimeout(() => { void tick() }, worked ? FOLD_COUNT_COOLDOWN_MS : FOLD_SWEEP_IDLE_MS)
-    foldSweepTimer.unref()
-  }
-  foldSweepTimer = setTimeout(() => { void tick() }, FOLD_COUNT_COOLDOWN_MS)
-  foldSweepTimer.unref()
-}
-export function stopFoldActivitySweep(): void {
-  if (foldSweepTimer) clearTimeout(foldSweepTimer)
-  foldSweepTimer = null
-}
-
-async function accountsPage(offset: number, limit: number, sort: AccountSort, refresh: boolean, viewerFold?: ViewerFold, members?: string[]): Promise<AccountsPage> {
+async function accountsPage(offset: number, limit: number, sort: AccountSort, refresh: boolean, members?: string[]): Promise<AccountsPage> {
   // Whole-directory ranking: every rebuild re-aggregates all balances (+ MM
   // positions, and full-history volume CTEs for some sorts) just to render one
   // page — seconds of ClickHouse time. Serve stale-while-revalidating so no
@@ -21176,22 +12405,18 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
   // returned, and afterwards — including when the five-minute account-value
   // generation advances — the previous page is returned while the next one
   // computes in the background.
-  const modelVersion = accountDirectoryModelVersion()
-  const key = accountsCacheKey(modelVersion, sort, offset, limit)
-  const snapshotKey = `${modelVersion}:${sort}:${offset}:${limit}`
+  const key = accountsCacheKey(sort, offset, limit)
+  const snapshotKey = `${sort}:${offset}:${limit}`
   // A member-scoped page reads only those accounts' balances, so it costs a
   // fraction of the whole-directory ranking and needs none of its
   // stale-while-revalidate machinery — an ordinary cache is enough.
   const memberKey = members ? `:m${members.length}:${members.join(',')}` : ''
   const build = async (): Promise<AccountsPage> => {
-    // The persisted snapshot was computed under the SHARED system-tag
-    // grouping; a viewer's fold must never adopt it — see the anonymous path
-    // above it, unmodified, for what every non-fold request still gets.
     // The persisted snapshot ranks the WHOLE directory under the shared
-    // system-tag grouping. A viewer's fold must not adopt it, and neither may a
-    // page scoped to one tag's members — it is a different row set entirely.
-    if (!viewerFold && !members) {
-      const current = await loadAccountDirectorySnapshot(snapshotKey, true).catch(() => null)
+    // system-tag grouping; a page scoped to one tag's members must not adopt it
+    // — it is a different row set entirely.
+    if (!members) {
+      const current = await loadAccountDirectorySnapshot(snapshotKey).catch(() => null)
       if (current) return current.page
     }
     const prices = await ensureAccountValuePrices()
@@ -21199,48 +12424,14 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
     const orderBy = ACCOUNT_SORT_SQL[sort] ?? ACCOUNT_SORT_SQL.value
     const includeActivitySort = sort === 'activity'
     const includeVolumeSort = sort === 'volume'
-    const includeLiquidationSort = sort === 'liquidation'
-    const includeRevenueSort = sort === 'revenue'
-    // Every CTE below groups by this SAME `gkey` — a system tag's label_id when
-    // the account has one, else the account itself. A viewer's fold overrides
-    // that per-account, before any of them run: `fold_ids`/`fold_keys` name
-    // exactly the accounts whose winning group is one of the VIEWER's own tags.
-    // directoryFoldFor excludes anyone the system tag wins IN PRIORITY ORDER —
-    // but a personal list outranks the reserved 'system' slot by default, so a
-    // folded account CAN still carry a real system label_id (e.g. Treasury,
-    // tagged into the viewer's own personal tag). `gkey` alone is safe to
-    // override — the whole point of the fold is that it wins the grouping — but
-    // `label_id` must be neutralized alongside it (see labelIdSql below), or the
-    // `grouped` CTE's `GROUP BY gkey, label_id` still splits one fold across
-    // however many distinct system labels its folded members carry, and the
-    // gkey-only satellite joins (mm_grouped, lp_grouped, trade_volume,
-    // liquidation_volume) then hand each split row the WHOLE group's totals.
-    // Absent a fold this returns the exact original expression, unchanged.
-    // Applied to the REMAPPED account id, so a member's module truncation or
-    // bound H160 pot folds into the member rather than being dropped — the same
-    // identity the ungrouped rows below are keyed by.
     const memberFilter = members ? `WHERE ${boundAccountSql('l')} IN {members:Array(String)}` : ''
-    const gkeySql = (idExpr: string): string => {
-      // Scoped to one tag's members: the tag is the page, so grouping by it
-      // would collapse every member into the single row the reader just came
-      // from. Each member is its own row instead.
-      if (members) return idExpr
-      if (!viewerFold) return `if(t.lid = '', ${idExpr}, t.lid)`
-      const userKey = `transform(${idExpr}, {fold_ids:Array(String)}, {fold_keys:Array(String)}, '')`
-      return `if(${userKey} != '', ${userKey}, if(t.lid = '', ${idExpr}, t.lid))`
-    }
-    // The `grouped` CTE's other half of the same grouping key (see gkeySql just
-    // above): a folded account's system label_id (if it has one) must read as
-    // '' here, so every member gkeySql already routed to the SAME gkey also
-    // shares the SAME label_id and collapses into one row, not one row per
-    // distinct label_id among the fold's members. Absent a fold this returns
-    // the exact original `t.lid`, unchanged.
-    const labelIdSql = (idExpr: string): string => {
-      if (members) return `''`
-      if (!viewerFold) return 't.lid'
-      const userKey = `transform(${idExpr}, {fold_ids:Array(String)}, {fold_keys:Array(String)}, '')`
-      return `if(${userKey} != '', '', t.lid)`
-    }
+    // Every CTE below groups by this SAME `gkey` — a system tag's label_id when
+    // the account has one, else the account itself. Scoped to one tag's members
+    // the tag IS the page, so grouping by it would collapse every member into
+    // the single row the reader just came from; each member is its own row.
+    const gkeySql = (idExpr: string): string =>
+      members ? idExpr : `if(t.lid = '', ${idExpr}, t.lid)`
+    const labelIdSql = (): string => members ? `''` : 't.lid'
     // The activity ordering and value both come from the background leaderboard, keyed
     // on the same gkey this query groups by. An account outside the pool has no counted
     // total, so it sorts last and renders no number — never a number from another model.
@@ -21248,27 +12439,13 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
     // object spliced in as a `transform()` literal, so the Activity column costs no
     // query — gating it on the sort only meant the column read as empty by default.
     const leaderboard = await ensureActivityLeaderboard()
-    // A viewer's own fold groups are keyed by `u:<tagId>`, which the leaderboard
-    // never holds, so they get derived entries (see viewerFoldActivityEntries).
-    // Shared totals come from the swept table by JOIN, not as a literal: the directory
-    // has 114k grouping keys and interpolating them would be megabytes of query text.
-    // A viewer's own fold groups stay a literal — there are dozens, and their keys are
-    // `u:<tagId>` from the viewer's private lists, which must not reach a shared table.
-    const foldEntries = viewerFold ? viewerFoldActivityEntries(viewerFold) : []
-    const activityCte = ''
+    // Totals come from the swept table by JOIN, not as a literal: the directory has
+    // 114k grouping keys and interpolating them would be megabytes of query text.
     const activityJoin = 'LEFT JOIN price_data.account_activity_totals AS act FINAL ON act.gkey = g.gkey'
-    const foldTotal = foldEntries.length
-      ? `transform(g.gkey, [${foldEntries.map(e => `'${e.gkey}'`).join(',')}], [${foldEntries.map(e => e.total).join(',')}], toUInt64(0))`
-      : 'toUInt64(0)'
-    // A fold key is never in the shared table and vice versa, so this picks whichever
-    // side established the total rather than combining them.
-    const activitySelect = `if(${foldTotal} > 0, ${foldTotal}, ifNull(act.total, toUInt64(0)))`
+    const activitySelect = 'ifNull(act.total, toUInt64(0))'
     // Exact totals rank above partial ones: a partial is a floor, so ordering it against
     // an exact number would put a "known to be at least this" above a "known to be this".
-    const foldComplete = foldEntries.length
-      ? `transform(g.gkey, [${foldEntries.map(e => `'${e.gkey}'`).join(',')}], [${foldEntries.map(e => (e.complete ? 1 : 0)).join(',')}], 0)`
-      : '0'
-    const activityCompleteSelect = `if(${foldTotal} > 0, ${foldComplete}, ifNull(act.complete, 0))`
+    const activityCompleteSelect = 'ifNull(act.complete, 0)'
     const volumeCte = includeVolumeSort ? `,
             trade_volume_raw AS (
               SELECT account AS account_id, toFloat64(sum(${accountVolumeSource().col})) AS volume_usd
@@ -21291,116 +12468,6 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
             )` : ''
     const volumeJoin = includeVolumeSort ? 'LEFT JOIN trade_volume tv ON tv.gkey = g.gkey' : ''
     const volumeSelect = includeVolumeSort ? 'ifNull(tv.volume_usd, 0.)' : '0.'
-    const liquidationCte = includeLiquidationSort ? `,
-            ${liquidationVolumeCtes()},
-            liquidation_volume AS (
-              SELECT ${gkeySql('v.account_id')} AS gkey, sum(v.volume_usd) AS volume_usd
-              FROM (
-                SELECT
-                  ${boundAccountSql('vr')} AS account_id,
-                  sum(vr.volume_usd) AS volume_usd
-                FROM liquidation_volume_raw vr
-                LEFT JOIN bind b ON b.eth_id = vr.account_id
-                GROUP BY account_id
-              ) v
-              LEFT JOIN tags t ON t.account_id = v.account_id
-              GROUP BY gkey
-            )` : ''
-    const liquidationJoin = includeLiquidationSort ? 'LEFT JOIN liquidation_volume lv ON lv.gkey = g.gkey' : ''
-    const liquidationSelect = includeLiquidationSort ? 'ifNull(lv.volume_usd, 0.)' : '0.'
-    // Same shape as the volume splice: heavy only for its own sort, grouped by
-    // the SAME gkey/fold rules, EVM twins folded through the bind map.
-    const revenueCte = includeRevenueSort ? `,
-            account_revenue_raw AS (
-              SELECT account AS account_id, toFloat64(sum(revenue_usd)) AS volume_usd
-              FROM price_data.account_revenue
-              WHERE match(account, '^0x[0-9a-f]{64}$')
-              GROUP BY account_id
-            ),
-            account_revenue_grouped AS (
-              SELECT ${gkeySql('v.account_id')} AS gkey, sum(v.volume_usd) AS volume_usd
-              FROM (
-                SELECT
-                  ${boundAccountSql('vr')} AS account_id,
-                  sum(vr.volume_usd) AS volume_usd
-                FROM account_revenue_raw vr
-                LEFT JOIN bind b ON b.eth_id = vr.account_id
-                GROUP BY account_id
-              ) v
-              LEFT JOIN tags t ON t.account_id = v.account_id
-              GROUP BY gkey
-            )` : ''
-    const revenueJoin = includeRevenueSort ? 'LEFT JOIN account_revenue_grouped rv ON rv.gkey = g.gkey' : ''
-    const revenueSelect = includeRevenueSort ? 'ifNull(rv.volume_usd, 0.)' : '0.'
-    const lpClaimsCte = omnipoolAccountClaimsReady ? `,
-            lp_claims AS (
-              SELECT s.account_id, s.asset_id, s.amount, s.hub_amount
-              FROM price_data.omnipool_account_claim_snapshots s
-              WHERE s.snapshot_id = (
-                SELECT argMax(snapshot_id, computed_at)
-                FROM price_data.omnipool_account_claim_snapshot_state
-                WHERE snapshot_key = 'current'
-              )
-            )` : ''
-    const lpActors = omnipoolAccountClaimsReady ? `
-                UNION ALL
-                -- Position-only accounts must remain in the directory even when
-                -- they currently have no fungible wallet balance.
-                SELECT account_id, '0' AS asset_id, toUInt256(0) AS bal, toUInt32(0) AS lb
-                FROM lp_claims GROUP BY account_id` : ''
-    const lpGroupedCte = omnipoolAccountClaimsReady ? `,
-            lp_grouped AS (
-              SELECT ${gkeySql('p.account_id')} AS gkey,
-                sum(toFloat64(p.amount) * transform(toString(p.asset_id), ${idsSql}, ${unitsSql}, 0.)
-                  + toFloat64(p.hub_amount) * transform('1', ${idsSql}, ${unitsSql}, 0.)) AS usd
-              FROM lp_claims p LEFT JOIN tags t ON t.account_id = p.account_id
-              GROUP BY gkey
-            )` : ''
-    const lpJoin = omnipoolAccountClaimsReady ? 'LEFT JOIN lp_grouped lp ON lp.gkey = g.gkey' : ''
-    const lpValue = omnipoolAccountClaimsReady ? 'ifNull(lp.usd, 0)' : '0.'
-    const mmLatestCte = moneyMarketAccountValuesReady ? `mm_latest AS (
-              SELECT account_id,lower(pool_address) AS pool_address,
-                greatest(max(toFloat64(total_collateral_base)),
-                  sumIf(toFloat64(supplied) * transform(toString(asset_id), ${idsSql}, ${unitsSql}, 0.) * 1e8, reserve_present=1)) AS col,
-                greatest(max(toFloat64(total_debt_base)),
-                  sumIf(toFloat64(debt) * transform(toString(asset_id), ${idsSql}, ${unitsSql}, 0.) * 1e8, reserve_present=1)) AS debt,
-                max(toFloat64(total_collateral_base)) AS risk_col,
-                max(toFloat64(total_debt_base)) AS risk_debt,
-                max(toFloat64(liquidation_threshold)) AS liqthr
-              FROM price_data.money_market_account_value_snapshots
-              WHERE snapshot_id=(
-                SELECT argMax(snapshot_id,computed_at)
-                FROM price_data.money_market_account_value_snapshot_state
-                WHERE snapshot_key='current'
-              )
-              GROUP BY account_id,pool_address
-              HAVING col>0 OR debt>0
-            )` : `mm_latest AS (
-              SELECT ${mmPositionField('account_id')} AS account_id,pool AS pool_address,
-                toFloat64(${mmPositionField('total_collateral_base')}) AS col,
-                toFloat64(${mmPositionField('total_debt_base')}) AS debt,
-                col AS risk_col,debt AS risk_debt,
-                toFloat64(${mmPositionField('current_liquidation_threshold')}) AS liqthr
-              FROM (${latestMoneyMarketPositionsSql(`pool_address IN (${configuredMmPoolsSql()})`)})
-              WHERE ${mmPositionField('account_id')}!='' AND (col>0 OR debt>0)
-            )`
-
-    // Additive projections for a viewer's fold: the extra `gkey` column the
-    // response needs to look the group's presentation up by (see the row-mapping
-    // below), and the SAME group's NAME spliced into disp_name/has_identity so
-    // the `identity` sort ranks a folded row by the tag's own name rather than
-    // whichever member SQL happened to sample — exactly like a system tag's own
-    // name already does via `g.lname`. Every piece here is '' absent a fold, so
-    // the SELECT list is character-for-character what it always was.
-    const gkeySelect = viewerFold ? 'g.gkey AS gkey,\n            ' : ''
-    const groupNameExpr = viewerFold ? `transform(g.gkey, {fold_group_keys:Array(String)}, {fold_group_names:Array(String)}, '')` : ''
-    const hasIdentitySql = viewerFold
-      ? `if(${groupNameExpr} != '' OR g.label_id != '' OR ident.account_id != '', 1, 0) AS has_identity`
-      : `if(g.label_id != '' OR ident.account_id != '', 1, 0) AS has_identity`
-    const dispNameSql = viewerFold
-      ? `multiIf(${groupNameExpr} != '', ${groupNameExpr}, g.label_id != '', g.lname, ident.display != '', ident.display, '') AS disp_name`
-      : `multiIf(g.label_id != '', g.lname, ident.display != '', ident.display, '') AS disp_name`
-
     const [res, total] = await Promise.all([
       client.query({
         query: `
@@ -21413,7 +12480,7 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
             bind AS (
               ${bindCteSql()}
             )
-            ${lpClaimsCte},
+            ,
             latest AS (
               -- ETH-prefixed rows that stand for a real account are remapped onto
               -- it before grouping: module/sovereign truncations ('modl', 'sibl',
@@ -21430,23 +12497,10 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
                   maxMerge(last_block_state) AS lb
                 FROM price_data.account_asset_latest_balances
                 GROUP BY account_id, asset_id
-                UNION ALL
-                -- ERC-20-side holdings (HOLLAR): separate pot from the Tokens
-                -- balances above (refreshed by erc20WalletService); the group
-                -- sum below folds both pots into the account's value.
-                SELECT account_id, asset_id, toUInt256OrZero(argMax(total, updated_at)) AS bal, 0 AS lb
-                FROM price_data.erc20_wallet_balances
-                GROUP BY account_id, asset_id
-                HAVING bal > 0
-                ${lpActors}
               ) l
               LEFT JOIN bind b ON b.eth_id = l.account_id
               ${memberFilter}
             ),
-            -- One latest row per configured isolated market. With complete
-            -- reserve-principal coverage this is a tiny published generation;
-            -- the raw aggregate remains the correctness-first upgrade fallback.
-            ${mmLatestCte},
             -- One name per account across every identity source: lowest chain
             -- priority wins (0 = Hydration), chain key breaks a tie so the
             -- directory's identity sort is stable. Blank displays are retired
@@ -21466,75 +12520,23 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
             grouped AS (
               SELECT
                 ${gkeySql('latest.account_id')} AS gkey,
-                ${labelIdSql('latest.account_id')} AS label_id, any(t.lname) AS lname, any(t.c) AS color, any(t.ic) AS icon,
+                ${labelIdSql()} AS label_id, any(t.lname) AS lname, any(t.c) AS color, any(t.ic) AS icon,
                 uniqExact(latest.account_id) AS members, any(latest.account_id) AS sample, max(latest.lb) AS last_block,
                 sum(toFloat64(latest.bal) * transform(latest.asset_id, ${idsSql}, ${unitsSql}, 0.)) AS usd,
                 -- Per-asset USD merged across the group's members → top-holding icons.
-                -- Fast single-query approximation from the wallet balance tables; the
-                -- detail pages' hover card additionally folds in money-market
-                -- collateral (aTokens) and EVM-side ERC-20 that only a forward
-                -- per-account read can attribute, so the two can differ for those.
                 sumMap([latest.asset_id], [toFloat64(latest.bal) * transform(latest.asset_id, ${idsSql}, ${unitsSql}, 0.)]) AS asset_usd_map
               FROM latest LEFT JOIN tags t ON t.account_id = latest.account_id
               GROUP BY gkey, label_id
             )
-            ${lpGroupedCte},
-            actors AS (SELECT DISTINCT account_id FROM latest),
-            -- One pass over the tiny latest-position set computes three separate
-            -- concerns: PRIMARY-only columns/risk/DefiSim, all-market net value,
-            -- and a compact supplemental-exposure badge.
-            mm_grouped AS (
-              SELECT
-                ${gkeySql('a.account_id')} AS gkey,
-                sumIf(toFloat64(m.col), m.pool_address = '${CORE_MM_MARKET.poolProxy}') AS col,
-                sumIf(toFloat64(m.debt), m.pool_address = '${CORE_MM_MARKET.poolProxy}') AS debt,
-                sumIf(toFloat64(m.risk_debt), m.pool_address = '${CORE_MM_MARKET.poolProxy}') AS risk_debt,
-                minIf(toFloat64(m.risk_col) * toFloat64(m.liqthr) / 10000. / toFloat64(m.risk_debt),
-                  m.pool_address = '${CORE_MM_MARKET.poolProxy}' AND toFloat64(m.risk_debt) > 0) AS worst_hf,
-                argMinIf(a.account_id, toFloat64(m.risk_col) * toFloat64(m.liqthr) / 10000. / toFloat64(m.risk_debt),
-                  m.pool_address = '${CORE_MM_MARKET.poolProxy}' AND toFloat64(m.risk_debt) > 0) AS worst_acct,
-                sum(if(m.pool_address IN (${countedMmPoolsSql()}), toFloat64(m.col), 0.)) - sum(toFloat64(m.debt)) AS value_delta,
-                countIf(m.pool_address IN (${supplementalMmPoolsSql()})) AS supplemental_positions,
-                sumIf(toFloat64(m.debt), m.pool_address IN (${supplementalMmPoolsSql()})) AS supplemental_debt,
-                minIf(toFloat64(m.risk_col) * toFloat64(m.liqthr) / 10000. / toFloat64(m.risk_debt),
-                  m.pool_address IN (${supplementalMmPoolsSql()}) AND toFloat64(m.risk_debt) > 0) AS supplemental_worst_hf
-              FROM actors a
-              LEFT JOIN tags t ON t.account_id = a.account_id
-              INNER JOIN mm_latest m ON lower(m.account_id) = if(
-                substring(lower(a.account_id), 3, 8) = '45544800' AND substring(lower(a.account_id), 51, 16) = '0000000000000000',
-                lower(a.account_id),
-                concat('0x45544800', substring(lower(a.account_id), 3, 40), '0000000000000000'))
-              GROUP BY gkey
-            )
-            ${activityCte}
             ${volumeCte}
-            ${liquidationCte}
-            ${revenueCte}
           SELECT
-            -- Alias the wallet value explicitly: the lp_grouped join (v3) also exposes a
-            -- usd column, so a bare g.usd serialises as the qualified name g.usd in
-            -- JSONEachRow -- raw[i].usd then read undefined and the sparkline final-bucket
-            -- pin silently became 0 (every sparkline cliffed to zero at the end).
-            ${gkeySelect}g.label_id, g.lname, g.color, g.icon, g.members, g.sample, g.last_block, g.usd AS usd,
-            ifNull(mg.col, 0) AS mm_col, ifNull(mg.debt, 0) AS mm_debt, mg.worst_acct AS mm_worst_acct,
-            if(ifNull(mg.col, 0) > 0 OR ifNull(mg.debt, 0) > 0, 1, 0) AS mm_present,
-            ifNull(mg.supplemental_positions, 0) AS supplemental_present,
-            ifNull(mg.supplemental_debt, 0) AS supplemental_debt,
-            multiIf(ifNull(mg.supplemental_debt, 0) > 0, toString(toUInt256(mg.supplemental_worst_hf * 1e18)), '') AS supplemental_hf,
-            -- 1e18-scaled WORST per-position health factor (string); MAX_UINT256 for a
-            -- pure supplier so the UI renders "No debt". mm_hf_num is the numeric key
-            -- the health sort orders by (riskiest position first).
-            multiIf(ifNull(mg.risk_debt, 0) > 0, toString(toUInt256(mg.worst_hf * 1e18)),
-                    ifNull(mg.col, 0) > 0, '${MAX_UINT256}', '') AS mm_hf,
-            multiIf(ifNull(mg.risk_debt, 0) > 0, mg.worst_hf * 1e18, ifNull(mg.col, 0) > 0, 1e30, 1e31) AS mm_hf_num,
-            g.usd + ${lpValue} + ifNull(mg.value_delta, 0) / 1e8 AS usd_total,
-            ${hasIdentitySql},
-            ${dispNameSql},
+            g.label_id, g.lname, g.color, g.icon, g.members, g.sample, g.last_block, g.usd AS usd,
+            g.usd AS usd_total,
+            if(g.label_id != '' OR ident.account_id != '', 1, 0) AS has_identity,
+            multiIf(g.label_id != '', g.lname, ident.display != '', ident.display, '') AS disp_name,
             ${activitySelect} AS activity_count,
             ${activityCompleteSelect} AS activity_count_complete,
             ${volumeSelect} AS trading_volume_usd,
-            ${liquidationSelect} AS liquidation_volume_usd,
-            ${revenueSelect} AS revenue_usd,
             -- (asset_id, usd) for the 4 largest holdings, highest first: worth > $10
             -- AND ≥ 10% of the group's total held value (arraySum of the map).
             arraySlice(
@@ -21546,117 +12548,58 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
             -- also need a 10% share, so an account spread across many similar
             -- positions shows one icon and a count rather than looking empty.
             -- Counted over the same map the icons come from, so a row's icons
-            -- and its count always agree. That map is the wallet-balance
-            -- approximation above: an account whose value sits in money-market
-            -- collateral or EVM-side ERC-20 counts fewer here than its detail
-            -- page lists, which is why only this surface shows a count at all.
+            -- and its count always agree.
             greatest(0, toUInt32(arrayCount(v -> v > 10., tupleElement(g.asset_usd_map, 2))) - toUInt32(length(top_assets))) AS other_assets
           FROM grouped g
-          LEFT JOIN mm_grouped mg ON mg.gkey = g.gkey
-          ${lpJoin}
           LEFT JOIN ident ON g.label_id = '' AND lower(g.sample) = ident.account_id
           ${activityJoin}
           ${volumeJoin}
-          ${liquidationJoin}
-          ${revenueJoin}
           ORDER BY ${orderBy}
           LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
-        query_params: {
-          limit, offset,
-          ...(members ? { members } : {}),
-          ...(viewerFold ? {
-            fold_ids: viewerFold.ids, fold_keys: viewerFold.keys,
-            fold_group_keys: [...viewerFold.groups.keys()], fold_group_names: [...viewerFold.groups.values()].map(g => g.name),
-          } : {}),
-        },
+        query_params: { limit, offset, ...(members ? { members } : {}) },
         format: 'JSONEachRow',
       }),
-      // Unaffected by a viewer's fold: the row TOTAL stays the shared,
-      // system-tag-grouped count (see getAccountsForViewerFold's comment) — a
-      // folded page can render fewer distinct rows than this number implies,
-      // the same honest gap a page that hasn't reached the directory's tail
-      // yet already has. A member-scoped page is NOT a page of that directory
-      // though: its total is the tag's own membership, and reporting the
-      // chain-wide 114k there would have a seven-member tag claim to be the
-      // first page of something vastly larger.
+      // A member-scoped page is NOT a page of the directory: its total is the
+      // tag's own membership, and reporting the chain-wide count there would
+      // have a seven-member tag claim to be the first page of something vastly
+      // larger.
       members ? Promise.resolve(members.length) : getAccountsTotal(),
     ])
 
     const raw = await res.json<{
       label_id: string; lname: string; color: string; icon: string; members: string; sample: string
-      last_block: number; usd: number; usd_total: number; mm_col: number; mm_debt: number; mm_present: number; mm_hf: string; mm_worst_acct: string | null
-      supplemental_present: number; supplemental_debt: number; supplemental_hf: string
-      has_identity: number; activity_count: number; activity_count_complete: number; trading_volume_usd: number; liquidation_volume_usd: number; revenue_usd: number
+      last_block: number; usd: number; usd_total: number
+      has_identity: number; activity_count: number; activity_count_complete: number; trading_volume_usd: number
       top_assets: [string, number][]
       other_assets: number
-      gkey?: string   // present only when viewerFold spliced `g.gkey AS gkey` in above
     }>()
 
     const rows: TopAccountRow[] = raw.map(r => {
-      // A viewer's own tag wins the row over a system one — directoryFoldFor
-      // already guarantees the two never compete for the same account (see its
-      // own comment), so a hit here means r.label_id is '' and isTag would
-      // otherwise have read this as a plain, single-account row.
-      const userGroup = viewerFold && r.gkey ? viewerFold.groups.get(r.gkey) : undefined
-      const isTag = r.label_id !== '' || !!userGroup
-      // Set when the group (tag members summed, or the lone account) holds a position.
-      const hasMm = r.mm_present === 1
+      const isTag = r.label_id !== ''
       return {
         account: isTag ? null : accountRef(r.sample),
-        tag: userGroup
-          ? { tagId: userGroup.tagId, name: userGroup.name, color: userGroup.color, icon: userGroup.icon, memberCount: userGroup.memberCount, userTagId: userGroup.tagId, listId: userGroup.listId }
-          : (r.label_id !== '' ? { tagId: r.label_id, name: r.lname, color: r.color, icon: tagIcon(r.label_id, r.icon), memberCount: Number(r.members) } : null),
+        tag: isTag ? { tagId: r.label_id, name: r.lname, color: r.color, icon: tagIcon(r.label_id, r.icon), memberCount: Number(r.members) } : null,
         portfolioUsd: r.usd_total, lastBlock: r.last_block,
-        healthFactor: hasMm ? (r.mm_hf === MAX_UINT256 ? 'inf' : r.mm_hf) : null,
         // Prefer the on-chain identity display name for single-account rows; tag
-        // groups (system OR a viewer's own) keep their tag label.
-        identity: userGroup ? userGroup.name : (isTag ? r.lname : (identityForAccount(r.sample)?.display ?? null)),
-        suppliedUsd: hasMm ? Number(r.mm_col) / 1e8 : null,
-        borrowedUsd: hasMm ? Number(r.mm_debt) / 1e8 : null,
-        // Account holding the group's worst-HF position — the DefiSim deep-link
-        // target for tag rows (they have no single address of their own).
-        simAccount: hasMm && r.mm_worst_acct ? defiSimTargetForAccountId(r.mm_worst_acct) : null,
-        ...(r.supplemental_present > 0 ? {
-          supplementalMarket: {
-            marketKey: GIGAHDX_MM_MARKET.key,
-            market: GIGAHDX_MM_MARKET.label,
-            borrowedUsd: Number(r.supplemental_debt) / 1e8,
-            healthFactor: r.supplemental_hf ? r.supplemental_hf : null,
-          },
-        } : {}),
+        // groups keep their tag label.
+        identity: isTag ? r.lname : (identityForAccount(r.sample)?.display ?? null),
         activityCount: r.activity_count > 0 ? Number(r.activity_count) : undefined,
         // A partial total is a floor, and says so rather than passing for exact.
         activityCountComplete: r.activity_count > 0 ? r.activity_count_complete === 1 : undefined,
         tradingVolumeUsd: r.trading_volume_usd > 0 ? Number(r.trading_volume_usd) : undefined,
-        liquidationVolumeUsd: r.liquidation_volume_usd > 0 ? Number(r.liquidation_volume_usd) : undefined,
-        revenueUsd: r.revenue_usd > 0 ? Number(r.revenue_usd) : undefined,
         topAssets: r.top_assets?.length ? r.top_assets.map(([id, valueUsd]) => ({ asset: asset(id), valueUsd })) : undefined,
         otherAssets: r.other_assets > 0 ? Number(r.other_assets) : undefined,
       }
     })
 
-    // The three enrichment passes below each re-derive "which accounts does this
-    // row cover" from `raw[i]` themselves (member expansion is cheap; re-deriving
-    // avoids a fourth parallel array to keep in sync). A system tag row resolves
-    // that through tagService's in-memory index (`getTagRecord(label_id).members`);
-    // a viewer-fold row has no system label at all, so it needs this map from the
-    // SAME gkey the main query just grouped by, back to the full set of accounts
-    // that share it — otherwise every one of these passes would silently narrow a
-    // multi-member folded row to its one arbitrary `sample` account.
-    const foldMembersByKey = viewerFold ? (() => {
-      const m = new Map<string, string[]>()
-      viewerFold.ids.forEach((id, i) => {
-        const k = viewerFold.keys[i]
-        const arr = m.get(k)
-        if (arr) arr.push(id); else m.set(k, [id])
-      })
-      return m
-    })() : null
+    // The enrichment passes below each re-derive "which accounts does this row
+    // cover" from `raw[i]` themselves (member expansion is cheap; re-deriving
+    // avoids a parallel array to keep in sync).
 
     // Sparkline + counter enrichment is best-effort — a failure (RPC down, table
     // missing) must never take the directory itself down.
     try {
-      await enrichAccountRows(raw, rows, foldMembersByKey)
+      await enrichAccountRows(raw, rows)
     } catch (err) {
       console.error('[accounts] row enrichment failed:', err)
     }
@@ -21664,19 +12607,9 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
     // Overwrite the wallet-only sparkline with the full-portfolio series the detail
     // page shows (parity). Best-effort — on failure the wallet-only fallback stands.
     try {
-      await enrichAccountSparklines(raw, rows, foldMembersByKey)
+      await enrichAccountSparklines(raw, rows)
     } catch (err) {
       console.error('[accounts] sparkline parity enrichment failed:', err)
-    }
-
-    // Top-holding icons: refine the fast SQL wallet approximation into the exact set
-    // the hover card shows, folding in money-market collateral (aTokens) and EVM-side
-    // ERC-20 via the same assembly the detail pages use. Best-effort — on failure the
-    // SQL approximation from the main query stands.
-    try {
-      await enrichTopAssets(raw, rows, prices, foldMembersByKey)
-    } catch (err) {
-      console.error('[accounts] top-asset enrichment failed:', err)
     }
 
     // The activity ordering is only established for the leaderboard's ranked prefix, so
@@ -21685,8 +12618,7 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
     // directory and must keep its full pager even though it now shows the same
     // leaderboard's counts.
     const page: AccountsPage = { rows, total, ...(includeActivitySort && leaderboard ? { rankedDepth: leaderboard.rankedDepth } : {}) }
-    // Never persisted for a viewer's fold — see the load-side skip above.
-    if (!viewerFold) await persistAccountDirectorySnapshot(snapshotKey, page).catch(err => console.error('[accounts] snapshot persist failed:', err))
+    await persistAccountDirectorySnapshot(snapshotKey, page).catch(err => console.error('[accounts] snapshot persist failed:', err))
     return page
   }
 
@@ -21694,43 +12626,16 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
   // rebuild STARTED from can only under-claim freshness, so one that advanced
   // mid-rebuild is refreshed again rather than passing for current.
   const generation = accountValueGenerationEpoch
-  // A viewer's fold is never persisted to the shared snapshot table and never
-  // prewarmed — it is grouped by this ONE viewer's own tag priority rather
-  // than the shared system-tag grouping, so no other request could ever
-  // reuse it, and persisting it as if it were the canonical snapshot would
-  // risk serving one viewer's rows to another; a viewer's own tags can also
-  // change at any moment, so nothing should be pre-computing a page for them
-  // ahead of a request that may never come. It DOES still reuse the shared
-  // SWR mechanism (cachedSwr, same as the anonymous path below) rather than a
-  // hard-TTL cached() — this is the SAME seconds-long whole-directory query,
-  // and a viewer idling on /accounts polls it every SLOW_POLL_MS; a hard
-  // expiry equal to that poll interval would force a blocking rebuild on
-  // nearly every poll instead of serving stale-while-revalidating like every
-  // other reader of this query does. `generation` is passed to the cache
-  // (marks the entry stale, not absent, when it advances) rather than folded
-  // into the key, for the same reason accountsCacheKey's own key leaves it
-  // out — see the comment there.
-  //
-  // The stale window is its OWN ACCOUNTS_VIEWER_STALE_MS, deliberately much
-  // shorter than the shared path's ACCOUNTS_STALE_MS: per-viewer keys fan out
-  // by (fingerprint × sort × offset × limit) inside the SAME bounded LRU
-  // every anonymous key also lives in, so a long-lived per-viewer entry is
-  // eviction pressure on the shared hot keys with no shared reader to justify
-  // it — see ACCOUNTS_VIEWER_STALE_MS's own comment.
   // A tag's own members: a small, bounded row set read from those accounts'
   // balances alone, so the seconds-long whole-directory machinery above does
   // not apply. Same freshness as the directory it mirrors.
-  if (members) return cachedSwr(`tag-accounts:${modelVersion}:${sort}${memberKey}`, ACCOUNTS_FRESH_MS, ACCOUNTS_VIEWER_STALE_MS, build, generation)
-  if (viewerFold) {
-    const viewerKey = `user-accounts:${modelVersion}:${viewerFold.fingerprint}:${sort}:${offset}:${limit}`
-    return cachedSwr(viewerKey, ACCOUNTS_FRESH_MS, ACCOUNTS_VIEWER_STALE_MS, build, generation)
-  }
+  if (members) return cachedSwr(`tag-accounts:${sort}${memberKey}`, ACCOUNTS_FRESH_MS, ACCOUNTS_VIEWER_STALE_MS, build, generation)
   if (refresh) return cacheRefresh(key, ACCOUNTS_FRESH_MS, ACCOUNTS_STALE_MS, build, generation)
   // Nothing cached means a restarted process or an evicted key, not that no page
   // exists: adopt the last persisted one as the stale value so this request
   // serves it too, for whatever is left of the tolerance it was published under.
   await seedStale(key, async () => {
-    const persisted = await loadAccountDirectorySnapshot(snapshotKey, false)
+    const persisted = await loadAccountDirectorySnapshot(snapshotKey)
     if (!persisted) return null
     return { value: persisted.page, staleMs: (ACCOUNT_DIRECTORY_SNAPSHOT_MAX_AGE_SECONDS - persisted.ageSeconds) * 1000 }
   }).catch(() => false)
@@ -21738,94 +12643,11 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
 }
 
 // Which accounts a directory row covers: a system tag's own full membership
-// (tagService's in-memory index), a viewer-fold row's full membership under
-// its `gkey` (see accountsPage's `foldMembersByKey` — absent for every row
-// that isn't one viewer's own tag), or just the row's single sampled account.
-// Shared by every enrichment pass below so a row can never disagree with
-// itself about which accounts it covers.
-function rowMemberAccounts(r: { label_id: string; sample: string; gkey?: string }, foldMembersByKey: Map<string, string[]> | null): string[] {
-  if (foldMembersByKey && r.gkey) {
-    const members = foldMembersByKey.get(r.gkey)
-    if (members) return members
-  }
+// (tagService's in-memory index) or the row's single sampled account. Shared by
+// every enrichment pass below so a row can never disagree with itself about
+// which accounts it covers.
+function rowMemberAccounts(r: { label_id: string; sample: string }): string[] {
   return r.label_id !== '' ? (getTagRecord(r.label_id)?.members ?? []) : [r.sample]
-}
-
-// Refine each row's top-holding icons to match the detail pages exactly. The main
-// query only sees wallet balances; the hover card additionally folds in supplied
-// money-market collateral (aTokens, reconstructed) and EVM-side ERC-20. This reuses
-// the detail path's own assembly (valueAccountBalances → foldShareBalances →
-// applyMmCollateralToBalances → mergeErc20Balances → topHeldTokens) per row so the
-// list and hover cannot diverge, while batching the one expensive input (the aToken
-// raw_evm_logs scan) across the whole page.
-async function enrichTopAssets(
-  raw: { label_id: string; sample: string; gkey?: string }[],
-  rows: TopAccountRow[],
-  prices: Map<number, PriceInfo>,
-  foldMembersByKey: Map<string, string[]> | null = null,
-): Promise<void> {
-  // Account set per row (tag → members, else the single sample) plus each account's
-  // ETH-prefixed twin, where its EVM-side wallet balances live.
-  const rowAccounts: string[][] = raw.map(r => {
-    const members = rowMemberAccounts(r, foldMembersByKey)
-    const base = members.filter(m => ACCOUNT_RE.test(m))
-    const set = new Set<string>(base)
-    for (const m of base) { const twin = evmAccountForm(m); if (twin) set.add(twin) }
-    return [...set]
-  })
-  // The same derivation the detail page uses: an EVM-form account id carries its
-  // H160 after the 0x45544800 prefix, so truncating the id's first 20 bytes would
-  // produce a holder that matches nothing and drop the row's supplied collateral.
-  const rowH160s: string[][] = rowAccounts.map(accs =>
-    [...new Set(accs.map(mmH160ForAccount).filter((h): h is string => h != null).map(h => h.toLowerCase()))])
-  // Reconstruct supplied collateral only for rows flagged with a money-market
-  // position (aTokens exist only for configured MM pools). Each holder means a
-  // full raw_evm_logs scan, so scanning only real MM holders keeps this ~3× faster
-  // than scanning the whole page; non-MM rows keep the SQL wallet approximation.
-  const mmHolders = new Set<string>()
-  rows.forEach((row, i) => {
-    if (row.suppliedUsd != null || row.borrowedUsd != null) for (const h of rowH160s[i]) mmHolders.add(h)
-  })
-  const reservesByHolder = await mmReservesByHolder([...mmHolders])
-
-  const CONCURRENCY = 8
-  let next = 0
-  const worker = async (): Promise<void> => {
-    while (next < rows.length) {
-      const i = next++
-      const accounts = rowAccounts[i]
-      if (!accounts.length) continue
-      try {
-        const [walletRows, erc20] = await Promise.all([
-          queryAggregatedBalances(sqlAccountList(accounts)),
-          erc20WalletHoldingsForAccounts(rowH160s[i]),
-        ])
-        let balances = foldShareBalances(valueAccountBalances(walletRows, prices))
-        // Merge the row's holders' supplied collateral, summing a reserve shared by a
-        // tag's members; staking-backed markets (GIGAHDX) are excluded — their
-        // collateral is already-counted locked HDX (mirrors getAddress).
-        const merged = new Map<number, MmReserve>()
-        for (const h of rowH160s[i]) {
-          for (const rsv of reservesByHolder.get(h) ?? []) {
-            if ((rsv.marketKey ?? 'core') === GIGAHDX_MM_MARKET.key || rsv.supplied === '0') continue
-            const cur = merged.get(rsv.assetId)
-            if (cur) cur.supplied = (BigInt(cur.supplied) + BigInt(rsv.supplied)).toString()
-            else merged.set(rsv.assetId, { ...rsv })
-          }
-        }
-        if (merged.size) {
-          applyMmCollateralToBalances(balances, { reserves: [...merged.values()], blockHeight: 0 } as MoneyMarketPosition, prices)
-          balances = foldShareBalances(balances)
-        }
-        balances = mergeErc20Balances(balances, erc20, prices)
-        // Authoritative set overwrites the SQL approximation; empty clears it (no
-        // holding ≥ 10% of value).
-        const top = topHeldTokens(balances)
-        rows[i].topAssets = top.length ? top : undefined
-      } catch { /* keep the SQL approximation for this row */ }
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, rows.length) }, worker))
 }
 
 // Per-row enrichment for the accounts directory: the 1Y value sparkline and the
@@ -21833,9 +12655,8 @@ async function enrichTopAssets(
 // complete, this reads weekly states; during deployment/backfill it retains the
 // equivalent raw-observation query as a correctness-first fallback.
 async function enrichAccountRows(
-  raw: { label_id: string; sample: string; usd: number; gkey?: string }[],
+  raw: { label_id: string; sample: string; usd: number }[],
   rows: TopAccountRow[],
-  foldMembersByKey: Map<string, string[]> | null = null,
 ): Promise<void> {
   // Account set per row: tag rows expand to their members; each substrate account
   // also contributes its ETH-prefixed twin (its EVM-side pot, where MM/HOLLAR
@@ -21844,7 +12665,7 @@ async function enrichAccountRows(
   // events. Their sparkline remains absent unless a complete historical source is
   // available; current balances are never projected backward.
   const isModuleAccount = (a: string) => /^0x(6d6f646c|7369626c|70617261)/.test(a)
-  const rowMembers: string[][] = raw.map(r => rowMemberAccounts(r, foldMembersByKey).filter(m => ACCOUNT_RE.test(m)))
+  const rowMembers: string[][] = raw.map(r => rowMemberAccounts(r).filter(m => ACCOUNT_RE.test(m)))
   const rowHistorySubstrate: string[][] = rowMembers.map(members => members.filter(m => !isModuleAccount(m)))
   const rowModuleAccounts: string[][] = rowMembers.map(members => members.filter(isModuleAccount))
   const rowAccounts: string[][] = rowHistorySubstrate.map(members => {
@@ -21911,11 +12732,8 @@ async function enrichAccountRows(
   }
 
   // Weekly closes for every involved asset, keyed back by the original id
-  // (aTokens/pool shares priced via their underlying). ERC-20 ids are folded in
-  // unconditionally so their weekly closes are available for the HOLLAR history
-  // contribution below (their balances live off-ledger, so they're never in the
-  // observation/latest-balance rows).
-  const assetIds = [...new Set([...obsRows, ...baseRows].map(r => r.asset_id).concat(moduleBalanceRows.map(r => r.asset_id)).concat(ERC20_WALLET_ASSET_IDS.map(String)))]
+  // (pool shares priced via their underlying).
+  const assetIds = [...new Set([...obsRows, ...baseRows].map(r => r.asset_id).concat(moduleBalanceRows.map(r => r.asset_id)))]
   const priceIdFor = new Map(assetIds.map(id => [id, String(priceAssetId(Number(id)))]))
   const priceIds = sqlUIntList([...priceIdFor.values()])
   const pricesByPriceId = new Map<string, Map<number, number>>()
@@ -21945,76 +12763,13 @@ async function enrichAccountRows(
     decimalsById.set(id, asset(id).decimals)
   }
 
-  // ERC-20-backed HOLLAR history for the sparkline. Contract-storage balances
-  // never hit raw_balance_observations / account_asset_latest_balances, so the
-  // EVM-twin sparklines would otherwise miss their contract-storage history.
-  // Rebuild weekly cumulative balances from indexed Transfer logs into a
-  // per-account weekly USD series added before the current-value pin.
-  const erc20SparkByAccount = new Map<string, number[]>()
-  {
-    const h160ForAccount = (acc: string): string | null => {
-      const id = acc.toLowerCase()
-      if (/^0x(6d6f646c|7369626c|70617261)/.test(id)) return '0x' + id.slice(2, 42)
-      return evmFromAccountId(id)?.toLowerCase() ?? null
-    }
-    const accountsByH160 = new Map<string, string[]>()
-    for (const acc of [...all, ...moduleAccounts]) {
-      const h = h160ForAccount(acc)
-      if (!h) continue
-      ;(accountsByH160.get(h) ?? accountsByH160.set(h, []).get(h)!).push(acc)
-    }
-    const h160s = [...accountsByH160.keys()]
-    for (const ea of h160s.length ? ERC20_WALLET_ASSETS : []) {
-      const dec = asset(ea.assetId).decimals
-      const pxMap = pricesByAsset[String(ea.assetId)] ?? new Map<number, number>()
-      let earliest = 0
-      for (let b = 0; b < SPARK_WEEKS; b++) { const p = pxMap.get(b); if (p != null) { earliest = p; break } }
-      const logRes = await client.query({
-        query: `SELECT holder AS w,
-                toInt32(greatest(least(dateDiff('week', {ws:Date}, toDate(block_timestamp)), ${SPARK_WEEKS - 1}), -1)) AS b,
-                toString(sum(balance_delta)) AS net
-              FROM price_data.erc20_transfer_deltas FINAL
-              WHERE contract_address = {c:String} AND holder IN ({ws2:Array(String)})
-              GROUP BY w, b ORDER BY w, b`,
-        query_params: { c: ea.contract, ws: winStart, ws2: h160s }, format: 'JSONEachRow',
-      }).catch(() => null)
-      if (!logRes) continue
-      const netByH160 = new Map<string, Map<number, bigint>>()
-      for (const r of await logRes.json<{ w: string; b: number; net: string }>()) {
-        if (!netByH160.has(r.w)) netByH160.set(r.w, new Map())
-        const m = netByH160.get(r.w)!
-        m.set(r.b, (m.get(r.b) ?? 0n) + BigInt(r.net))
-      }
-      for (const [h, byB] of netByH160) {
-        // Cumulate across buckets (bucket -1 = all pre-window transfers = baseline).
-        let cum = byB.get(-1) ?? 0n
-        let px = earliest
-        const series = new Array(SPARK_WEEKS).fill(0)
-        for (let b = 0; b < SPARK_WEEKS; b++) {
-          cum += byB.get(b) ?? 0n
-          const p = pxMap.get(b); if (p != null) px = p
-          if (px > 0 && cum > 0n) series[b] = (Number(cum) / 10 ** dec) * px
-        }
-        for (const acc of accountsByH160.get(h) ?? []) {
-          const prev = erc20SparkByAccount.get(acc)
-          if (prev) for (let b = 0; b < SPARK_WEEKS; b++) prev[b] += series[b]
-          else erc20SparkByAccount.set(acc, series.slice())
-        }
-      }
-    }
-  }
-
   const obsByAccount = new Map<string, { account_id: string; asset_id: string; b: number; bal: string }[]>()
   for (const r of obsRows) (obsByAccount.get(r.account_id) ?? obsByAccount.set(r.account_id, []).get(r.account_id)!).push(r)
   const baseByAccount = new Map<string, { asset_id: string; bal: string }[]>()
   for (const r of baseRows) (baseByAccount.get(r.account_id) ?? baseByAccount.set(r.account_id, []).get(r.account_id)!).push(r)
   const moduleBalancesByAccount = new Map<string, { account_id: string; asset_id: string; bal: string }[]>()
   for (const r of moduleBalanceRows) (moduleBalancesByAccount.get(r.account_id) ?? moduleBalancesByAccount.set(r.account_id, []).get(r.account_id)!).push(r)
-  const [volumeByAccount, liquidationByAccount, revenueByAccountAll] = await Promise.all([
-    tradingVolumeByAccount(all),
-    liquidationVolumeByAccount(all),
-    revenueByAccount(all),
-  ])
+  const volumeByAccount = await tradingVolumeByAccount(all)
 
   rows.forEach((row, i) => {
     const accs = rowAccounts[i]
@@ -22028,13 +12783,6 @@ async function enrichAccountRows(
     // balance is not a historical balance series, so omit the sparkline unless a
     // complete indexed reconstruction is available.
     if (moduleBalances.length) spark = null
-    // Add ERC-20 (HOLLAR) history before the pin, over every account key the row
-    // covers (substrate + twins + module/sovereign forms) — the final bucket is
-    // overwritten by the authoritative pin below, so no double count there.
-    for (const a of [...accs, ...moduleAccs]) {
-      const e = erc20SparkByAccount.get(a)
-      if (e && spark) spark = spark.map((v, b) => +(v + e[b]).toFixed(2))
-    }
     // Pin the final bucket to the page query's authoritative current wallet value
     // (same rule as the detail chart): snapshot-seeded accounts can lack organic
     // observation history, and weekly closes drift from spot.
@@ -22045,10 +12793,6 @@ async function enrichAccountRows(
     if (accs.length) {
       const volume = accs.reduce((s, a) => s + (volumeByAccount.get(a) ?? 0), 0)
       if (volume > 0) row.tradingVolumeUsd = volume
-      const liquidationVolume = accs.reduce((s, a) => s + (liquidationByAccount.get(a) ?? 0), 0)
-      if (liquidationVolume > 0) row.liquidationVolumeUsd = liquidationVolume
-      const revenue = accs.reduce((s, a) => s + (revenueByAccountAll.get(a) ?? 0), 0)
-      if (revenue > 0) row.revenueUsd = revenue
     }
   })
 }
@@ -22119,7 +12863,7 @@ async function enrichAccountSparklines(
   // Treasury, Omnipool, HOLLAR Stability Module, Liquidity Mining, Parachain Sovereign,
   // Staking Pot and Pallet Pots showed a value with no series at all.
   const rowAccounts: string[][] = raw.map(r => {
-    const members = rowMemberAccounts(r, foldMembersByKey)
+    const members = rowMemberAccounts(r)
     const base = members.filter(m => ACCOUNT_RE.test(m))
     const set = new Set<string>(base)
     for (const m of base) { const twin = evmAccountForm(m); if (twin) set.add(twin) }
@@ -22163,275 +12907,6 @@ async function enrichAccountSparklines(
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, rows.length) }, worker))
 }
 
-// ---- contracts directory: account-shaped metrics -----------------------------
-//
-// A contract IS an account, so /contracts shows what it holds and does on the
-// SAME models /accounts does — reusing the directory's own enrichment passes
-// (enrichAccountRows, enrichTopAssets) over synthetic single-account rows rather
-// than a second implementation that could disagree with them. The whole registry
-// is ~375 rows, small enough for one background pass to cover every row, so the
-// value/volume/activity sorts rank the full directory instead of a page.
-//
-// Bounded on purpose:
-//  - the wallet/ERC-20 value roll-up, the weekly sparkline states, trading volume
-//    and liquidation volume are ONE batched query each over the whole id set
-//    (every source below is account-first, so the id list is a key-prefix read);
-//  - the per-row top-holdings pass (a query pair each) runs only for contracts
-//    that actually hold something — measured live, that is ~20 of 375, so the
-//    fan-out is a rounding error rather than 750 queries;
-//  - activity totals are counted through getAddressListTotal, the very call the
-//    account page's Activity tab makes, so a contract's row and its own page can
-//    never disagree — but that is the most expensive read the API issues (~0.6s
-//    each), so only the most overdue few are recounted per pass and the results
-//    are published so a restart resumes instead of re-sweeping.
-let contractMetricsByAddress = new Map<string, ContractMetrics>()
-let contractMetricsTimer: ReturnType<typeof setInterval> | null = null
-let contractMetricsInflight: Promise<void> | null = null
-
-// A whole-history activity count per contract, refreshed overdue-first. Paced the
-// way the accounts leaderboard paces the very same call — one at a time with an
-// idle gap between them, because a whole-history count is the most expensive read
-// the API issues and a background sweep gains nothing from overlapping them.
-// (Measured: six of these four-at-a-time did collide with the leaderboard's own
-// pass and both took ECONNRESETs from ClickHouse. Handled on both sides, but
-// there is no reason to provoke it.) 375 contracts at 6 per five-minute pass
-// sweeps the registry in ~5.2 h, so every entry is refreshed roughly twice per
-// TTL. The counts also land in the shared list-total cache, so a contract page
-// visited soon after gets its Activity tab total for free.
-const CONTRACT_ACTIVITY_SNAPSHOT_KEY = 'contract-activity:v1'
-const CONTRACT_ACTIVITY_ENTRY_TTL_MS = 12 * 3_600_000
-const CONTRACT_ACTIVITY_PER_PASS = 6
-const CONTRACT_ACTIVITY_COOLDOWN_MS = 5_000
-// `total: null` means no prefix could be established for this contract at all —
-// stored, not skipped, so a contract that cannot answer does not consume a
-// counting slot every pass. It renders as a dash either way.
-export interface ContractActivityEntry { total: number | null; complete: boolean; countedAt: string }
-let contractActivityCounts = new Map<string, ContractActivityEntry>()
-let contractActivityLoaded = false
-
-// A never-counted contract is infinitely overdue, which is what puts a cold
-// registry's contracts ahead of a warm one's oldest entry.
-function contractActivityAge(entry: ContractActivityEntry | undefined, now: number): number {
-  if (!entry?.countedAt) return Infinity
-  const at = Date.parse(entry.countedAt)
-  return Number.isFinite(at) ? now - at : Infinity
-}
-
-// Which contracts this pass recounts: only those whose stored total aged out,
-// most overdue first, capped at what one pass may spend. Pure, so the sweep's
-// coverage guarantee is testable — every contract must reach the front of this
-// queue well inside the TTL, or a column would go permanently stale.
-export function dueContractActivityCounts(
-  addresses: string[],
-  entries: Map<string, ContractActivityEntry>,
-  now: number,
-  limit = CONTRACT_ACTIVITY_PER_PASS,
-  ttlMs = CONTRACT_ACTIVITY_ENTRY_TTL_MS,
-): string[] {
-  return addresses
-    .filter(a => contractActivityAge(entries.get(a), now) > ttlMs)
-    .sort((a, b) => contractActivityAge(entries.get(b), now) - contractActivityAge(entries.get(a), now))
-    .slice(0, limit)
-}
-
-async function loadContractActivityCounts(): Promise<void> {
-  if (contractActivityLoaded) return
-  contractActivityLoaded = true
-  const res = await client.query({
-    query: `SELECT payload_json FROM price_data.account_directory_snapshots FINAL
-            WHERE snapshot_key = {key:String} LIMIT 1`,
-    query_params: { key: CONTRACT_ACTIVITY_SNAPSHOT_KEY }, format: 'JSONEachRow',
-  }).catch(() => null)
-  if (!res) return
-  const row = (await res.json<{ payload_json: string }>())[0]
-  if (!row) return
-  try {
-    const stored = JSON.parse(row.payload_json) as Record<string, ContractActivityEntry>
-    for (const [address, entry] of Object.entries(stored)) {
-      if (entry && (entry.total === null || Number.isSafeInteger(entry.total))) contractActivityCounts.set(address, entry)
-    }
-  } catch { /* an unreadable payload just means a fresh sweep */ }
-}
-
-// Recount the few contracts whose stored total has aged out, one at a time with
-// a cooldown between them; the directory keeps serving whatever is published
-// meanwhile, so nothing waits on this.
-async function refreshContractActivityCounts(addresses: string[]): Promise<void> {
-  await loadContractActivityCounts()
-  const known = new Set(addresses)
-  for (const address of [...contractActivityCounts.keys()]) {
-    if (!known.has(address)) contractActivityCounts.delete(address)   // reclassified away
-  }
-  const due = dueContractActivityCounts(addresses, contractActivityCounts, Date.now())
-  if (!due.length) return
-  let counted = 0
-  for (const address of due) {
-    if (counted) await new Promise(resolve => setTimeout(resolve, CONTRACT_ACTIVITY_COOLDOWN_MS))
-    const total = await getAddressListTotal(address, { tab: 'activity', type: 'all' })
-      .catch(err => { console.warn('[contracts] activity count failed', address, err); return undefined })
-    if (!total) continue
-    contractActivityCounts.set(address, { total: total.total, complete: total.complete, countedAt: new Date().toISOString() })
-    counted++
-  }
-  if (!counted) return
-  await client.insert({
-    table: 'price_data.account_directory_snapshots',
-    values: [{
-      snapshot_key: CONTRACT_ACTIVITY_SNAPSHOT_KEY,
-      payload_json: JSON.stringify(Object.fromEntries(contractActivityCounts)),
-      computed_at: new Date().toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ''),
-    }],
-    format: 'JSONEachRow',
-  }).catch(err => console.warn('[contracts] activity count persist failed', err))
-}
-
-export function contractMetrics(address: string): ContractMetrics {
-  return contractMetricsByAddress.get(address.toLowerCase()) ?? {}
-}
-
-async function refreshContractMetricsUncached(): Promise<void> {
-  const contracts = allContracts()
-  if (!contracts.length) return
-  // Registry address → the ETH-prefixed AccountId32 its on-chain activity is
-  // indexed under; every account-keyed source below reads that form.
-  const accountFor = new Map<string, string>()
-  for (const c of contracts) {
-    const id = evmAccountIdFromAddress(c.address)
-    if (id && ACCOUNT_RE.test(id)) accountFor.set(c.address, id)
-  }
-  if (!accountFor.size) return
-  const addresses = [...accountFor.keys()]
-  const accounts = [...accountFor.values()]
-
-  const prices = await ensureAccountValuePrices()
-  const { idsSql, unitsSql } = priceTransformArrays(prices)
-  // Current wallet value per contract: the Tokens/Balances pot and the ERC-20
-  // pot, valued at current prices — the `grouped.usd` half of the accounts
-  // directory's own value, restricted to these ids. Money-market collateral and
-  // debt are folded in below from the same published snapshot the directory reads.
-  const valueRes = await client.query({
-    query: `
-      SELECT account_id, toFloat64(sum(usd)) AS usd
-      FROM (
-        SELECT account_id, toFloat64(toUInt256OrZero(argMaxMerge(total_state))) * transform(asset_id, ${idsSql}, ${unitsSql}, 0.) AS usd
-        FROM price_data.account_asset_latest_balances
-        WHERE account_id IN ({accounts:Array(String)})
-        GROUP BY account_id, asset_id
-        UNION ALL
-        SELECT account_id, toFloat64(toUInt256OrZero(argMax(total, updated_at))) * transform(asset_id, ${idsSql}, ${unitsSql}, 0.) AS usd
-        FROM price_data.erc20_wallet_balances
-        WHERE account_id IN ({accounts:Array(String)})
-        GROUP BY account_id, asset_id
-      )
-      GROUP BY account_id`,
-    query_params: { accounts }, format: 'JSONEachRow',
-  })
-  const walletUsd = new Map<string, number>()
-  for (const r of await valueRes.json<{ account_id: string; usd: number }>()) walletUsd.set(r.account_id, r.usd)
-
-  // Money-market contribution, from the published per-account generation the
-  // accounts directory ranks on and with its exact per-pool value expression:
-  // counted-market collateral, and all debt regardless of market. Staking-backed
-  // collateral is excluded from the value (it is already-counted locked HDX) but
-  // its debt still nets out, mirroring mm_grouped.value_delta.
-  const mmRes = moneyMarketAccountValuesReady ? await client.query({
-    query: `
-      SELECT account_id,
-             sum(if(pool_address IN (${countedMmPoolsSql()}), col, 0.)) / 1e8 AS collateral,
-             sum(debt) / 1e8 AS debt
-      FROM (
-        SELECT account_id, lower(pool_address) AS pool_address,
-          greatest(max(toFloat64(total_collateral_base)),
-            sumIf(toFloat64(supplied) * transform(toString(asset_id), ${idsSql}, ${unitsSql}, 0.) * 1e8, reserve_present = 1)) AS col,
-          greatest(max(toFloat64(total_debt_base)),
-            sumIf(toFloat64(debt) * transform(toString(asset_id), ${idsSql}, ${unitsSql}, 0.) * 1e8, reserve_present = 1)) AS debt
-        FROM price_data.money_market_account_value_snapshots
-        WHERE account_id IN ({accounts:Array(String)})
-          AND snapshot_id = (SELECT argMax(snapshot_id, computed_at)
-                               FROM price_data.money_market_account_value_snapshot_state
-                              WHERE snapshot_key = 'current')
-        GROUP BY account_id, pool_address
-        HAVING col > 0 OR debt > 0
-      )
-      GROUP BY account_id`,
-    query_params: { accounts }, format: 'JSONEachRow',
-  }).catch(() => null) : null
-  const mmDelta = new Map<string, { collateral: number; debt: number }>()
-  if (mmRes) {
-    for (const r of await mmRes.json<{ account_id: string; collateral: number; debt: number }>()) {
-      mmDelta.set(r.account_id, { collateral: r.collateral, debt: r.debt })
-    }
-  }
-
-  // Synthetic directory rows: one untagged account each, so rowMemberAccounts
-  // resolves to exactly that contract and the shared passes behave as they do
-  // for any single-account row on /accounts.
-  const raw = addresses.map(address => {
-    const account = accountFor.get(address)!
-    const mm = mmDelta.get(account)
-    const usd = walletUsd.get(account) ?? 0
-    return { label_id: '', sample: account, usd, usd_total: usd + (mm ? mm.collateral - mm.debt : 0) }
-  })
-  const rows: TopAccountRow[] = raw.map(r => ({ account: null, portfolioUsd: r.usd_total, lastBlock: 0 } as unknown as TopAccountRow))
-  // Flag the money-market rows before enrichTopAssets: it reconstructs supplied
-  // collateral only for rows that declare a position, exactly as the directory does.
-  raw.forEach((r, i) => {
-    const mm = mmDelta.get(r.sample)
-    if (!mm) return
-    if (mm.collateral > 0) rows[i].suppliedUsd = mm.collateral
-    if (mm.debt > 0) rows[i].borrowedUsd = mm.debt
-  })
-
-  // The sparkline/volume pass batches every query across the whole set; the
-  // top-holdings pass is per row, so give it only the rows that hold something.
-  const holding = raw.map((_, i) => i).filter(i => raw[i].usd_total !== 0 || rows[i].suppliedUsd != null || rows[i].borrowedUsd != null)
-  await Promise.all([
-    enrichAccountRows(raw, rows).catch(err => console.warn('[contracts] metrics history failed', err)),
-    enrichTopAssets(holding.map(i => raw[i]), holding.map(i => rows[i]), prices)
-      .catch(err => console.warn('[contracts] metrics holdings failed', err)),
-  ])
-
-  await refreshContractActivityCounts(addresses).catch(err => console.warn('[contracts] metrics activity failed', err))
-
-  const next = new Map<string, ContractMetrics>()
-  addresses.forEach((address, i) => {
-    const metrics: ContractMetrics = {}
-    if (raw[i].usd_total !== 0) metrics.portfolioUsd = +raw[i].usd_total.toFixed(2)
-    if (rows[i].topAssets?.length) metrics.topAssets = rows[i].topAssets
-    // A series that is flat zero across the whole year says nothing a dash does
-    // not; drop it so the column reads as "nothing held" rather than a floor line.
-    const spark = rows[i].sparkline
-    if (spark && spark.some(v => v !== 0)) metrics.sparkline = spark
-    if (rows[i].tradingVolumeUsd) metrics.tradingVolumeUsd = rows[i].tradingVolumeUsd
-    const activity = contractActivityCounts.get(address)
-    if (activity && activity.total != null) {
-      metrics.activityCount = activity.total
-      metrics.activityCountComplete = activity.complete
-    }
-    next.set(address.toLowerCase(), metrics)
-  })
-  contractMetricsByAddress = next
-}
-
-function refreshContractMetrics(): Promise<void> {
-  if (contractMetricsInflight) return contractMetricsInflight
-  const request = refreshContractMetricsUncached().finally(() => {
-    if (contractMetricsInflight === request) contractMetricsInflight = null
-  })
-  contractMetricsInflight = request
-  return request
-}
-
-// ClickHouse-only, so it runs on its own timer rather than the node-full
-// refresh lane (see backgroundRefresh.ts). Five minutes matches the registry's
-// own reload, so a newly detected contract picks up metrics on the next pass.
-export function startContractMetricsRefresh(): void {
-  if (contractMetricsTimer) return
-  void refreshContractMetrics().catch(() => {})
-  contractMetricsTimer = setInterval(() => { void refreshContractMetrics().catch(() => {}) }, 5 * 60_000)
-  contractMetricsTimer.unref()
-}
-
 // tag detail — combined portfolio of all members
 export interface TagDetail {
   tagId: string
@@ -22445,11 +12920,7 @@ export interface TagDetail {
   topAssets: { asset: AssetRef; valueUsd: number }[]
   portfolioUsd: number
   tradingVolumeUsd?: number
-  liquidationVolumeUsd?: number
-  revenueUsd?: number
-  moneyMarket: MoneyMarketPosition[]
   liquidityPositions?: LpPosition[]
-  activeDcas?: ActiveDca[]
   portfolioSeries: number[]
   portfolioDates: string[]
   balanceHistory: AssetBalanceHistory[]
@@ -22505,17 +12976,11 @@ function membershipFingerprint(members: string[]): string {
   return createHash('sha256').update(tagMembershipList(members)).digest('hex').slice(0, 16)
 }
 
-// Identity of a persisted tag-detail payload: which accounts it covers AND which
-// account-value model computed it. `tag_detail_snapshots` is keyed by tag_id
-// alone, so without the model version here a payload built before the
-// money-market account-value generation was available (reading the raw position
-// table instead) could be served after it became available. `tag_activity_counts`
-// keys on the bare list because activity counts do not depend on that model, so
-// only this form carries the prefix — every reader and writer of
-// `tag_detail_snapshots.membership_key` must come through here, or a key that
-// looks right silently matches nothing.
+// Identity of a persisted tag-detail payload: which accounts it covers. Every
+// reader and writer of `tag_detail_snapshots.membership_key` must come through
+// here, or a key that looks right silently matches nothing.
 export function tagDetailMembershipKey(members: string[]): string {
-  return `${accountDirectoryModelVersion()}|${tagMembershipList(members)}`
+  return tagMembershipList(members)
 }
 
 // Both requests and the prewarm read this snapshot, and the rule is the one the
@@ -22618,71 +13083,36 @@ async function buildTagDetailForMembers(
       summary ? Promise.resolve(new Map<number, AssetLockBreakdown>()) : queryLockBreakdownsSafe(list),
       ensureAccountValuePrices(),
     ])
-    const rawBalances = valueAccountBalances(balanceRows, prices)
-    // Wallet-held pool shares double as LP display rows (see stableswapLpPositions).
-    const stableLp = stableswapLpPositions(rawBalances)
-    let balances: AddressBalance[] = foldShareBalances(rawBalances)
+    let balances: AddressBalance[] = foldShareBalances(valueAccountBalances(balanceRows, prices))
 
-    // The same rich on-chain data the account view returns, for the union of members:
-    // live money-market (per-member H160 reads combined), Omnipool LP positions, and
-    // active DCA orders. Money-market collateral is folded into the wallet balances
-    // exactly as on the account page.
-    const mmMembers = members.flatMap(simAccount => {
-      const h160 = mmH160ForAccount(simAccount)
-      return h160 ? [{ h160, simAccount }] : []
-    })
     const tagHistoryAccounts = [...new Set([
       ...members,
       ...members.map(evmAccountForm).filter(Boolean) as string[],
     ])]
-    let moneyMarket = await aggregateMoneyMarket(mmMembers)
-    // LP stays (it feeds the displayed value); only the heavy portfolio-history walk
-    // and DCA — neither shown on the card — are skipped in summary.
-    const [history, bareLp, farmLp, xykLp, activeDcas] = await Promise.all([
+    // LP stays (it feeds the displayed value); only the heavy portfolio-history
+    // walk — which the card does not show — is skipped in summary.
+    const [history, xykLp] = await Promise.all([
       summary
         ? Promise.resolve({ portfolioSeries: [] as number[], portfolioDates: [] as string[], balanceHistory: [] as AssetBalanceHistory[] })
         : getAccountHistoryShared(tagHistoryAccounts, opts.scope),
-      getOmnipoolPositions(members),
-      getFarmingPositions(members),
       getXykPositions(members, balances),
-      summary ? Promise.resolve([]) : getActiveDcas(members),
     ])
-    const lpPositions = [...bareLp, ...farmLp, ...xykLp].sort((x, y) => (y.valueUsd ?? 0) - (x.valueUsd ?? 0))
-    // Staking-backed markets (GIGAHDX): collateral is the already-counted locked HDX,
-    // so don't fold it into balances/portfolio (see getAddress). Debt still counts.
-    const countedMm = moneyMarket.filter(p => !p.stakingBacked)
-    const foldedMmUsd = countedMm.reduce((s, p) => s + applyMmCollateralToBalances(balances, p, prices), 0)
-    balances = foldShareBalances(balances) // fold MM collateral rows too (see getAddress)
-    balances = mergeErc20Balances(
-      balances,
-      await erc20WalletHoldingsForAccounts(mmMembers.map(member => member.h160)),
-      prices,
-    )
+    const lpPositions = [...xykLp].sort((x, y) => (y.valueUsd ?? 0) - (x.valueUsd ?? 0))
     // Attach the lock/reserve components once the display rows are final.
     balances = attachLockBreakdowns(balances, lockBreakdowns)
-    // Fold each market's borrow-position display too (2-Pool-GETH → GETH), after the line above.
-    moneyMarket = moneyMarket.map(p => p.reserves?.length ? { ...p, reserves: foldShareReserves(p.reserves) } : p)
     const lpUsd = lpPositions.reduce((s, p) => s + (p.valueUsd ?? 0), 0)
-    const collateralShortfall = countedMm.reduce((s, p) => s + mmCollateralShortfallUsd(p, 0), 0)
-    const portfolioUsd = balances.reduce((s, b) => s + (b.valueUsd ?? 0), 0) + lpUsd + Math.max(0, collateralShortfall - foldedMmUsd)
+    const portfolioUsd = balances.reduce((s, b) => s + (b.valueUsd ?? 0), 0) + lpUsd
     // Pin the history's last point to the current net worth (see getAddress) so the
-    // chart ends at the displayed figure rather than a stale stored-MM bucket.
-    const debtUsd = moneyMarket.reduce((s, p) => s + Number(p.totalDebtBase) / 1e8, 0)
+    // chart ends at the displayed figure.
     const portfolioSeries = history.portfolioSeries.slice()
-    if (portfolioSeries.length) portfolioSeries[portfolioSeries.length - 1] = +(portfolioUsd - debtUsd).toFixed(2)
+    if (portfolioSeries.length) portfolioSeries[portfolioSeries.length - 1] = +portfolioUsd.toFixed(2)
     const volumeAccounts = [...new Set([...members, ...members.map(evmAccountForm).filter(Boolean) as string[]])]
-    const [tradingVolumeUsd, liquidationVolumeUsd, revenueUsd] = await Promise.all([
-      tradingVolumeByAccount(volumeAccounts).then(m => [...m.values()].reduce((s, v) => s + v, 0)),
-      liquidationVolumeByAccount(volumeAccounts).then(m => [...m.values()].reduce((s, v) => s + v, 0)),
-      revenueByAccount(volumeAccounts).then(m => [...m.values()].reduce((s, v) => s + v, 0)),
-    ])
+    const tradingVolumeUsd = await tradingVolumeByAccount(volumeAccounts).then(m => [...m.values()].reduce((s, v) => s + v, 0))
     const detail: TagDetail = {
       tagId: presentation.tagId, name: presentation.name, color: presentation.color, note: presentation.note, icon: presentation.icon,
       members: members.map(accountRef), balances, topAssets: topHeldTokens(balances), portfolioUsd,
       ...(tradingVolumeUsd > 0 ? { tradingVolumeUsd } : {}),
-      ...(liquidationVolumeUsd > 0 ? { liquidationVolumeUsd } : {}),
-      ...(revenueUsd > 0 ? { revenueUsd } : {}),
-      moneyMarket, liquidityPositions: [...lpPositions, ...stableLp].sort((x, y) => (y.valueUsd ?? 0) - (x.valueUsd ?? 0)), activeDcas,
+      liquidityPositions: lpPositions,
       portfolioSeries, portfolioDates: history.portfolioDates,
       // Holdings without indexed historical observations remain absent rather
       // than being projected backward from their current balance.
@@ -22698,8 +13128,8 @@ export async function getTag(tagId: string, opts: { summary?: boolean; refresh?:
   const tag = getTagRecord(tagId)
   if (!tag || !tag.members.length) return null
   // `summary` (hover card) skips the portfolio-history reconstruction — which for a
-  // large tag walks every member's transfer log and dominates the response — plus LP
-  // and DCA, none of which the card shows. The detail page still gets the full object.
+  // large tag walks every member's transfer log and dominates the response. The
+  // detail page still gets the full object.
   const summary = opts.summary === true
   const refresh = opts.refresh === true
   const membershipKey = tagDetailMembershipKey(tag.members)
@@ -22718,10 +13148,10 @@ export async function getTag(tagId: string, opts: { summary?: boolean; refresh?:
 }
 
 // Tag feeds use the same account-set implementations as account detail feeds.
-export async function getTagActivity(tagId: string, type = 'all', limit = 40, offset = 0, action?: string, filters: ValueListFilters = {}, from?: string, to?: string, opts: ActivityPageOptions = {}): Promise<ActivityRow[] | null> {
+export async function getTagActivity(tagId: string, type = 'all', limit = 40, offset = 0, action?: string, filters: ValueListFilters = {}, from?: string, to?: string): Promise<ActivityRow[] | null> {
   const members = tagMembers(tagId)
   if (!members) return null
-  return getScopedAccountActivity(members, `tag:${tagId}`, type, limit, offset, action, filters, from, to, opts)
+  return getScopedAccountActivity(members, `tag:${tagId}`, type, limit, offset, action, filters, from, to)
 }
 export async function getTagExtrinsics(tagId: string, limit = 25, offset = 0, filters: ExtrinsicListFilters = {}, from?: string, to?: string): Promise<ExtrinsicSummary[] | null> {
   const members = tagMembers(tagId)
@@ -22777,10 +13207,10 @@ export async function getListTagDetail(listId: string, presentation: ListTagPres
   const scope = listTagScope(listId, presentation.tagId, valid)
   return buildTagDetailForMembers(presentation, valid, { summary, cacheKey: `explorer:${scope}${summary ? ':summary' : ''}`, scope })
 }
-export async function getListTagActivity(listId: string, tagId: string, members: string[], type = 'all', limit = 40, offset = 0, action?: string, filters: ValueListFilters = {}, from?: string, to?: string, opts: ActivityPageOptions = {}): Promise<ActivityRow[]> {
+export async function getListTagActivity(listId: string, tagId: string, members: string[], type = 'all', limit = 40, offset = 0, action?: string, filters: ValueListFilters = {}, from?: string, to?: string): Promise<ActivityRow[]> {
   const valid = listTagMembers(members)
   if (!valid.length) return []
-  return getScopedAccountActivity(valid, listTagScope(listId, tagId, valid), type, limit, offset, action, filters, from, to, opts)
+  return getScopedAccountActivity(valid, listTagScope(listId, tagId, valid), type, limit, offset, action, filters, from, to)
 }
 // The cacheKey MUST name the list kind as well as the scope: both builders
 // compose `explorer:<cacheKey>:<limit>:<offset>:<from>:<to>:<filterKey>`, so a
@@ -22837,13 +13267,9 @@ export async function getListTagValueEvents(listId: string, tagId: string, membe
 // exclusions and $-value filters aren't replicated here (a coarse histogram).
 export interface DailyFilters { type?: string; action?: string; token?: string }
 const TRANSFER_EVENTS = ['Balances.Transfer', 'Tokens.Transfer', 'Currencies.Transferred']
-// Omnipool.PositionCreated is a liquidity source for ONE shape only: a token
-// listing's `add_token` mints the seed position to a designated owner without
-// emitting Omnipool.LiquidityAdded, so the grant is invisible unless this event
-// stands in. On every user add_liquidity the two are companions in one block, so
-// every rendering/counting read suppresses a PositionCreated whose block holds a
-// LiquidityAdded naming the same owner and asset (routerHopLiquiditySql's
-// predicate; suppressPositionCreatedCompanions in the in-memory builders).
+// This list, LIQUIDITY_AMOUNT_ARG and HISTOGRAM_SWAP_EVENTS_SQL mirror the event
+// sets clickhouse/schema/003_materialized_views.sql ingests, and the parity is
+// pinned by tests: they are trimmed together with the schema, never here alone.
 const LIQUIDITY_EVENTS = ['Omnipool.LiquidityAdded', 'Omnipool.LiquidityRemoved', 'Omnipool.PositionCreated', 'Stableswap.LiquidityAdded', 'Stableswap.LiquidityRemoved', 'XYK.LiquidityAdded', 'XYK.LiquidityRemoved', 'XYK.PoolCreated', 'XYK.PoolDestroyed', 'OmnipoolLiquidityMining.RewardClaimed', 'XYKLiquidityMining.RewardClaimed']
 // Every event the vote CATEGORY renders: the capital-locking conviction/Democracy
 // votes plus the collective (Council / Technical Committee) ones the feed merges
@@ -22866,50 +13292,26 @@ export async function getDailyActivity(scope: string, filters: DailyFilters = {}
     // Token filter — mirror the activity table's per-category asset-id predicates so
     // the bars adjust to the selected token on every tab. The asset id lives in a
     // different arg field per category (currencyId for transfers, assetIn/assetOut
-    // for swaps, assetId/poolId/assetA for liquidity, a reserve contract address for
-    // money-market). Staking/voting are HDX-denominated (staking position id 670),
-    // so a non-HDX token yields no rows. The xcm (raw_xcm_activity.assets_json is
-    // empty) and DCA (dca_events carries no asset id) daily sources have no asset id
-    // to filter on — those two remain unfiltered by token (documented limitation).
+    // for swaps, assetId/poolId/assetA for liquidity). Voting is HDX-denominated, so
+    // a non-HDX token yields no rows. The xcm daily source has no asset id to filter
+    // on (raw_xcm_activity.assets_json is empty) — it stays unfiltered by token
+    // (documented limitation).
     const tokenIds = assetIdsForToken(filters.token)
     const ids = tokenIds?.join(',')
     const sp = (s: string) => (s ? ` ${s}` : '')
     const transferTok = assetIdFilterSql(transferAssetIdSql(), tokenIds)
     const tradeTok = tokenIds == null ? '' : !tokenIds.length ? 'AND 0'
       : `AND (toUInt32(JSONExtractInt(args_json,'assetIn')) IN (${ids}) OR toUInt32(JSONExtractInt(args_json,'assetOut')) IN (${ids}))`
-    const stakingTok = tokenIds == null ? '' : (tokenIds.includes(0) || tokenIds.includes(670)) ? '' : 'AND 0'
     const voteTok = tokenIds == null ? '' : tokenIds.includes(0) ? '' : 'AND 0'
-    const mmAddrs = tokenIds ? mmReserveAddressesForTokens(tokenIds) : []
-    const mmTok = tokenIds == null ? '' : mmAddrs.length ? `AND asset_address IN (${mmAddrs.map(a => `'${a}'`).join(',')})` : 'AND 0'
     let query: string
-    if (scope === 'activity' && type !== 'mm' && type !== 'xcm') {
+    if (scope === 'activity' && type !== 'xcm') {
       let names: readonly string[]
-      let ignoreToken = false
+      const ignoreToken = false
       if (type === 'transfer') names = TRANSFER_EVENTS
-      else if (type === 'trade') {
-        const otcAction = resolveOtcAction(filters.action)
-        if (filters.action === 'dca-failed') { names = ['DCA.TradeFailed']; ignoreToken = true }
-        else if (filters.action === 'dca') { names = ['DCA.TradeExecuted', 'DCA.TradeFailed']; ignoreToken = true }
-        else if (otcAction && OTC_ACTION_EVENTS[otcAction]) { names = OTC_ACTION_EVENTS[otcAction]; ignoreToken = true }
-        else if (filters.action === 'swap') names = SWAP_EVENTS
-        else names = [...SWAP_EVENTS, ...OTC_EVENT_NAMES, 'DCA.TradeFailed']
-      } else if (type === 'liquidity') {
-        // Referral claims render as liquidity rows without being liquidity-pallet
-        // events; they carry their own 'ClaimReferral' action, so only that filter
-        // selects Referrals.Claimed — the LM 'Claim' no longer includes it.
-        names = filters.action === 'ClaimReferral'
-          ? ['Referrals.Claimed']
-          : liquidityActionEventNames(filters.action)
-      } else if (type === 'staking') {
-        names = filters.action && STAKING_ACTION_EVENTS[filters.action] ? STAKING_ACTION_EVENTS[filters.action] : STAKING_EVENT_NAMES
-      } else if (type === 'vote') names = VOTE_EVENTS
-      else if (type === 'otc') {
-        const otcAction = resolveOtcAction(filters.action)
-        names = otcAction && OTC_ACTION_EVENTS[otcAction] ? OTC_ACTION_EVENTS[otcAction] : OTC_EVENT_NAMES
-        ignoreToken = true
-      } else {
-        names = [...TRANSFER_EVENTS, ...SWAP_EVENTS, ...LIQUIDITY_EVENTS, ...VOTE_EVENTS, ...STAKING_EVENT_NAMES, ...OTC_EVENT_NAMES]
-      }
+      else if (type === 'trade') names = SWAP_EVENTS
+      else if (type === 'liquidity') names = liquidityActionEventNames(filters.action)
+      else if (type === 'vote') names = VOTE_EVENTS
+      else names = [...TRANSFER_EVENTS, ...SWAP_EVENTS, ...LIQUIDITY_EVENTS, ...VOTE_EVENTS]
       const assetFilter = ignoreToken || tokenIds == null ? '' : !tokenIds.length
         ? 'AND 0'
         : `AND hasAny(asset_refs, [${tokenIds.join(',')}])`
@@ -22930,83 +13332,19 @@ export async function getDailyActivity(scope: string, filters: DailyFilters = {}
       if (type === 'transfer')
         query = daily('raw_events', `event_name IN (${sqlNames(TRANSFER_EVENTS)})${sp(transferTok)}`)
       else if (type === 'trade') {
-        // otc folds under Trade: no sub-action selected merges swap+otc counts
-        // (mirrors the activity's row merge); an otc sub-action narrows to just
-        // that otc event set, excluding plain swap/dca — same as the activity's
-        // activityRowMatchesAction.
-        const otcAction = resolveOtcAction(filters.action)
-        if (filters.action === 'dca-failed')
-          query = daily('raw_events', `event_name = 'DCA.TradeFailed'`)
-        else if (filters.action === 'dca')
-          query = daily('raw_events', `event_name IN ('DCA.TradeExecuted','DCA.TradeFailed')`)   // schedule join needed for token filtering → token filter N/A
-        else if (otcAction && OTC_ACTION_EVENTS[otcAction])
-          // Asset identity for non-Placed otc events lives on the order's Placed
-          // event, not the event itself — token filtering N/A here (see the otc
-          // branch below), same documented limitation.
-          query = daily('raw_events', `event_name IN (${sqlNames(OTC_ACTION_EVENTS[otcAction])})`)
-        else if (filters.action === 'swap')
-          query = daily('raw_events', `event_name IN (${sqlNames(SWAP_EVENTS)})${sp(tradeTok)}`, '(block_height, extrinsic_index)')
-        else
-          query = daily(
-            'raw_events',
-            `event_name IN (${sqlNames([...SWAP_EVENTS, ...OTC_EVENT_NAMES, 'DCA.TradeFailed'])})${sp(tradeTok)}`,
-            `(block_height, if(event_name IN (${sqlNames(SWAP_EVENTS)}), ifNull(extrinsic_index, event_index), event_index))`,
-          )
-      } else if (type === 'staking') {
-        const names = filters.action && STAKING_ACTION_EVENTS[filters.action] ? STAKING_ACTION_EVENTS[filters.action] : STAKING_EVENT_NAMES
-        query = daily('raw_events', `event_name IN (${sqlNames(names)})${sp(stakingTok)}`)
+        query = daily('raw_events', `event_name IN (${sqlNames(SWAP_EVENTS)})${sp(tradeTok)}`, '(block_height, extrinsic_index)')
       } else if (type === 'vote') {
         const side = filters.action === 'Aye' ? ` AND JSONExtractInt(args_json, 'vote', 'vote') >= 128`
           : filters.action === 'Nay' ? ` AND JSONExtractInt(args_json, 'vote', 'vote') < 128 AND JSONExtractString(args_json, 'vote', '__kind') = 'Standard'` : ''
         query = daily('raw_events', `event_name IN (${sqlNames(VOTE_EVENTS)})${side}${sp(voteTok)}`)
-      } else if (type === 'mm') {
-        if (filters.action === 'ClaimRewards') {
-          // Reward claims already have a replay-safe sparse transfer model. The
-          // former histogram reopened 35.8M recent raw events (7.9 GiB) merely
-          // to find this one pot's Currencies.Transferred rows.
-          query = daily('incentive_reward_transfers FINAL',
-            `event_name = 'Currencies.Transferred' AND JSONExtractString(args_json,'from') = '${INCENTIVES_REWARD_POT}'${sp(transferTok)}`)
-        } else {
-          const actionNames = moneyMarketEventNames(filters.action)
-          const act = actionNames.length ? ` AND event_name IN (${sqlNames(actionNames)})` : ' AND 0'
-          query = daily('raw_money_market_events', `user_address NOT LIKE '0x6d6f646c%' AND lower(ifNull(pool_address, '')) IN (${configuredMmPoolsSql()})${act}${sp(mmTok)} ${mmStakingPlumbingExclusionSql()}`)
-        }
-      } else if (type === 'otc') {
-        // Asset identity for Cancelled/Filled/PartiallyFilled lives on the order's
-        // Placed event, not the event itself, so — like xcm/dca above — token
-        // filtering isn't supported here (documented limitation; a coarse histogram).
-        // Accepts both the raw otcAction label (Place/Pull/Fill) and the
-        // hyphenated otc-place/otc-pull/otc-fill values used under type=trade.
-        const otcAction = resolveOtcAction(filters.action)
-        const names = otcAction && OTC_ACTION_EVENTS[otcAction] ? OTC_ACTION_EVENTS[otcAction] : OTC_EVENT_NAMES
-        query = daily('raw_events', `event_name IN (${sqlNames(names)})`)
       } else if (type === 'xcm') {
-        // raw_xcm_activity counts queue messages; Wormhole NTT is not XCM and leaves no
-        // message, so its sends (the minter-leg identity the feed dedupes to) and
-        // arrivals (one TransferRedeemed per mint) are counted from their own traces.
-        // assets_json is empty and the NTT arms mirror the feed's own classification →
-        // token filter N/A here, as before.
-        const minters = await nttMinterAccounts()
-        const nttArms = minters.size ? `
-          UNION ALL SELECT toString(toDate(block_timestamp)) AS d,
-              toUInt64(uniqExact(tuple(block_height, ifNull(extrinsic_index, 4294967295), asset_id, lower(from_account), lower(to_account), amount))) AS v
-            FROM price_data.account_transfer_activity
-            WHERE ${since} AND account IN (${[...minters.values()].map(a => `'${a}'`).join(',')})
-              AND (asset_id, lower(to_account)) IN (${[...minters].map(([id, acc]) => `(${id},'${acc}')`).join(',')})
-            GROUP BY d
-          UNION ALL SELECT toString(toDate(block_timestamp)) AS d, toUInt64(uniqExact((block_height, event_index))) AS v
-            FROM price_data.raw_evm_logs
-            WHERE ${since} AND topic0 = '${NTT_TRANSFER_REDEEMED_TOPIC}'
-              AND lower(contract_address) IN (${[...minters.values()].map(a => `'${nttMinterH160(a)}'`).join(',')})
-            GROUP BY d` : ''
-        query = `SELECT d, toUInt64(sum(v)) AS v FROM (
-            ${daily('raw_xcm_activity', '', '(block_height, source_index)')}
-            ${nttArms}
-          ) GROUP BY d ORDER BY d`
+        // raw_xcm_activity counts queue messages; assets_json is empty → token
+        // filter N/A here.
+        query = daily('raw_xcm_activity', '', '(block_height, source_index)')
       } else {
         // 'all' — union of raw_events categories; OR each category's own token
         // predicate so the count mirrors the merged activity for the selected token.
-        const allEvents = sqlNames([...TRANSFER_EVENTS, ...SWAP_EVENTS, ...LIQUIDITY_EVENTS, ...VOTE_EVENTS, ...STAKING_EVENT_NAMES, ...OTC_EVENT_NAMES])
+        const allEvents = sqlNames([...TRANSFER_EVENTS, ...SWAP_EVENTS, ...LIQUIDITY_EVENTS, ...VOTE_EVENTS])
         let where = `event_name IN (${allEvents})`
         if (tokenIds != null) {
           if (!tokenIds.length) where += ' AND 0'
@@ -23015,11 +13353,7 @@ export async function getDailyActivity(scope: string, filters: DailyFilters = {}
               `(event_name IN (${sqlNames(TRANSFER_EVENTS)}) AND toUInt32(${transferAssetIdSql()}) IN (${ids}))`,
               `(event_name IN (${sqlNames(SWAP_EVENTS)}) AND (toUInt32(JSONExtractInt(args_json,'assetIn')) IN (${ids}) OR toUInt32(JSONExtractInt(args_json,'assetOut')) IN (${ids})))`,
               `(event_name IN (${sqlNames(LIQUIDITY_EVENTS)}) AND ${liquidityAssetMatchExpr(tokenIds.join(','))})`,
-              // Placed carries its own assetIn/assetOut; Cancelled/Filled/PartiallyFilled
-              // don't (see the 'otc' branch above), so only Placed is token-filterable here.
-              `(event_name = 'OTC.Placed' AND (toUInt32(JSONExtractInt(args_json,'assetIn')) IN (${ids}) OR toUInt32(JSONExtractInt(args_json,'assetOut')) IN (${ids})))`,
             ]
-            if (tokenIds.includes(0) || tokenIds.includes(670)) parts.push(`(event_name IN (${sqlNames(STAKING_EVENT_NAMES)}))`)
             if (tokenIds.includes(0)) parts.push(`(event_name IN (${sqlNames(VOTE_EVENTS)}))`)
             where += ` AND (${parts.join(' OR ')})`
           }
@@ -23041,7 +13375,7 @@ export async function getDailyActivity(scope: string, filters: DailyFilters = {}
 }
 
 // Total row counts per list (for pagination page-counts / Last button).
-export async function getListCounts(): Promise<{ blocks: number; extrinsics: number; events: number; transfers: number; contracts: number }> {
+export async function getListCounts(): Promise<{ blocks: number; extrinsics: number; events: number; transfers: number }> {
   return cached('explorer:counts', 60000, async () => {
     const q = async (sql: string) => Number((await (await client.query({ query: sql, format: 'JSONEachRow' })).json<{ c: string }>())[0]?.c ?? 0)
     const [blocks, extrinsics, events, transfers] = await Promise.all([
@@ -23053,7 +13387,7 @@ export async function getListCounts(): Promise<{ blocks: number; extrinsics: num
       q(`SELECT toString(count()) AS c FROM price_data.raw_events`),
       q(`SELECT toString(count()) AS c FROM price_data.raw_events WHERE event_name IN ('Balances.Transfer','Tokens.Transfer','Currencies.Transferred')`),
     ])
-    return { blocks, extrinsics, events, transfers, contracts: allContracts().length }
+    return { blocks, extrinsics, events, transfers }
   })
 }
 
@@ -23187,7 +13521,7 @@ async function prewarmAccountDirectoryUncached(): Promise<void> {
   // WHICH rows it rendered: those are the demand half of the ranking's pool, so the
   // Activity column fills in for the pages a reader actually opens rather than only for
   // the chain's busiest accounts (see demandPoolMembers).
-  const sorts: AccountSort[] = ['value', 'supplied', 'borrowed', 'health', 'identity', 'activity', 'volume', 'liquidation']
+  const sorts: AccountSort[] = ['value', 'identity', 'activity', 'volume']
   const rendered: string[] = []
   for (const sort of sorts) rendered.push(...directoryRowGkeys((await refreshAccountsPage(0, 50, sort))?.rows ?? []))
   rendered.push(...directoryRowGkeys((await refreshAccountsPage(50, 50, 'value'))?.rows ?? []))
@@ -23306,25 +13640,16 @@ export function startTagCountsPrewarm(): void {
 }
 
 export function stopExplorerBackgroundTasks(): void {
-  if (evmBindingsRefreshTimer) clearInterval(evmBindingsRefreshTimer)
   if (accountSuffixRefreshTimer) clearInterval(accountSuffixRefreshTimer)
   if (accountsPrewarmTimer) clearInterval(accountsPrewarmTimer)
   if (activityLeaderboardTimer) clearInterval(activityLeaderboardTimer)
   if (tagCountsPrewarmTimer) clearInterval(tagCountsPrewarmTimer)
   if (tagDetailsPrewarmTimer) clearInterval(tagDetailsPrewarmTimer)
-  if (omnipoolAccountClaimsRefreshTimer) clearInterval(omnipoolAccountClaimsRefreshTimer)
-  if (moneyMarketAccountValuesRefreshTimer) clearInterval(moneyMarketAccountValuesRefreshTimer)
-  if (contractMetricsTimer) clearInterval(contractMetricsTimer)
-  stopFoldActivitySweep()
-  evmBindingsRefreshTimer = null
   accountSuffixRefreshTimer = null
   accountsPrewarmTimer = null
   activityLeaderboardTimer = null
   tagCountsPrewarmTimer = null
   tagDetailsPrewarmTimer = null
-  omnipoolAccountClaimsRefreshTimer = null
-  moneyMarketAccountValuesRefreshTimer = null
-  contractMetricsTimer = null
 }
 
 function accountsBySuffix(suffix: string): string[] {
@@ -23340,7 +13665,6 @@ function accountsByEmoji(emoji: string): string[] {
 // most-active accounts first, so this just controls how many of them the dropdown
 // surfaces. Kept modest so the dropdown stays scannable.
 const MAX_ACCOUNT_RESULTS = 15
-const MAX_CONTRACT_NAME_RESULTS = 5
 
 // Cap on referendum results (index or title match) in one search response.
 const MAX_REFERENDUM_RESULTS = 8
@@ -23380,13 +13704,12 @@ async function poolDirectoryForSearch(): Promise<import('./poolService.ts').Pool
 function poolSearchResult(p: import('./poolService.ts').PoolListEntry): SearchResult {
   return {
     type: 'pool',
-    value: p.kind === 'omnipool' ? 'omnipool' : String(p.poolId),
+    value: String(p.poolId),
     label: p.name,
     poolKind: p.kind,
     tvlUsd: p.tvlUsd,
-    // A stableswap's identity is its share token; an XYK pair shows its largest
-    // leg. The Omnipool hit deliberately carries no asset — no single icon is it.
-    asset: p.kind === 'stableswap' && p.poolId != null ? assetDescriptor(p.poolId) : p.kind === 'xyk' ? p.composition[0]?.asset : undefined,
+    // A pair shows its largest leg.
+    asset: p.composition[0]?.asset,
   }
 }
 
@@ -23446,23 +13769,14 @@ async function searchUncached(query: string): Promise<SearchResult[]> {
   let hashHit = false
   if (is64Hex) {
     const lc = query.toLowerCase()
-    // The EVM lookup runs alongside the two substrate ones: an Ethereum
-    // transaction hash is 64-hex like a block or extrinsic hash, and without it a
-    // pasted transaction hash fell through to canonicalizeAddress below, which
-    // reads any 32 bytes as an AccountId32 and offered a fabricated account page.
-    const [blockRes, extRes, evmTx] = await Promise.all([
+    const [blockRes, extRes] = await Promise.all([
       client.query({ query: `SELECT block_height FROM price_data.raw_blocks WHERE block_hash = {h:String} LIMIT 1`, query_params: { h: lc }, format: 'JSONEachRow' }),
       client.query({ query: `SELECT extrinsic_hash FROM price_data.raw_extrinsics WHERE extrinsic_hash = {h:String} LIMIT 1`, query_params: { h: lc }, format: 'JSONEachRow' }),
-      evmTransactionExtrinsic(lc),
     ])
     const blockHit = (await blockRes.json<{ block_height: number }>())[0]
     if (blockHit) { results.push({ type: 'block', value: String(blockHit.block_height) }); hashHit = true }
     const extHit = (await extRes.json<{ extrinsic_hash: string }>())[0]
     if (extHit) { results.push({ type: 'extrinsic', value: lc }); hashHit = true }
-    // Same result shape as the extrinsic-hash hit — getExtrinsic resolves either
-    // meaning of the hash, and the page canonicalizes to the extrinsic id. Only
-    // when the substrate hash missed, so the dropdown never lists one hash twice.
-    if (evmTx && !extHit) { results.push({ type: 'extrinsic', value: lc }); hashHit = true }
   }
 
   // A 64-hex value is ambiguous (could be an AccountId32 or a block/extrinsic hash);
@@ -23496,22 +13810,6 @@ async function searchUncached(query: string): Promise<SearchResult[]> {
       .sort((a, b) => a.rank - b.rank || a.t.name.localeCompare(b.t.name))
     for (const { t } of rankedTags) results.push({ type: 'tag', value: t.tagId, label: t.name, icon: t.icon, color: t.color })
 
-    // Verified contract names, from the in-memory verified map — cheap and
-    // additive (§5.5). Rendered as account hits: `value` is the contract's
-    // truncated account form (the account page canonicalizes to the H160),
-    // `label` the H160 the dropdown shortens, and the verified name rides in
-    // the identity display slot (verified:false — the ✓ stays identity-only).
-    for (const hit of searchVerifiedNames(query, allVerifiedContracts()).slice(0, MAX_CONTRACT_NAME_RESULTS)) {
-      const accountId = evmAccountIdFromAddress(hit.address)
-      if (!accountId || seenAccounts.has(accountId)) continue
-      seenAccounts.add(accountId)
-      const ic = accountIcon(accountId)
-      results.push({
-        type: 'address', value: accountId, label: hit.address,
-        emoji: ic.emoji, emojiName: ic.emojiName, emojiUrl: ic.emojiUrl,
-        identity: { display: hit.name, verified: false, email: '', web: '', twitter: '' },
-      })
-    }
   }
 
   // Combined "3-letter code + emoji name" query (either order: "pmo pig",

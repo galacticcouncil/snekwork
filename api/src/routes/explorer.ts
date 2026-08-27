@@ -2,18 +2,16 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import { getCollectiveMotions, getGovernanceOverview, getGovernanceReferenda, getReferenda, getReferendum, getTreasuryTips, parseReferendumPallet } from '../services/governanceService.ts'
 import { extrinsicEncoded } from '../services/extrinsicBytes.ts'
-import { evmTransactionReceipt } from '../services/evmReceipt.ts'
 import {
   getStats, getRecentBlocks, getBlock, getRecentExtrinsics, getExtrinsic, getExtrinsicAt,
   getExtrinsicActivity, getBlockActivity,
-  getHolders, getAddress, getAddressHistory, search, getAssets, getAssetFilterOptions, getFilterNames, getAccounts, getDcaSchedule, getDcaScheduleIdAt, getDcaExecution,
-  getRecentEvents, getEventAt, getTradeDetail, getTradeDetailByEvent, getRecentActivity, getGlobalActivityTotal, getMoneyMarket, getAssetDetail, getAssetDcas, getAssetActivity, getDailyActivity, getDailyAccounts, getListCounts, getTag, getTagMemberAccounts,
+  getHolders, getAddress, getAddressHistory, search, getAssets, getAssetFilterOptions, getFilterNames, getAccounts,
+  getRecentEvents, getEventAt, getTradeDetail, getTradeDetailByEvent, getRecentActivity, getGlobalActivityTotal, getAssetDetail, getAssetActivity, getDailyActivity, getDailyAccounts, getListCounts, getTag, getTagMemberAccounts,
   getAddressActivity, getAddressExtrinsics, getAddressEvents, getAddressTabCounts, getTagTabCounts,
   getAddressListTotal, getTagListTotal,
   getAddressValueEvents, getTagValueEvents,
   getTagActivity, getTagExtrinsics, getTagEvents,
   getAddressVotes, getTagVotes, getTagVotesByReferendum,
-  getAddressRevenueBreakdown, getTagRevenueBreakdown,
   isLocatedActivityRequest,
   normalizeAccountSort,
   type AccountSort,
@@ -23,21 +21,11 @@ import {
   type ScopedListTab,
   type ValueListFilters,
 } from '../services/explorerService.ts'
-import { getHdxDashboard } from '../services/hdxService.ts'
-import { FLOW_CURSOR_RE, REVENUE_RANGES, getRevenueDashboard, getRevenueFlow } from '../services/revenueService.ts'
-import { getHollarDashboard } from '../services/hollarService.ts'
-import { getSecurityDashboard } from '../services/securityService.ts'
-import { getWormholeBridgeDetail } from '../services/wormholeNttService.ts'
 import { countLiquiditySources } from '../services/poolService.ts'
 import { ACCOUNT_AFFINITY_BUSY_CODE, getCloseAccounts, getCloseAccountsForTag } from '../services/accountAffinityService.ts'
 
-// The wire vocabulary the explorer sends. 'stake' is the URL/product word; the
-// activity builders below still speak the row type 'staking', so it is translated
-// once here rather than in the eight places the service branches on it.
-// Exported so the notification rule registry's own copy (which must stay free
-// of this module's route/service imports) can be pinned equal to it by test.
-export const activityTypes = ['all', 'transfer', 'trade', 'dca', 'liquidity', 'mm', 'xcm', 'stake', 'vote', 'otc']
-const ACTIVITY_TYPE_ALIASES: Record<string, string> = { stake: 'staking' }
+// The wire vocabulary the explorer sends.
+export const activityTypes = ['all', 'transfer', 'trade', 'liquidity', 'xcm', 'vote']
 export const uint32Param = z.coerce.number().int().min(0).max(0xffff_ffff)
 
 // Public list endpoints never render more than 100 rows at once. A modest hard
@@ -46,9 +34,7 @@ const limitSchema = z.coerce.number().int().min(1).max(250).optional()
 // `updates` was this sort's token for one release while the column was labelled for the
 // balance-observation count it used to show. Still accepted so a link made against it
 // resolves to the column it always meant.
-const accountSortSchema = z.enum(['value', 'supplied', 'borrowed', 'health', 'identity', 'activity', 'updates', 'volume', 'liquidation', 'revenue'])
-// Exported so the viewer-fold accounts route (routes/user.ts) validates `sort` the
-// exact same way the public directory does — same precedent as offsetParam/limitParam.
+const accountSortSchema = z.enum(['value', 'identity', 'activity', 'updates', 'volume'])
 export function accountSortParam(q: Record<string, unknown>): AccountSort {
   const sort = accountSortSchema.safeParse(q.sort)
   return (sort.success ? normalizeAccountSort(sort.data) : 'value') as AccountSort
@@ -60,16 +46,15 @@ const tagParam = z.object({ tagId: z.string().min(1).max(64) })
 // it and page in Node, so their cost grows with depth and the window they need
 // grows with it too. This is the deepest offset every one of them was measured to
 // answer, with and without the page's default $10 floor — at offset 2500: trade
-// 0.3/0.8s, mm 1.5/1.8s, liquidity 1.2/4.7s, transfer 1.9/6.6s, xcm 3.3/8.1s,
-// all 10.0/9.9s. At 5000 the merged and trade feeds already refuse (their windows
+// 0.3/0.8s, liquidity 1.2/4.7s, transfer 1.9/6.6s, xcm 3.3/8.1s, all 10.0/9.9s.
+// At 5000 the merged and trade feeds already refuse (their windows
 // widen past the candidate ceiling), so pages past this one were advertised and
 // then answered 503 — 10,000 offered four times the pages the feed can serve.
 const MAX_ACTIVITY_OFFSET = 2_500
 // A single bound across every category either starves the cheap tabs or lets the
 // expensive ones time out. The deep set is the categories the feed pages in SQL
-// from one small source — vote_activity 121,092 rows, staking_activity 192,060,
-// otc_activity 4,473 — so a deep offset cannot explode no matter how far it is
-// pushed: measured at offset 190,000, vote 0.11s, staking 1.26s, otc 0.19s.
+// from one small source — vote_activity 121,092 rows — so a deep offset cannot
+// explode no matter how far it is pushed: measured at offset 190,000, 0.11s.
 //
 // `vote` merges a SECOND source into that page (the collective Council/Technical
 // Committee votes, a few thousand events all-time), which costs a deep page the
@@ -80,7 +65,7 @@ const MAX_ACTIVITY_OFFSET = 2_500
 // This is what withheld /activity?tab=vote&page=490: the vote feed is 4,844 pages of
 // 25 and 92% of them sat behind a cap that costs it 51ms to serve.
 const MAX_NARROW_ACTIVITY_OFFSET = 250_000
-const NARROW_ACTIVITY_TYPES = new Set(['vote', 'staking', 'otc'])
+const NARROW_ACTIVITY_TYPES = new Set(['vote'])
 export const maxActivityOffsetFor = (type: string) =>
   NARROW_ACTIVITY_TYPES.has(type) ? MAX_NARROW_ACTIVITY_OFFSET : MAX_ACTIVITY_OFFSET
 // A WINDOWED account/tag activity request — one carrying a min-USD floor, the single
@@ -114,7 +99,7 @@ export function dateParam(q: Record<string, unknown>, key: string): string | und
   return typeof v === 'string' && isCalendarDay(v) ? v : undefined
 }
 // The plain SQL-paged lists (blocks, extrinsics, events, accounts, holders,
-// referenda, DCA executions) page by ClickHouse LIMIT/OFFSET, whose cost is linear
+// referenda) page by ClickHouse LIMIT/OFFSET, whose cost is linear
 // in the offset: skipping N rows still reads N rows of the projection. Measured on
 // the events feed's own columns — offset 20M 2.4s, 50M 5.9s, 100M 11.0s — so the
 // bound keeps a page inside the client's 20s execution budget with room to spare.
@@ -125,10 +110,6 @@ const listOffsetSchema = z.coerce.number().int().min(0).max(MAX_LIST_OFFSET).opt
 // null = out of range. Refused rather than quietly answered with page one, which
 // is what an offset past the ceiling used to get: a stale or hand-edited page
 // number served the newest rows under the reader's page number.
-// Exported (with the parsers below it) so the user-tag aggregate routes
-// (routes/user.ts) accept and validate the same query params the system
-// tag/address routes do, through the exact same code — see that file's
-// list-tag routes for why sharing beats reimplementing.
 export function offsetParam(q: Record<string, unknown>): number | null {
   const n = listOffsetSchema.safeParse(q.offset)
   return n.success ? n.data ?? 0 : null
@@ -156,17 +137,13 @@ export function valueFilters(q: Record<string, unknown>): ValueListFilters {
   return {
     token: textParam(q, 'token', 64),
     min: numParam(q, 'min'),
-    // Always in USD — protocol revenue has no token denomination to choose, so it
-    // deliberately does not read `unit`.
-    minRevenue: numParam(q, 'minRevenue'),
     unit,
     ...(identity ? { identity } : {}),
   }
 }
 
 export function activityTypeParam(query: Record<string, unknown>): string {
-  const t = typeof query.type === 'string' && activityTypes.includes(query.type) ? query.type : 'all'
-  return ACTIVITY_TYPE_ALIASES[t] ?? t
+  return typeof query.type === 'string' && activityTypes.includes(query.type) ? query.type : 'all'
 }
 
 // A supplied filter the server cannot honour used to be dropped in silence: an
@@ -188,9 +165,6 @@ const FILTER_PARAM_RULES: { key: string; accepts: (raw: string) => boolean; expe
   // exactly what `numParam` already resolves it to. Only a value that is not a
   // number at all would silently disappear.
   { key: 'min', accepts: raw => z.coerce.number().finite().safeParse(raw).success, expected: 'a number' },
-  // Same rule as `min`, and for the same reason: a floor that is not a number at all
-  // would silently widen the request to every row.
-  { key: 'minRevenue', accepts: raw => z.coerce.number().finite().safeParse(raw).success, expected: 'a number' },
   { key: 'from', accepts: raw => isCalendarDay(raw), expected: 'YYYY-MM-DD' },
   { key: 'to', accepts: raw => isCalendarDay(raw), expected: 'YYYY-MM-DD' },
 ]
@@ -413,38 +387,6 @@ export async function explorerRoutes(fastify: FastifyInstance) {
     return getExtrinsicActivity(ext.blockHeight, ext.index)
   })
 
-  // Design routes extrinsics as height-index (#/extrinsic/12345-2).
-  fastify.get('/explorer/dca/:scheduleId', async (req, reply) => {
-    // Schedule ids start at 0 on-chain.
-    const params = z.object({ scheduleId: z.coerce.number().int().nonnegative() }).safeParse(req.params)
-    if (!params.success) return reply.status(400).send({ error: 'Invalid schedule id' })
-    const q = req.query as Record<string, unknown>
-    const offset = offsetParam(q)
-    if (offset == null) return badOffset(reply)
-    const detail = await getDcaSchedule(params.data.scheduleId, offset, limitParam(q, 25))
-    if (!detail) return reply.status(404).send({ error: 'DCA schedule not found' })
-    return detail
-  })
-
-  // A single DCA execution, addressed by its execution event (block + event
-  // index). Reached from the schedule page's per-execution rows.
-  fastify.get('/explorer/dca/exec/:height/:index', async (req, reply) => {
-    const params = z.object({ height: uint32Param, index: uint32Param }).safeParse(req.params)
-    if (!params.success) return reply.status(400).send({ error: 'Invalid execution reference' })
-    const detail = await getDcaExecution(params.data.height, params.data.index)
-    if (!detail) return reply.status(404).send({ error: 'DCA execution not found' })
-    return detail
-  })
-
-  fastify.get('/explorer/dca-at/:height/:index', async (req, reply) => {
-    const params = z.object({ height: uint32Param, index: uint32Param }).safeParse(req.params)
-    if (!params.success) return reply.status(400).send({ error: 'Invalid reference' })
-    const kind = (req.query as Record<string, unknown>).kind === 'extrinsic' ? 'extrinsic' : 'event'
-    const scheduleId = await getDcaScheduleIdAt(params.data.height, params.data.index, kind)
-    if (scheduleId == null) return reply.status(404).send({ error: 'No DCA execution there' })
-    return { scheduleId }
-  })
-
   fastify.get('/explorer/extrinsic-at/:height/:index', async (req, reply) => {
     const params = z.object({ height: uint32Param, index: uint32Param }).safeParse(req.params)
     if (!params.success) return reply.status(400).send({ error: 'Invalid extrinsic id' })
@@ -470,18 +412,6 @@ export async function explorerRoutes(fastify: FastifyInstance) {
     const ext = await getExtrinsicAt(params.data.height, params.data.index)
     if (!ext) return reply.status(404).send({ error: 'Extrinsic not found' })
     return getExtrinsicActivity(params.data.height, params.data.index)
-  })
-
-  // Gas used and the effective gas price of one EVM transaction. Not indexed (see
-  // evmReceipt.ts), so they come from the chain — one targeted lookup, cached, and
-  // only when a reader opens an EVM extrinsic. 404 rather than a guess when the
-  // node cannot answer; the extrinsic page renders completely without it.
-  fastify.get('/explorer/evm-tx/:hash/receipt', async (req, reply) => {
-    const params = z.object({ hash: z.string().regex(/^0x[0-9a-fA-F]{64}$/) }).safeParse(req.params)
-    if (!params.success) return reply.status(400).send({ error: 'Invalid transaction hash' })
-    const receipt = await evmTransactionReceipt(params.data.hash.toLowerCase())
-    if (!receipt) return reply.status(404).send({ error: 'Transaction receipt unavailable' })
-    return receipt
   })
 
   // Trade detail (route + slippage) for the swap events of one extrinsic.
@@ -550,11 +480,6 @@ export async function explorerRoutes(fastify: FastifyInstance) {
     return { ...total, maxOffset: maxActivityOffsetFor(type) }
   })
 
-  fastify.get('/explorer/money-market', async (req) => {
-    const limit = limitParam(req.query as Record<string, unknown>, 50)
-    return getMoneyMarket(limit)
-  })
-
   fastify.get('/explorer/asset/:assetId', async (req, reply) => {
     const params = z.object({ assetId: uint32Param }).safeParse(req.params)
     if (!params.success) return reply.status(400).send({ error: 'Invalid asset id' })
@@ -565,15 +490,6 @@ export async function explorerRoutes(fastify: FastifyInstance) {
       countLiquiditySources(params.data.assetId).catch(() => 0),
     ])
     return { ...detail, liquiditySourceCount }
-  })
-
-  // Ongoing DCA schedules trading one asset, split into buys (schedules
-  // acquiring it) and sells (schedules disposing of it). Chain-wide there are
-  // only a few dozen live schedules, so the list is unpaginated.
-  fastify.get('/explorer/asset/:assetId/dcas', async (req, reply) => {
-    const params = z.object({ assetId: uint32Param }).safeParse(req.params)
-    if (!params.success) return reply.status(400).send({ error: 'Invalid asset id' })
-    return getAssetDcas(params.data.assetId)
   })
 
   fastify.get('/explorer/holders/:assetId', async (req, reply) => {
@@ -655,16 +571,6 @@ export async function explorerRoutes(fastify: FastifyInstance) {
     const rows = await getTagVotes(params.data.tagId, limitParam(q, 25), offset, dateParam(q, 'from'), dateParam(q, 'to'))
     if (!rows) return reply.status(404).send({ error: 'Tag not found' })
     return rows
-  })
-
-  // The Protocol Revenue tab: where the revenue this tag's members generated
-  // came from — per stream, per asset within the stream.
-  fastify.get('/explorer/tag/:tagId/revenue-breakdown', async (req, reply) => {
-    const params = tagParam.safeParse(req.params)
-    if (!params.success) return reply.status(400).send({ error: 'Invalid tag id' })
-    const breakdown = await getTagRevenueBreakdown(params.data.tagId)
-    if (!breakdown) return reply.status(404).send({ error: 'Tag not found' })
-    return breakdown
   })
 
   // The Votes tab's grouped mode: one row per referendum the tag's members
@@ -752,16 +658,6 @@ export async function explorerRoutes(fastify: FastifyInstance) {
     return rows
   })
 
-  // The Protocol Revenue tab: where the revenue this account generated came
-  // from — per stream, per asset within the stream.
-  fastify.get('/explorer/address/:address/revenue-breakdown', async (req, reply) => {
-    const params = addressParam.safeParse(req.params)
-    if (!params.success) return reply.status(400).send({ error: 'Invalid address' })
-    const breakdown = await getAddressRevenueBreakdown(params.data.address)
-    if (!breakdown) return reply.status(404).send({ error: 'Address not recognized' })
-    return breakdown
-  })
-
   fastify.get('/explorer/address/:address/counts', async (req, reply) => {
     const params = analyzableAddressParam.safeParse(req.params)
     if (!params.success) return reply.status(400).send({ error: 'Invalid address' })
@@ -823,34 +719,6 @@ export async function explorerRoutes(fastify: FastifyInstance) {
     const rows = await getTagValueEvents(params.data.tagId, dateParam(q, 'from'), dateParam(q, 'to'))
     if (!rows) return reply.status(404).send({ error: 'Tag not found' })
     return rows
-  })
-
-  fastify.get('/explorer/hdx', async () => {
-    return getHdxDashboard()
-  })
-
-  fastify.get('/explorer/revenue', async (req, reply) => {
-    const q = z.object({ range: z.enum(REVENUE_RANGES).default('30d') }).safeParse(req.query)
-    if (!q.success) return reply.status(400).send({ error: 'Invalid range' })
-    return getRevenueDashboard(q.data.range)
-  })
-
-  fastify.get('/explorer/revenue/flow', async (req, reply) => {
-    const q = z.object({ after: z.string().regex(FLOW_CURSOR_RE).optional() }).safeParse(req.query)
-    if (!q.success) return reply.status(400).send({ error: 'Invalid cursor' })
-    return getRevenueFlow(q.data.after ?? null)
-  })
-
-  fastify.get('/explorer/hollar', async () => {
-    return getHollarDashboard()
-  })
-
-  fastify.get('/explorer/security', async () => {
-    return getSecurityDashboard()
-  })
-
-  fastify.get('/explorer/security/wormhole', async () => {
-    return getWormholeBridgeDetail()
   })
 
   fastify.get('/explorer/search', async (req) => {

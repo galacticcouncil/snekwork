@@ -61,7 +61,7 @@ describe('the shared reconstruction outlives an account-value generation', () =>
     for (const consumer of ['getAddressHistory', 'buildTagDetailForMembers']) {
       const body = fn(consumer)
       expect(body, consumer).toContain('const portfolioSeries = history.portfolioSeries.slice()')
-      expect(body, consumer).toContain('portfolioSeries[portfolioSeries.length - 1] = +(')
+      expect(body, consumer).toContain('portfolioSeries[portfolioSeries.length - 1] = +')
     }
     // The directory row pins its own authoritative Value column into the last bucket.
     expect(fn('enrichAccountSparklines')).toContain('series[SPARK_WEEKS - 1] = +Number(raw[i].usd_total ?? 0).toFixed(2)')

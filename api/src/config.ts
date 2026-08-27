@@ -1,5 +1,5 @@
-// `name` only labels the failure: the public API service reads PUBLIC_API_PORT
-// (src/public/server.ts), so a bad value must name the variable the operator set.
+// `name` only labels the failure, so a bad value names the variable the
+// operator actually set.
 export function parsePort(value: string | undefined, name = 'API_PORT'): number {
   const raw = value?.trim() || '3000'
   if (!/^\d+$/.test(raw)) throw new Error(`${name} must be an integer, received ${JSON.stringify(value)}`)

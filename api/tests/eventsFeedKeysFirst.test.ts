@@ -58,34 +58,3 @@ describe('the global events feed locates its page before reading the payload', (
     expect(occurrences(body, 'withFeedWindow(tw, limit, offset + limit,')).toBe(1)
   })
 })
-
-// A referral claim's amount is the 256-bit sum of two reward legs. That sum was stated
-// twice — once as the SQL the min-value predicate is pushed down as, once as a BigInt add
-// over a shipped payload — so the page could filter on a value its rows did not show. The
-// projection now returns the same expression the filter uses, which also stops shipping a
-// payload whose only other field is `who`.
-describe('a referral claim states its amount once', () => {
-  const claims = (() => {
-    const at = explorerService.indexOf('const referralAmountExpr')
-    expect(at).toBeGreaterThan(-1)
-    return explorerService.slice(at, explorerService.indexOf('const transferAssetExpr', at))
-  })()
-
-  it('projects the filter expression rather than re-adding the legs in TypeScript', () => {
-    // Declared once, then reached by exactly two readers: the value filter and the projection.
-    expect(occurrences(claims, 'referralAmountExpr')).toBe(3)
-    expect(claims).toContain('${referralAmountExpr} AS amount')
-    expect(claims).toContain("eventValueFilterSql('0', referralAmountExpr,")
-    expect(claims).toContain("JSONExtractString(e.args_json,'who') AS who")
-    expect(claims).toContain('amount: r.amount')
-    // No payload on the outer projection and no second sum.
-    expect(occurrences(claims, 'e.extrinsic_index, e.args_json')).toBe(0)
-    expect(occurrences(claims, 'safeJson(r.args_json)')).toBe(0)
-    expect(occurrences(claims, 'BigInt(')).toBe(0)
-  })
-
-  it('keeps the sum in 256-bit integers, never floats', () => {
-    expect(claims).toContain("toString(toUInt256OrZero(JSONExtractString(e.args_json,'referrerRewards')) + toUInt256OrZero(JSONExtractString(e.args_json,'tradeRewards')))")
-    expect(occurrences(claims, 'toFloat')).toBe(0)
-  })
-})

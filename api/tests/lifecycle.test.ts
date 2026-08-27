@@ -4,7 +4,6 @@ import { loadExplorerAssets, stopExplorerAssetsRefresh } from '../src/services/e
 import { startIdentityRefresh, stopIdentityRefresh } from '../src/services/identityService.ts'
 import {
   startAccountSuffixRefresh,
-  startEvmBindingsRefresh,
   stopExplorerBackgroundTasks,
 } from '../src/services/explorerService.ts'
 
@@ -43,12 +42,10 @@ describe('background refresh lifecycle', () => {
   it('keeps explicit refresh starters idempotent and cancellable', () => {
     startIdentityRefresh()
     startIdentityRefresh()
-    startEvmBindingsRefresh()
-    startEvmBindingsRefresh()
     startAccountSuffixRefresh()
     startAccountSuffixRefresh()
 
-    expect(vi.getTimerCount()).toBe(3)
+    expect(vi.getTimerCount()).toBe(2)
     stopIdentityRefresh()
     stopExplorerBackgroundTasks()
     expect(vi.getTimerCount()).toBe(0)

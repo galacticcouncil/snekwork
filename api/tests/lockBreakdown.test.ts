@@ -12,7 +12,6 @@ import {
   decodePreimageLegacyDeposit,
   unvestedByAccountRaw,
   voteLockTranches,
-  gigaUnstakeTranches,
   vestingTranches,
   mergeTranches,
   buildBindingTimeline,
@@ -178,20 +177,6 @@ describe('vote lock tranches', () => {
   })
 })
 
-describe('gigahdx unstake tranches', () => {
-  it('matured unstakes are releasable, pending scheduled, rest staked', () => {
-    const tranches = gigaUnstakeTranches(1000n, [
-      { expiryBlock: 90, payoutRaw: 100n },
-      { expiryBlock: 500, payoutRaw: 300n },
-    ], 100)
-    expect(tranches).toEqual([
-      { state: 'releasable', amount: 100n },
-      { state: 'scheduled', amount: 300n, untilBlock: 500 },
-      { state: 'active', amount: 600n },
-    ])
-  })
-})
-
 describe('vesting tranches', () => {
   it('splits claimable-now from the linear tail', () => {
     expect(vestingTranches(1000n, 400n, 12345)).toEqual([
@@ -233,7 +218,7 @@ describe('buildBindingTimeline (cross-lock binding schedule)', () => {
   const NOW = 1_000_000
   const flat = (source: string, onchain: bigint): TimelineSource =>
     ({ source, onchain, open: onchain, steps: [], env: () => onchain })
-  // Act-now instant exit (Hydration staking): binds nothing past the snapshot.
+  // Act-now instant exit: binds nothing past the snapshot.
   const instant = (source: string, onchain: bigint): TimelineSource =>
     ({ source, onchain, open: 0n, steps: [], env: () => 0n })
   const dated = (source: string, onchain: bigint, drops: [number, bigint, boolean?][], open = 0n): TimelineSource => ({
@@ -250,9 +235,9 @@ describe('buildBindingTimeline (cross-lock binding schedule)', () => {
     expect(timeline).toEqual([{ state: 'active', cause: 'democracy', amount: 350n }])
   })
 
-  it('instant-exit staking lands in the releasable slice, not an open floor', () => {
-    const timeline = buildBindingTimeline([instant('staking', 350n)], NOW)
-    expect(timeline).toEqual([{ state: 'releasable', cause: 'staking', amount: 350n }])
+  it('an instant-exit lock lands in the releasable slice, not an open floor', () => {
+    const timeline = buildBindingTimeline([instant('democracy', 350n)], NOW)
+    expect(timeline).toEqual([{ state: 'releasable', cause: 'democracy', amount: 350n }])
   })
 
   it('slices release in date order, attributed to the lock that was binding', () => {
@@ -281,14 +266,14 @@ describe('buildBindingTimeline (cross-lock binding schedule)', () => {
   })
 
   it('a still-cast vote fully covered by other locks is not shown at all', () => {
-    // GIGAHDX staked 700 (conditional step at 2M) covers the ongoing vote 500:
+    // A dated lock of 700 (conditional step at 2M) covers the ongoing vote 500:
     // the vote appears nowhere — the whole 700 frees at the conditional step.
     const timeline = buildBindingTimeline([
-      dated('gigahdx', 700n, [[2_000_000, 700n, true]]),
+      dated('vesting', 700n, [[2_000_000, 700n, true]]),
       softVote(500n, 500n, []),
     ], NOW)
     expect(timeline).toEqual([
-      { state: 'scheduled', cause: 'gigahdx', amount: 700n, untilMs: 2_000_000, linear: undefined, conditional: true },
+      { state: 'scheduled', cause: 'vesting', amount: 700n, untilMs: 2_000_000, linear: undefined, conditional: true },
     ])
   })
 
@@ -361,14 +346,14 @@ describe('mergeTimelines (tag aggregation)', () => {
       { state: 'scheduled', cause: 'vote', amount: '200', until: '2026-08-01 00:00:00' },
     ])
     const b = JSON.stringify([
-      { state: 'scheduled', cause: 'gigahdx', amount: '50', until: '2026-07-25 00:00:00' },
-      { state: 'active', cause: 'staking', amount: '25' },
+      { state: 'scheduled', cause: 'vesting', amount: '50', until: '2026-07-25 00:00:00' },
+      { state: 'active', cause: 'democracy', amount: '25' },
     ])
     expect(mergeTimelines([a, b], 400n)).toEqual([
       { state: 'releasable', cause: 'vote', amount: '100' },
-      { state: 'scheduled', cause: 'gigahdx', amount: '50', until: '2026-07-25 00:00:00' },
+      { state: 'scheduled', cause: 'vesting', amount: '50', until: '2026-07-25 00:00:00' },
       { state: 'scheduled', cause: 'vote', amount: '200', until: '2026-08-01 00:00:00' },
-      { state: 'active', cause: 'staking', amount: '25' },
+      { state: 'active', cause: 'democracy', amount: '25' },
       { state: 'active', cause: 'other', amount: '25' },
     ])
   })

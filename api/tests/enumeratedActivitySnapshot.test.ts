@@ -28,14 +28,15 @@ describe('the enumerated activity snapshot is one shared read', () => {
   // for `all` and `transfer` — 6.1% of activity requests — under two names.
   it('keys on the source set, so types reading the same sources share one entry', () => {
     expect(enumeratedActivityKey(accounts, 'all')).toBe(enumeratedActivityKey(accounts, 'transfer'))
-    expect(enumeratedActivityKey(accounts, 'liquidity')).toBe(enumeratedActivityKey(accounts, 'mm'))
+    expect(enumeratedActivityKey(accounts, 'liquidity')).toBe(enumeratedActivityKey(accounts, 'trade'))
 
-    // And the types whose source sets genuinely differ stay apart: the nine countable
-    // types collapse to seven entries and no further. Any future type that silently joined
+
+    // And the types whose source sets genuinely differ stay apart: the countable types
+    // collapse to four entries and no further. Any future type that silently joined
     // one of these groups would have to justify itself here.
-    const countable = ['all', 'transfer', 'trade', 'liquidity', 'mm', 'xcm', 'vote', 'staking', 'otc']
-    expect(new Set(countable.map(type => enumeratedActivityKey(accounts, type))).size).toBe(7)
-    expect(enumeratedActivityKey(accounts, 'all')).toContain(':otc+dcaFailures+rewards+staking+votes+xcm+ntt:')
+    const countable = ['all', 'transfer', 'trade', 'liquidity', 'xcm', 'vote']
+    expect(new Set(countable.map(type => enumeratedActivityKey(accounts, type))).size).toBe(4)
+    expect(enumeratedActivityKey(accounts, 'all')).toContain(':votes+xcm:')
   })
 
   // The account set is a set, not a list: two callers resolving the same related accounts
@@ -64,9 +65,9 @@ describe('the enumerated activity snapshot is one shared read', () => {
     expect(body('async function planExactActivity')).toContain('return { arms, enumerated }')
     // The page pass takes it from the plan; the located page is the only place it enters.
     expect(sites(/enumerated: plan\.enumerated/g)).toBe(1)
-    // One read per enumerated source, all six out of the plan's array — a source the page
+    // One read per enumerated source, both out of the plan's array — a source the page
     // pass read for itself instead would be counted from one set and rendered from another.
-    expect(sites(/exact\.enumerated\.(otc|dcaFailures|rewards|staking|votes|xcm)\b/g)).toBe(6)
+    expect(sites(/exact\.enumerated\.(votes|xcm)\b/g)).toBe(2)
     // Only the cache load and the background refresh may run the read itself.
     expect(sites(/enumeratedActivityRowsUncached\(/g)).toBe(3)
   })

@@ -7,15 +7,13 @@ import type { AccountRef, ActivityRow } from '../src/services/explorerService.ts
 // of it: they live in the browser, and a server-paged feed cannot honour a
 // predicate only the client can evaluate without returning ragged pages.
 const ref = (over: Partial<AccountRef>): AccountRef => ({
-  accountId: '0x' + 'ab'.repeat(32), address: '1abc', emoji: '🦊', tag: null, identity: null, profile: null, ...over,
+  accountId: '0x' + 'ab'.repeat(32), address: '1abc', emoji: '🦊', tag: null, identity: null, ...over,
 } as AccountRef)
 
 describe('accountIsNamed', () => {
   it('counts every name the explorer can already show', () => {
     expect(accountIsNamed(ref({ tag: { id: 'kraken', name: 'Kraken', color: '#fff', icon: '', memberCount: 2 } }))).toBe(true)
     expect(accountIsNamed(ref({ identity: { display: 'Alice', verified: true, email: '', web: '', twitter: '' } }))).toBe(true)
-    expect(accountIsNamed(ref({ profile: { name: 'my wallet', avatarVersion: 0 } }))).toBe(true)
-    expect(accountIsNamed(ref({ contractName: 'Router' }))).toBe(true)
   })
 
   it('is false for a bare address, and for no account at all', () => {
@@ -23,8 +21,6 @@ describe('accountIsNamed', () => {
     expect(accountIsNamed(null)).toBe(false)
     // An identity row with an empty display names nothing.
     expect(accountIsNamed(ref({ identity: { display: '', verified: false, email: '', web: '', twitter: '' } }))).toBe(false)
-    // A profile that only carries an avatar is not a name either.
-    expect(accountIsNamed(ref({ profile: { name: '', avatarVersion: 3 } }))).toBe(false)
   })
 })
 

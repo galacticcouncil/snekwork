@@ -1,14 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildComposition,
-  buildParamEvents,
   carrySeries,
   dailyGrid,
-  decodePegSource,
   foldTopSeries,
   rankPools,
-  selectCompositionSeries,
-  tradableFlags,
   type AssetLiquiditySeries,
 } from '../src/services/poolService.ts'
 import type { PriceInfo } from '../src/services/explorerService.ts'
@@ -38,14 +34,6 @@ describe('buildComposition', () => {
     expect(entries[0].usd).toBeCloseTo(2)   // the priced leg keeps its own value
     expect(entries[0].sharePct).toBeNull()
     expect(entries[1].usd).toBeNull()
-  })
-})
-
-describe('tradableFlags', () => {
-  it('decodes the omnipool bitflags', () => {
-    expect(tradableFlags(15)).toEqual(['Sell', 'Buy', 'Add', 'Remove'])
-    expect(tradableFlags(3)).toEqual(['Sell', 'Buy'])
-    expect(tradableFlags(0)).toEqual(['Frozen'])
   })
 })
 
@@ -103,113 +91,10 @@ describe('foldTopSeries', () => {
   })
 })
 
-describe('decodePegSource', () => {
-  it('decodes the Bifrost oracle source of the GDOT pool', () => {
-    const info = decodePegSource({ __kind: 'Oracle', value: ['0x626966726f73746f', { __kind: 'LastBlock' }, 5] })
-    expect(info).toMatchObject({ kind: 'oracle', source: 'Bifrost', period: 'LastBlock' })
-    expect(info?.oracleAsset?.assetId).toBe(5)
-  })
-
-  it('decodes MMOracle and Value sources', () => {
-    expect(decodePegSource({ __kind: 'MMOracle', value: '0xa317cebde7f948e132fdd177e5002a1dd2c2cb21' }))
-      .toMatchObject({ kind: 'mmOracle', address: '0xa317cebde7f948e132fdd177e5002a1dd2c2cb21' })
-    expect(decodePegSource({ __kind: 'Value', value: ['1', '1'] })).toEqual({ kind: 'value' })
-  })
-
-  it('returns null on garbage', () => {
-    expect(decodePegSource(null)).toBeNull()
-    expect(decodePegSource({})).toBeNull()
-  })
-})
-
-describe('buildParamEvents', () => {
-  it('summarizes the real GDOT parameter history newest-first', () => {
-    const events = buildParamEvents([
-      {
-        block_height: 7347000, block_timestamp: '2025-04-01 00:00:00', event_name: 'Stableswap.PoolCreated',
-        args_json: JSON.stringify({ poolId: 690, assets: [15, 1001], amplification: 22, fee: 690, peg: { source: [{ __kind: 'Oracle', value: ['0x626966726f73746f', { __kind: 'LastBlock' }, 5] }, { __kind: 'Value', value: ['1', '1'] }], maxPegUpdate: 1000000, current: [['1', '1'], ['1', '1']] } }),
-      },
-      {
-        block_height: 7422222, block_timestamp: '2025-04-06 00:00:00', event_name: 'Stableswap.AmplificationChanging',
-        args_json: JSON.stringify({ poolId: 690, currentAmplification: 22, finalAmplification: 100, startBlock: 7422222, endBlock: 7441722 }),
-      },
-      {
-        block_height: 7500000, block_timestamp: '2025-04-11 00:00:00', event_name: 'Stableswap.PoolMaxPegUpdateUpdated',
-        args_json: JSON.stringify({ poolId: 690, maxPegUpdate: 120 }),
-      },
-    ])
-    expect(events.map(e => e.kind)).toEqual(['max-peg-update', 'amplification', 'created'])
-    expect(events[1].summary).toContain('22 → 100')
-    expect(events[2].summary).toContain('with price pegs')
-    expect(events[0].summary).toContain('per block')
-  })
-
-  it('summarizes fee updates as percentages', () => {
-    const [e] = buildParamEvents([
-      { block_height: 1, block_timestamp: '2025-01-01 00:00:00', event_name: 'Stableswap.FeeUpdated', args_json: '{"poolId":102,"fee":200}' },
-    ])
-    expect(e.summary).toBe('Fee set to 0.02%')
-  })
-})
-
 // Composition bands must survive a full rotation of the pool: an asset that
 // dominated years ago but has left (DOT) and a young asset that is large today
 // both get their own band; ranking by the endpoint would erase the past era,
 // ranking by peak USD would erase the present one under a shrunken TVL.
-describe('selectCompositionSeries — peak-share band selection', () => {
-  it('keeps a delisted asset that once dominated AND a small-peak current leader', () => {
-    const usd = new Map<number, (number | null)[]>([
-      // dominated the first half at a 10x larger pool, gone since
-      [5, [900, 900, null, null]],
-      // steady old backdrop
-      [0, [100, 100, 10, 10]],
-      // young leader: small in absolute terms, most of the pool today
-      [222, [null, null, 60, 60]],
-      // never material anywhere
-      [99, [5, 5, 2, 2]],
-    ])
-    const { ids, restIds } = selectCompositionSeries(usd, 4, 3)
-    expect(new Set(ids)).toEqual(new Set([5, 0, 222]))
-    expect(restIds).toEqual([99])
-  })
-
-  it('orders selected bands by total contribution so long-lived assets stack at the bottom', () => {
-    const usd = new Map<number, (number | null)[]>([
-      [222, [null, 60, 60]],   // peak share 60/72 — highest, but small integral
-      [0, [100, 10, 10]],      // big integral
-      [5, [50, 2, 2]],
-    ])
-    const { ids } = selectCompositionSeries(usd, 3, 3)
-    expect(ids).toEqual([0, 222, 5])
-  })
-
-  it('breaks peak-share ties deterministically by asset id', () => {
-    const usd = new Map<number, (number | null)[]>([[7, [50]], [3, [50]]])
-    const { ids } = selectCompositionSeries(usd, 1, 1)
-    expect(ids).toEqual([3])
-  })
-})
-
-describe('selectCompositionSeries — pinned assets', () => {
-  it('always keeps a pinned asset that would otherwise fold into Other', () => {
-    const usd = new Map<number, (number | null)[]>([
-      [5, [900, 900]],
-      [7, [500, 500]],
-      [0, [100, 100]],   // steady but never a peak leader
-    ])
-    const { ids, restIds } = selectCompositionSeries(usd, 2, 2, [0])
-    expect(ids).toContain(0)
-    expect(ids).toContain(5)
-    expect(restIds).toEqual([7])
-  })
-
-  it('ignores a pin that has no series', () => {
-    const usd = new Map<number, (number | null)[]>([[5, [10]]])
-    const { ids } = selectCompositionSeries(usd, 1, 1, [0])
-    expect(ids).toEqual([5])
-  })
-})
-
 // The /liquidity index ranks every venue by what it holds. Two rules carry it,
 // and both matter more than they look: 278 of the chain's 307 pools cannot be
 // priced at all (XYK pairs of tokens nothing trades), so dropping the unpriced

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   NOMINAL_BLOCKS_PER_HOUR, NOMINAL_PARA_BLOCK_MS, NOMINAL_RELAY_BLOCK_MS, RUNTIME_SLOT_MS_LADDER,
   avgBlockMsSql, blocksPerHour, clampBlockMs, dailyBlockCountSql, dailyBlockMs,
-  decideParaBlockTime, measuredParaBlockMs, nominalBlockMsMismatch, resolveNominalBlockMs, type ResolvedBlockTime,
+  decideParaBlockTime, measuredParaBlockMs, nominalBlockMsMismatch, resolveNominalBlockMs,
 } from '../src/services/blockTime.ts'
 
 vi.mock('../src/services/runtimeConstants.ts', async importOriginal => ({
@@ -10,8 +10,6 @@ vi.mock('../src/services/runtimeConstants.ts', async importOriginal => ({
   runtimeParaBlockMs: vi.fn(() => 2_000),
 }))
 import { paraBlockMsFromConstants } from '../src/services/runtimeConstants.ts'
-import { fusePeriodPinWarning, parseFusePeriodBlocks, shouldLogFusePinWarning } from '../src/services/securityService.ts'
-import { gigaUnbondingBlocks, parseGigaUnbondingBlocks } from '../src/services/lockBreakdownService.ts'
 
 // Hydration's block time is ~6s today and 2s is planned. Everything derived
 // from it either measures the chain or is pinned with a documented migration
@@ -167,128 +165,6 @@ describe('relay block time', () => {
 })
 
 // ── the deposit fuse's period pin ───────────────────────────────────────────
-// pallet_circuit_breaker's `Period = DAYS` is derived from MILLISECS_PER_BLOCK
-// and is NOT a metadata constant (verified against the live runtime: the pallet
-// publishes only its three default limit rationals), so it is pinned in code
-// and re-pinned by hand at the migration. The tripwire is what makes a stale
-// pin loud instead of silently flipping live fuses to `expired`.
-describe('parseFusePeriodBlocks', () => {
-  it('defaults to one day of 6s blocks', () => {
-    expect(parseFusePeriodBlocks(undefined)).toBe(14_400)
-    expect(parseFusePeriodBlocks('')).toBe(14_400)
-    expect(parseFusePeriodBlocks('   ')).toBe(14_400)
-  })
-
-  it('takes the migration-day override', () => {
-    expect(parseFusePeriodBlocks('43200')).toBe(43_200)
-    expect(parseFusePeriodBlocks(' 43200 ')).toBe(43_200)
-  })
-
-  it('keeps the default rather than adopting a nonsense override', () => {
-    for (const bad of ['0', '-1', 'DAYS', '43_200', '1.5']) {
-      expect(parseFusePeriodBlocks(bad)).toBe(14_400)
-    }
-  })
-})
-
-const resolved = (nominalMs: number, source: 'metadata' | 'measured' | 'held', measuredMs: number | null): ResolvedBlockTime =>
-  ({ nominalMs, source, measuredMs })
-
-describe('fusePeriodPinWarning', () => {
-  it('is silent while the pin matches the runtime', () => {
-    // Today: pin 14 400, chain measured at 4.8-5.8s/block against a 6s slot.
-    for (const measured of [4_806, 4_970, 5_588, 5_810, 6_000]) {
-      expect(fusePeriodPinWarning(14_400, resolved(6_000, 'measured', measured))).toBeNull()
-    }
-    // And silent on the authoritative source, which carries no measurement.
-    expect(fusePeriodPinWarning(14_400, resolved(6_000, 'metadata', null))).toBeNull()
-  })
-
-  it('trips loudly when the 2s runtime redefines DAYS', () => {
-    const warning = fusePeriodPinWarning(14_400, resolved(2_000, 'metadata', 1_980))
-    expect(warning).toContain('43200')
-    expect(warning).toContain('SECURITY_FUSE_PERIOD_BLOCKS')
-    expect(warning).toContain('STALE')
-    expect(warning).toContain('runtime metadata')
-  })
-
-  it('goes silent again once the pin is moved', () => {
-    expect(fusePeriodPinWarning(43_200, resolved(2_000, 'metadata', null))).toBeNull()
-    expect(fusePeriodPinWarning(43_200, resolved(2_000, 'measured', 2_100))).toBeNull()
-  })
-
-  it('trips on a pin that was moved too early', () => {
-    expect(fusePeriodPinWarning(43_200, resolved(6_000, 'measured', 5_588))).toContain('14400')
-  })
-
-  // The whole point of the null-vs-number distinction: "I checked and it
-  // matches" and "I could not check" must not read the same in a log.
-  it('says UNVERIFIED rather than nothing when the chain could not be consulted', () => {
-    const warning = fusePeriodPinWarning(14_400, resolved(6_000, 'held', null))
-    expect(warning).toContain('UNVERIFIED')
-    expect(warning).not.toContain('STALE')
-    // ...and it does not claim the pin is wrong, because it does not know.
-    expect(warning).toContain('could not be checked')
-  })
-
-  it('surfaces a stall that held the resolution, even though the pin matches', () => {
-    const warning = fusePeriodPinWarning(14_400, resolved(6_000, 'held', 10_454))
-    expect(warning).toContain('still matches')
-    expect(warning).toContain('10454ms/block')
-  })
-})
-
-// The check runs on every 60s security refresh, but the condition it reports is
-// a standing one, so the log is rate limited.
-describe('shouldLogFusePinWarning', () => {
-  it('always logs the first occurrence', () => {
-    expect(shouldLogFusePinWarning(1_000_000, 0)).toBe(true)
-  })
-
-  it('stays quiet for an hour and then repeats', () => {
-    const at = 1_000_000_000
-    expect(shouldLogFusePinWarning(at + 60_000, at)).toBe(false)
-    expect(shouldLogFusePinWarning(at + 59 * 60_000, at)).toBe(false)
-    expect(shouldLogFusePinWarning(at + 3_600_000, at)).toBe(true)
-  })
-})
-
-describe('parseGigaUnbondingBlocks', () => {
-  it('reports "not set" rather than a value, so the chain read can win', () => {
-    expect(parseGigaUnbondingBlocks(undefined)).toBeNull()
-    expect(parseGigaUnbondingBlocks('')).toBeNull()
-    expect(parseGigaUnbondingBlocks('  ')).toBeNull()
-  })
-
-  it('takes the migration-day override', () => {
-    // 28 days of 2s blocks, if the runtime rescales gigaHdx.cooldownPeriod.
-    expect(parseGigaUnbondingBlocks('1209600')).toBe(1_209_600)
-  })
-
-  it('ignores a nonsense override rather than adopting it', () => {
-    for (const bad of ['0', '-5', 'twentyeight', '1.5']) expect(parseGigaUnbondingBlocks(bad)).toBeNull()
-  })
-})
-
-describe('gigaUnbondingBlocks', () => {
-  // No node connection in a unit test, so runtimeConstants reports null and the
-  // resolver must land on the documented pin rather than throwing or reporting 0.
-  it('falls back to the pinned 28-day cooldown with no chain and no override', () => {
-    expect(gigaUnbondingBlocks()).toBe(403_200)
-  })
-
-  it('prefers an explicit operator override over everything', () => {
-    const previous = process.env.GIGA_UNBONDING_BLOCKS
-    process.env.GIGA_UNBONDING_BLOCKS = '1209600'
-    try {
-      expect(gigaUnbondingBlocks()).toBe(1_209_600)
-    } finally {
-      if (previous == null) delete process.env.GIGA_UNBONDING_BLOCKS
-      else process.env.GIGA_UNBONDING_BLOCKS = previous
-    }
-  })
-})
-
 // ── the wall-clock-anchored sample and the refusal to move ──────────────────
 // A 100-block window can sit entirely inside one stall; a day cannot. Measured
 // over 600k blocks, aligned 100-block windows ranged 4454-10454ms while the

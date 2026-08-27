@@ -124,8 +124,8 @@ describe('the executed-send arm is wired into every feed surface', () => {
     // through `allSources`, so membership in classifiedSourceKeys covers it, and the
     // account/exact-count paths flatten a `xcmLegs` array). An arm missing from the named
     // list is an arm whose exhaustion never raises "query too broad".
-    expect(occurrences('[xcm, xcmIn, xcmOutRemote, xcmExecuted, nttOut, nttIn]')).toBe(1)
-    expect(occurrences('...xcm, ...xcmIn, ...xcmOutRemote, ...xcmExecuted, ...nttOut, ...nttIn')).toBe(1)
+    expect(occurrences('[xcm, xcmIn, xcmOutRemote, xcmExecuted]')).toBe(1)
+    expect(occurrences('...xcm, ...xcmIn, ...xcmOutRemote, ...xcmExecuted')).toBe(1)
   })
 })
 

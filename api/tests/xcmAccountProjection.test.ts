@@ -59,13 +59,13 @@ describe('the account-scoped XCM readers use the account-first projection', () =
   })
 
   it('routes the account-scoped reads to the account-first table, and only those', () => {
-    // One definition + six call sites: the inbound candidate arm, the remote-outbound
-    // candidate arm, the remote-outbound withdrawal decode, the NTT arrival candidate
-    // arm, and both halves of the executed-send arm (its candidate walk and its
-    // withdrawal decode — that arm's candidate IS a Currencies.Withdrawn row, so it is
-    // account-first for exactly the reason the others are).
-    expect(occurrences(explorerService, 'xcmEventActivityByAccountTable(')).toBe(7)
-    for (const site of ['getRecentXcmIn', 'getRecentXcmOutRemote', 'xcmOutRemoteRowsForBlocks', 'getRecentNttIn', 'getRecentXcmExecuted', 'xcmExecutedRowsForBlocks']) {
+    // One definition + five call sites: the inbound candidate arm, the remote-outbound
+    // candidate arm, the remote-outbound withdrawal decode, and both halves of the
+    // executed-send arm (its candidate walk and its withdrawal decode — that arm's
+    // candidate IS a Currencies.Withdrawn row, so it is account-first for exactly the
+    // reason the others are).
+    expect(occurrences(explorerService, 'xcmEventActivityByAccountTable(')).toBe(6)
+    for (const site of ['getRecentXcmIn', 'getRecentXcmOutRemote', 'xcmOutRemoteRowsForBlocks', 'getRecentXcmExecuted', 'xcmExecutedRowsForBlocks']) {
       expect(functionBody(site), site).toContain('${xcmEventActivityByAccountTable()}')
     }
     // What stays on the parent: the global candidate walks, the outbound reads, the
@@ -81,7 +81,7 @@ describe('the account-scoped XCM readers use the account-first projection', () =
     // Currencies.Withdrawn however few blocks it asked about — 2.00M rows for 46.
     // raw_events is keyed by block_height and answers the same rows from the
     // claimed blocks for 81.7k, with the MV's own extraction inlined.
-    expect(occurrences(explorerService, 'xcmEventActivityTable(')).toBe(14)
+    expect(occurrences(explorerService, 'xcmEventActivityTable(')).toBe(13)
     expect(functionBody('xcmExecutedRowsForBlocks')).not.toContain('${xcmEventActivityTable()}')
     expect(functionBody('xcmInRowsForBlocks')).not.toContain('xcmEventActivityByAccountTable')
   })
