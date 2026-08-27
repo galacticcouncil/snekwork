@@ -1,0 +1,35 @@
+# Reference copy of the host override deployed on tarn.
+# The live file is /srv/snekwork/docker-compose.override.yml and is gitignored
+# (see README.md § Host-specific Compose overrides). This copy is tracked so the
+# deployment is reproducible; keep the two in sync by hand.
+#  - ClickHouse data is a bind on / (525G free), NOT a named volume:
+#    docker's data-root is /mnt/disk3/docker and disk3 sits at 93%.
+#  - every port is loopback-only; public access goes through traefik later.
+services:
+  clickhouse:
+    volumes: !override
+      - /srv/snekwork-data/clickhouse:/var/lib/clickhouse
+
+  api:
+    ports: !override
+      - "127.0.0.1:3000:3000"
+
+  explorer-ui:
+    ports: !override
+      - "127.0.0.1:5174:80"
+    # Also joined to tarn's attachable `gateway` overlay so the `snekwork_web`
+    # swarm service — which traefik CAN discover, since the docker provider runs
+    # with swarmMode=true and ignores standalone containers — resolves this
+    # container by name over the overlay's embedded DNS.
+    networks:
+      - neckwork
+      - gateway
+
+  ingestion-supervisor:
+    volumes:
+      - ./docker-compose.override.yml:/etc/snekwork/docker-compose.override.yml:ro
+
+networks:
+  gateway:
+    external: true
+    name: gateway

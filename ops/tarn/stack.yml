@@ -1,0 +1,57 @@
+# snekwork public ingress on tarn (Docker Swarm).
+#
+# Deploy:
+#   docker config create snekwork_web_nginx_v1 ops/tarn/nginx.conf
+#   docker stack deploy -c ops/tarn/stack.yml snekwork
+#
+# The application itself is NOT a swarm stack — see ops/tarn/README.md. This
+# stack is only the traefik-discoverable front door for it.
+#
+# Configs are immutable in Swarm: to change nginx.conf, create
+# snekwork_web_nginx_v2, bump the reference below, and redeploy.
+version: "3.8"
+
+services:
+  web:
+    image: nginx:alpine
+    networks:
+      - gateway
+    configs:
+      - source: snekwork_web_nginx_v1
+        target: /etc/nginx/conf.d/default.conf
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      update_config:
+        order: start-first
+      resources:
+        limits:
+          memory: 128M
+      labels:
+        # traefik reads labels from the SERVICE (deploy.labels), not the
+        # container, when the docker provider is in swarm mode.
+        traefik.enable: "true"
+        traefik.docker.network: "gateway"
+        traefik.http.routers.snekwork.rule: "Host(`snekwork.tarn.hydration.cloud`)"
+        traefik.http.routers.snekwork.entrypoints: "websecure"
+        traefik.http.routers.snekwork.tls: "true"
+        traefik.http.routers.snekwork.tls.certresolver: "myresolver"
+        traefik.http.services.snekwork.loadbalancer.server.port: "80"
+
+configs:
+  snekwork_web_nginx_v1:
+    external: true
+
+networks:
+  # tarn's shared traefik overlay. Attachable, which is what lets the Compose
+  # explorer-ui container join it too.
+  gateway:
+    external: true
+    name: gateway
