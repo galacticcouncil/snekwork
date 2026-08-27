@@ -132,49 +132,9 @@ export function isXykShareToken(assetId: number): boolean {
   return xykShareTokenIds.has(assetId)
 }
 
-// Assets whose economic price should follow ANOTHER asset's — a receipt or wrapper
-// token with no feed of its own. Basilisk has none: its only derived asset is the
-// XYK share token, and an LP share is a claim on TWO reserves, so no single asset's
-// price stands in for it (LP value comes from pool NAV, in poolService). The table
-// is the mechanism, empty; every path below is a documented no-op while it is, and a
-// future wrapper joins here rather than at each call site.
-//
-// A folded asset also DISPLAYS as the asset it stands for, so its holders and
-// balances merge into that asset's.
-export const SHARE_TOKEN_UNDERLYING_ID: Record<number, number> = {}
-// Every asset that should be priced via another asset.
-export const PRICE_ALIAS_ID: Record<number, number> = { ...SHARE_TOKEN_UNDERLYING_ID }
-
-// The asset id whose price/value should be used for `assetId`: itself, unless it
-// is a folded asset, in which case the asset it is priced through.
-export function priceAssetId(assetId: number): number {
-  // Aliases can chain, so resolve transitively with a small bound so a
-  // (mis)configured cycle can't loop forever.
-  let id = assetId
-  for (let hop = 0; hop < 4; hop++) {
-    const next = PRICE_ALIAS_ID[id]
-    if (next == null || next === id) return id
-    id = next
-  }
-  return id
-}
-
-// The asset id under which `assetId` should be DISPLAYED in per-account holdings: a
-// held receipt token would be shown as the asset it stands for. Aggregate
-// holder/supply views may fold these only when the hidden id is removed from
-// presentation, never added alongside it; otherwise the asset would be
-// double-counted. Identity here while SHARE_TOKEN_UNDERLYING_ID is empty.
-export function displayAssetId(assetId: number): number {
-  return SHARE_TOKEN_UNDERLYING_ID[assetId] ?? assetId
-}
-
-// Reverse of SHARE_TOKEN_UNDERLYING_ID: main asset id → the ids that display as it.
-// A list, since nothing stops two folded assets landing on one main asset. Decimals
-// are NOT shared across a folded pair, so callers must read each id's own descriptor.
-export const UNDERLYING_TO_SHARE_IDS: Record<number, number[]> = (() => {
-  const out: Record<number, number[]> = {}
-  for (const [share, underlying] of Object.entries(SHARE_TOKEN_UNDERLYING_ID)) {
-    (out[underlying] ??= []).push(Number(share))
-  }
-  return out
-})()
+// NOTE: there is deliberately no price/display alias table here. Basilisk has no
+// receipt or wrapper token that borrows another asset's feed — its only derived
+// asset is the XYK share token, and an LP share is a claim on TWO reserves, so no
+// single asset's price stands in for it (LP value comes from pool NAV, in
+// poolService). Every asset therefore prices and displays as itself, and callers
+// use the asset id directly.

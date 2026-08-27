@@ -273,6 +273,7 @@ describe('the share-asset list', () => {
 
     expect(body).toContain('allExplorerAssets()')
     expect(body).toContain('isShareAssetId')
-    expect(body).toContain('SHARE_TOKEN_UNDERLYING_ID')
+    // No baked list beside the registry-derived one.
+    expect(body).not.toMatch(/\[\s*\d+\s*,/)
   })
 })

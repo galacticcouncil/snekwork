@@ -4,7 +4,7 @@ import {
   accountRef, ensurePrices, hasExplorerClient, initExplorerService,
   type AccountRef, type AssetRef, type PriceInfo,
 } from './explorerService.ts'
-import { assetDescriptor, priceAssetId } from './explorerAssets.ts'
+import { assetDescriptor } from './explorerAssets.ts'
 
 // Liquidity-pool read models: the asset Liquidity tab and the XYK pool detail
 // pages. Current state comes from the latest raw_block_snapshots row (one cached
@@ -39,10 +39,7 @@ const XYK_FEE_PERMILL = 3000
 const asset = (id: number): AssetRef => assetDescriptor(id)
 
 function priceOf(prices: Map<number, PriceInfo>, assetId: number): number | null {
-  const direct = prices.get(assetId)?.price
-  if (direct != null) return direct
-  const aliased = prices.get(priceAssetId(assetId))?.price
-  return aliased ?? null
+  return prices.get(assetId)?.price ?? null
 }
 
 function usdOf(prices: Map<number, PriceInfo>, assetId: number, raw: bigint): number | null {
@@ -270,26 +267,20 @@ function lastClosedDay(): string {
 async function dailyCloses(assetIds: number[]): Promise<Map<number, Map<string, number>>> {
   const out = new Map<number, Map<string, number>>()
   if (!assetIds.length) return out
-  const aliasByPrice = new Map<number, number[]>()
-  for (const id of assetIds) {
-    const pid = priceAssetId(id)
-    aliasByPrice.set(pid, [...(aliasByPrice.get(pid) ?? []), id])
-  }
+  const wanted = [...new Set(assetIds)]
   const res = await client.query({
     query: `SELECT asset_id, toString(toDate(interval_start)) AS d, toFloat64(argMaxMerge(close_state)) AS close
             FROM price_data.ohlc_1d
             WHERE asset_id IN {ids:Array(UInt32)}
             GROUP BY asset_id, interval_start`,
-    query_params: { ids: [...aliasByPrice.keys()] },
+    query_params: { ids: wanted },
     format: 'JSONEachRow',
   })
   for (const r of await res.json<{ asset_id: number; d: string; close: number }>()) {
     if (!(r.close > 0)) continue
-    for (const id of aliasByPrice.get(r.asset_id) ?? []) {
-      let m = out.get(id)
-      if (!m) { m = new Map(); out.set(id, m) }
-      m.set(r.d, r.close)
-    }
+    let m = out.get(r.asset_id)
+    if (!m) { m = new Map(); out.set(r.asset_id, m) }
+    m.set(r.d, r.close)
   }
   return out
 }

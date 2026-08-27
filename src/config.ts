@@ -102,9 +102,12 @@ export const config: Config = {
   // reproducible. See KsmReferenceIndex.lookup for the full rule.
   KSM_REFERENCE_LIVE_WINDOW_HOURS: integerFromEnvironment('KSM_REFERENCE_LIVE_WINDOW_HOURS', 48, { min: 1 }),
   // Live poll cadence. The reference moves on market time, not block time, so
-  // this is wall-clock; two minutes keeps the head's USD price current at ~720
-  // requests/day against a public API with no key.
-  KSM_REFERENCE_POLL_MS: integerFromEnvironment('KSM_REFERENCE_POLL_MS', 120_000, { min: 15_000 }),
+  // this is wall-clock. Five minutes (~288 requests/day) is what CoinGecko's
+  // keyless free tier actually tolerates: at the two-minute cadence this used to
+  // default to, observed polls were throttled (HTTP 429), and a throttled poll
+  // leaves the head's USD price stale for the whole interval anyway. Lower it
+  // only against a keyed endpoint via COINGECKO_API_URL.
+  KSM_REFERENCE_POLL_MS: integerFromEnvironment('KSM_REFERENCE_POLL_MS', 300_000, { min: 15_000 }),
   KSM_REFERENCE_COIN_ID: stringFromEnvironment('KSM_REFERENCE_COIN_ID', 'kusama'),
   KSM_REFERENCE_SYMBOL: stringFromEnvironment('KSM_REFERENCE_SYMBOL', 'KSMUSDT'),
   COINGECKO_API_URL: stringFromEnvironment('COINGECKO_API_URL', 'https://api.coingecko.com/api/v3'),

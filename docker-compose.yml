@@ -72,6 +72,21 @@ services:
       - SNAPSHOT_INTERVAL_MINUTES=${SNAPSHOT_INTERVAL_MINUTES:-}
       - SNAPSHOT_INTERVAL=${SNAPSHOT_INTERVAL:-}
       - BATCH_SIZE=${INDEXER_BATCH_SIZE:-10000}
+      # KSM/USD reference. This service is the ONLY live price pipeline: an
+      # indexer run with no --to-block starts KsmReferenceService in live mode
+      # (src/indexer.ts), and the supervisor's main-live worker is this same
+      # service image started through `docker compose run indexer`, so it
+      # inherits every variable below. Empty means "use the code default".
+      #
+      # The reference table itself is populated once by
+      # `npm run backfill:ksm-reference` — until that has run, nothing has a USD
+      # value. See the bring-up section in README.md.
+      - KSM_REFERENCE_POLL_MS=${KSM_REFERENCE_POLL_MS:-}
+      - KSM_REFERENCE_LIVE_WINDOW_HOURS=${KSM_REFERENCE_LIVE_WINDOW_HOURS:-}
+      - KSM_REFERENCE_COIN_ID=${KSM_REFERENCE_COIN_ID:-}
+      - KSM_REFERENCE_SYMBOL=${KSM_REFERENCE_SYMBOL:-}
+      - COINGECKO_API_URL=${COINGECKO_API_URL:-}
+      - BINANCE_API_URL=${BINANCE_API_URL:-}
     networks:
       - neckwork
 

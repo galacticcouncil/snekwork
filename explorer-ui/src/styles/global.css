@@ -2059,7 +2059,7 @@ a.stat-card-link:focus-visible { outline: 2px solid var(--sky-deep); outline-off
 .vb-dot.vb-nay { background: var(--red); }
 .vb-dot.vb-split { background: var(--accent); }
 .badge.vote-split { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
-.badge.badge-quiet { background: var(--surface-2); color: var(--text-low); margin-left: 6px; }
+.badge.badge-quiet { background: var(--panel); color: var(--text-low); margin-left: 6px; }
 tr.row-muted td { opacity: .55; }
 .empty-note { padding: 14px; text-align: center; color: var(--text-low); font-size: 12px; }
 
@@ -2102,7 +2102,7 @@ tr.row-muted td { opacity: .55; }
 .pc-hint { margin-left: 8px; font-size: 11px; color: var(--text-low); }
 .pc-chevron { margin-left: auto; padding-left: 10px; color: var(--text-low); font-size: 14px; line-height: 1; transition: transform 150ms var(--ease-standard); }
 .pc-fold[open] > summary .pc-chevron { transform: rotate(180deg); }
-.pc-toggle, .pc-more { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-medium); font-family: 'GeistMono'; font-size: 10.5px; padding: 3px 8px; border-radius: 6px; cursor: pointer; }
+.pc-toggle, .pc-more { background: var(--panel); border: 1px solid var(--border); color: var(--text-medium); font-family: 'GeistMono'; font-size: 10.5px; padding: 3px 8px; border-radius: 6px; cursor: pointer; }
 .pc-toggle:hover, .pc-more:hover { color: var(--text-high); border-color: var(--text-low); }
 .pc-toggle { margin-left: auto; }
 .pc-more { margin-top: 8px; color: var(--sky); }
@@ -2111,7 +2111,7 @@ tr.row-muted td { opacity: .55; }
 .pc-unavailable { color: var(--text-medium); font-size: 12px; }
 .pc-error { color: var(--red); font-size: 11px; margin-top: 4px; }
 .pc-copy { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
-.copy-text-btn { display: inline-flex; align-items: center; gap: 5px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-medium); font-family: 'GeistMono'; font-size: 10.5px; padding: 3px 8px; border-radius: 6px; cursor: pointer; }
+.copy-text-btn { display: inline-flex; align-items: center; gap: 5px; background: var(--panel); border: 1px solid var(--border); color: var(--text-medium); font-family: 'GeistMono'; font-size: 10.5px; padding: 3px 8px; border-radius: 6px; cursor: pointer; }
 .copy-text-btn:hover { color: var(--text-high); border-color: var(--text-low); }
 .copy-text-btn.done { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, transparent); }
 .copy-text-btn svg { width: 12px; height: 12px; }
@@ -2140,7 +2140,7 @@ tr.row-muted td { opacity: .55; }
 .badge.gov-status.almost { background: color-mix(in srgb, var(--green) 11%, transparent); color: color-mix(in srgb, var(--green) 72%, var(--text-medium)); }
 .badge.gov-status.bad { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
 .badge.gov-status.neutral { background: color-mix(in srgb, var(--sky-deep) 13%, transparent); color: var(--sky-deep); }
-.badge.gov-status.quiet { background: var(--surface-2); color: var(--text-medium); }
+.badge.gov-status.quiet { background: var(--panel); color: var(--text-medium); }
 
 .gov-era-note { font-size: 12.5px; line-height: 1.5; color: var(--text-medium); max-width: 86ch; margin: 2px 0 14px; }
 .gov-filters { margin-bottom: 12px; }

@@ -30,46 +30,27 @@ const assetCache = new Map<number, Asset>()
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let loadInflight: Promise<void> | null = null
 
+// The asset directory is the on-chain registry, whole. It is metadata — symbol,
+// name, decimals, peg class, XCM origin — keyed by asset id, and every id that can
+// appear in a balance, transfer or trade has to resolve through it.
+//
+// It is deliberately NOT filtered by pricing or by trading activity. Snekwork
+// publishes USD prices for exactly two assets (BSX and KSM — see REMOVED.md), so a
+// directory sourced from the priced/traded set would collapse to those two and
+// every other asset would lose its symbol and decimals. Price lives in the price
+// map, not here; an unpriced asset is a registry row like any other.
 async function loadAssetsUncached(client: ClickHouseClient): Promise<void> {
   const result = await client.query({
     query: `
       SELECT asset_id, symbol, name, decimals, parachain_id, origin_ecosystem, origin_chain_id, origin_asset_id
       FROM price_data.assets FINAL
-      WHERE asset_id IN (
-        SELECT DISTINCT asset_id FROM price_data.ohlc_1h
-        WHERE interval_start >= (SELECT max(interval_start) FROM price_data.ohlc_1h) - INTERVAL 30 DAY
-      )
-      AND asset_id NOT IN (
-        SELECT asset_id FROM (
-          SELECT asset_id,
-            argMax(hops, block_height) AS latest_hops,
-            sum(native_volume_buy + native_volume_sell) AS total_volume
-          FROM price_data.prices
-          WHERE block_height >= (
-            SELECT min(block_height) FROM price_data.blocks
-            WHERE block_timestamp >= now() - INTERVAL 30 DAY
-          )
-          GROUP BY asset_id
-        ) WHERE latest_hops > 0 AND total_volume = 0
-      )
     `,
     format: 'JSONEachRow',
   })
   const rows = await result.json<AssetRow>()
-  // Build symbol set to detect aTokens (aX → X pattern)
-  const allSymbols = new Set(rows.map(r => r.symbol))
-  function isAToken(symbol: string): boolean {
-    if (symbol.length <= 1 || symbol[0] !== 'a') return false
-    return allSymbols.has(symbol.slice(1))
-  }
 
   assetCache.clear()
   for (const row of rows) {
-    // Skip unnamed assets, LP tokens, and aTokens
-    if (row.symbol.startsWith('Asset')) continue
-    if (row.symbol.includes('-Pool')) continue
-    if (isAToken(row.symbol)) continue
-
     assetCache.set(row.asset_id, {
       assetId: row.asset_id,
       symbol: row.symbol,

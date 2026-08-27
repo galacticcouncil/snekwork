@@ -3,13 +3,11 @@ import {
   eventValueFilterSql,
   exactHistoricalValuePredicateSql,
   exactValuePredicateSql,
-  historicalPriceAssetId,
   historicalVolumeSql,
   minimumRawAmountForValue,
   activityRowMatchesFilters,
   voteDetails,
 } from '../src/services/explorerService.ts'
-import { PRICE_ALIAS_ID, SHARE_TOKEN_UNDERLYING_ID, priceAssetId } from '../src/services/explorerAssets.ts'
 
 describe('value-aware account activity precision', () => {
   it('sums split vote balances without JavaScript number coercion', () => {
@@ -150,40 +148,35 @@ describe('value-aware account activity precision', () => {
   })
 })
 
-// An asset with no price feed of its own values through the asset it is priced
-// through, on BOTH the current and the historical path. Basilisk has no such asset —
-// its only derived token is the XYK share, and an LP share is a claim on two reserves
-// that no single feed stands for — so the alias table is empty and every assertion
-// below is about the mechanism holding at zero entries. That is the state worth
-// pinning: an alias resolved one way in TypeScript and another in the pushed-down SQL
-// filters pages on a value the rows never show, and an empty table hides the
-// disagreement until the first entry is added.
-describe('price aliasing agrees across the historical and current paths', () => {
-  it('resolves every alias transitively, exactly as the current-price path does', () => {
-    for (const aliasedId of Object.keys(PRICE_ALIAS_ID).map(Number)) {
-      expect(historicalPriceAssetId(aliasedId)).toBe(priceAssetId(aliasedId))
-    }
-  })
-
-  it('leaves an unaliased asset as itself', () => {
-    expect(SHARE_TOKEN_UNDERLYING_ID[0]).toBeUndefined()
-    expect(historicalPriceAssetId(0)).toBe(0)
-    expect(historicalPriceAssetId(5)).toBe(5)
-  })
-
-  // The min-value predicate is pushed into ClickHouse while the displayed row value
-  // is computed in TypeScript. If the SQL alias and the row alias disagree, a
-  // filtered page admits or drops rows against a value the rows never show.
-  it('aliases in the pushed-down SQL exactly as the row builder does', () => {
+// A flow is valued at its own asset's feed on BOTH the current and the historical
+// path. There is no price-alias table: Basilisk registers no receipt or wrapper token
+// that borrows another asset's price (its only derived token is the XYK share, and an
+// LP share is a claim on two reserves that no single feed stands for). What is pinned
+// here is that the pushed-down SQL keys on the leg's own asset id rather than remapping
+// it — the min-value predicate runs in ClickHouse while the displayed row value is
+// computed in TypeScript, so a remap on one side only would filter pages on a value the
+// rows never show.
+describe('historical valuation keys on the asset itself', () => {
+  it('joins the historical close on the leg\'s own asset id', () => {
     const sql = historicalVolumeSql('legs', 'out')
-    // The amount normalisation emits its own transform with quoted scale factors;
-    // only the unquoted asset-id -> asset-id pairs are price aliases.
-    for (const [, fromList, toList] of sql.matchAll(/transform\(toUInt32\([^)]*\), \[([\d,]+)\], \[([\d,]+)\]/g)) {
-      const from = fromList.split(',').map(Number)
-      const to = toList.split(',').map(Number)
-      from.forEach((id, i) => expect(to[i]).toBe(historicalPriceAssetId(id)))
-    }
-    // With no alias to apply the SQL must cast, never drop the expression.
-    if (!Object.keys(PRICE_ALIAS_ID).length) expect(sql).toContain('p.asset_id = toUInt32(l.asset_id)')
+    expect(sql).toContain('p.asset_id = toUInt32(l.asset_id)')
+    expect(sql).toContain('SELECT DISTINCT toUInt32(n.asset_id) FROM legs n')
+  })
+
+  it('leaves the asset-id expression uncast by any id-to-id remap', () => {
+    const sql = historicalVolumeSql('legs', 'out')
+    // The amount normalisation emits a transform with QUOTED scale factors. An
+    // unquoted asset-id -> asset-id transform would be a price alias, and there is none.
+    expect([...sql.matchAll(/transform\(toUInt32\([^)]*\), \[([\d,]+)\], \[([\d,]+)\]/g)]).toHaveLength(0)
+  })
+
+  it('keys the min-value filter join on the same id', () => {
+    const { joinSql } = eventValueFilterSql(
+      'e.asset_id', 'e.amount', 'e.block_timestamp',
+      { min: 100, unit: 'usd' },
+      new Map(),
+      'vp',
+    )
+    expect(joinSql).toContain('vp.asset_id = toUInt32(e.asset_id)')
   })
 })

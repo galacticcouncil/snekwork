@@ -7,7 +7,7 @@ import { referendumTitleFor, referendumTitleKey } from './referendumTitleService
 // through a dynamic import instead, same as the tag branch does for tagService.
 import type { ReferendumListRow, ReferendumPallet } from './governanceService.ts'
 import { weightedFromLabels } from './convictionWeight.ts'
-import { assetDescriptor, allExplorerAssets, isXykShareToken, PRICE_ALIAS_ID, SHARE_TOKEN_UNDERLYING_ID, priceAssetId, displayAssetId, type ExplorerAsset } from './explorerAssets.ts'
+import { assetDescriptor, allExplorerAssets, isXykShareToken, type ExplorerAsset } from './explorerAssets.ts'
 import { accountVolumeSource } from './accountTradeVolume.ts'
 import { tagForAccount, ammPoolAccounts, getTag as getTagRecord, allTags } from './tagService.ts'
 import { identityForAccount, searchIdentitiesByDisplay, type AccountIdentity } from './identityService.ts'
@@ -36,6 +36,20 @@ export function initExplorerService(c: ClickHouseClient): void { client = c }
  * the live price loader's would be invisible until prices went stale.
  */
 export function hasExplorerClient(): boolean { return client != null }
+
+// query shapes and the numbers that justify them
+//
+// Many comments below defend a query's shape with a measurement — rows read, bytes,
+// CPU seconds, peak memory, a p50/p99 fan-out. Those numbers were measured on
+// hydration-neckwork, against Hydration's data: a far larger chain, with pallets
+// (Omnipool, Stableswap, money market) snekwork does not index at all. They are kept
+// because the SHAPE they argue for is still the right one — a key-first read, a
+// bounded ASOF right side, a chunk size below the client's result guard — and
+// deleting the evidence would leave the shapes looking arbitrary.
+//
+// Treat every such figure as the reason for a decision, never as a current fact about
+// this instance. Re-profile against live Basilisk before citing one, and update the
+// number in place when you do.
 
 // shared shapes
 export type AssetRef = ExplorerAsset
@@ -864,7 +878,7 @@ export function exactHistoricalValuePredicateSql(
 }
 
 function historicalClosesRelationSql(): string {
-  const priceIds = [...new Set(allExplorerAssets().flatMap(a => [a.assetId, historicalPriceAssetId(a.assetId)]))].join(',')
+  const priceIds = [...new Set(allExplorerAssets().map(a => a.assetId))].join(',')
   // Hash ASOF requires a left/right equi-key even when the valued asset is a
   // constant (BSX votes and referral claims). The timestamp-derived key below
   // is 1 for every non-null event timestamp and leaves the price match unchanged.
@@ -895,7 +909,7 @@ export function eventValueFilterSql(
   return {
     joinSql: `ASOF LEFT JOIN ${historicalClosesRelationSql()} ${alias}
               ON ${alias}.asof_join_key = toUInt8(isNotNull(${timestampExpr}))
-             AND ${alias}.asset_id = ${priceAliasIdSql(assetExpr)}
+             AND ${alias}.asset_id = toUInt32(${assetExpr})
              AND ${alias}.price_time <= ${timestampExpr}`,
     predicateSql: `AND ${exactHistoricalValuePredicateSql(assetExpr, rawAmountExpr, `${alias}.close`, thresholds, denominator, options)}`,
   }
@@ -1171,30 +1185,11 @@ function priceTransformArrays(prices: Map<number, PriceInfo>): { idsSql: string;
 // the whole chain would pull tens of millions of rows. The pre-aggregated
 // hourly close is one row per asset/hour, so the joined side stays bounded.
 
-// Every aliased asset — aTokens, bonds and pool shares alike — values through the
-// same terminal priced id its current-price path uses. Pool shares have no
-// historical NAV series, but their own feed is not a substitute for one: a share
-// token is quoted only while it is the pool's tradeable leg (2-Pool-GDOT was
-// quoted for six hours before GDOT took over), and the ASOF match below has no
-// lower bound, so a share token left to value itself matches that abandoned close
-// forever. The underlying is the near-peg unit-price proxy documented on
-// SHARE_TOKEN_UNDERLYING_ID and the only alias with a live feed.
-export function historicalPriceAssetId(assetId: number): number {
-  return priceAssetId(assetId)
-}
-
-// SQL: map an asset-id expression to the id whose historical price feed values
-// it. Must stay identical to historicalPriceAssetId — the min-value predicate is
-// pushed down here while the displayed value is computed in TypeScript, so any
-// divergence filters pages on a value the rows do not show.
-function priceAliasIdSql(expr: string): string {
-  const from = Object.keys(PRICE_ALIAS_ID)
-  // transform() applies once — resolve chained aliases (GIGAHDX → stHDX → HDX)
-  // to their terminal priced id here.
-  const to = from.map(k => historicalPriceAssetId(Number(k)))
-  if (!from.length) return `toUInt32(${expr})`
-  return `transform(toUInt32(${expr}), [${from.join(',')}], [${to.join(',')}], toUInt32(${expr}))`
-}
+// Every asset values through its own feed, on both the current and the historical
+// path: Basilisk registers no receipt or wrapper token that borrows another asset's
+// price (see explorerAssets). The ASOF match below therefore keys straight on the
+// leg's own asset id, and the pushed-down min-value predicate and the TypeScript row
+// value read the same feed by construction.
 
 function rawAmountNormalizationSql(expr: string, targetDecimals: number): string {
   const assets = allExplorerAssets().filter(a => a.decimals <= targetDecimals)
@@ -1222,7 +1217,7 @@ function rawAmountNormalizationSql(expr: string, targetDecimals: number): string
 // be cheap to read twice (the liquidation legs are a bounded account-first
 // projection read).
 export function historicalVolumeSql(legsCte: string, outName: string): string {
-  const priceIds = [...new Set(allExplorerAssets().flatMap(a => [a.assetId, historicalPriceAssetId(a.assetId)]))].join(',')
+  const priceIds = [...new Set(allExplorerAssets().map(a => a.assetId))].join(',')
   const maxDecimals = Math.max(12, ...allExplorerAssets().map(a => a.decimals))
   if (maxDecimals > 65) throw new Error(`Historical volume does not support asset decimals above 65 (found ${maxDecimals})`)
   // Decimal256 is ClickHouse's widest overflow-checking fixed-point type. An
@@ -1239,9 +1234,9 @@ export function historicalVolumeSql(legsCte: string, outName: string): string {
                 SELECT asset_id, interval_start + INTERVAL 1 HOUR AS price_time, argMaxMerge(close_state) AS close
                 FROM price_data.ohlc_1h
                 WHERE asset_id IN (${priceIds || '0'})
-                  AND asset_id IN (SELECT DISTINCT ${priceAliasIdSql('n.asset_id')} FROM ${legsCte} n)
+                  AND asset_id IN (SELECT DISTINCT toUInt32(n.asset_id) FROM ${legsCte} n)
                 GROUP BY asset_id, interval_start
-              ) p ON p.asset_id = ${priceAliasIdSql('l.asset_id')} AND p.price_time <= l.block_time
+              ) p ON p.asset_id = toUInt32(l.asset_id) AND p.price_time <= l.block_time
               WHERE match(l.account_id, '^0x[0-9a-f]{64}$')
                 AND NOT match(l.account_id, '^0x(6d6f646c|7369626c|70617261)')
               GROUP BY account_id
@@ -1264,7 +1259,7 @@ export function historicalPriceHour(ts: string): string {
     : normalized
 }
 function historicalPriceKey(assetId: number, ts: string): string {
-  return `${historicalPriceAssetId(assetId)}|${normalizeTs(ts)}`
+  return `${assetId}|${normalizeTs(ts)}`
 }
 
 // Completed hourly closes are immutable. Candidate walkers repeatedly value
@@ -1286,7 +1281,7 @@ async function historicalCloses(pairs: { assetId: number; ts: string }[]): Promi
   const requested = new Map<string, { priceId: number; hour: string; hourKey: string }>()
   const missingHours = new Map<string, { priceId: number; ts: string }>()
   for (const p of pairs) {
-    const priceId = historicalPriceAssetId(p.assetId)
+    const priceId = p.assetId
     const ts = normalizeTs(p.ts)
     const hour = historicalPriceHour(ts)
     const hourKey = `${priceId}|${hour}`
@@ -1980,14 +1975,6 @@ function dedupeTransferEvents<T extends RawTransferEventRow>(rows: T[]): T[] {
   })
 }
 
-// An asset the value reconstruction cannot price on the wallet curve (share
-// tokens have no historical NAV feed — they're valued via LP decomposition, not
-// a token close). A swap only MOVES reconstructed value when it trades into such
-// an asset; a swap between two priced assets is value-neutral churn.
-function isUnpricedAsset(assetId: number): boolean {
-  return SHARE_TOKEN_UNDERLYING_ID[assetId] != null
-}
-
 async function getRecentTransfers(limit: number, from?: string, to?: string, offset = 0, userOnly = false, filters: ValueListFilters = {}): Promise<TransferRow[]> {
   const tw = timeWindow(from, to)
   return cached(`explorer:transfers:${await liveHeadTag(Boolean(tw), datedWindowIsClosed(to))}:${limit}:${offset}:${from ?? ''}:${to ?? ''}:${userOnly}:${filterKey(filters)}`, tw ? 30000 : LIVE_CACHE_MS, async () => {
@@ -2148,29 +2135,6 @@ export interface HoldersPage { asset: AssetRef; holders: HolderRow[]; total: num
 export async function getHolders(assetId: number, limit: number, offset = 0): Promise<HoldersPage> {
   const a = asset(assetId)
   const pageKey = `explorer:holders:${assetId}:${limit}:${offset}`
-  const enrichShare = (rows: HolderRow[], prices: Map<number, PriceInfo>, totalUsd: number): HolderRow[] => rows.map(h => {
-    const valueUsd = usdValue(prices, assetId, h.balance, a.decimals)
-    return { ...h, valueUsd, share: totalUsd > 0 ? (valueUsd ?? 0) / totalUsd : 0 }
-  })
-
-  // A display asset is backed by hidden pool-share ids: its economic holder
-  // list combines the direct display balance with the share-token balances,
-  // otherwise the visible asset reads as having no holders at all.
-  const foldedShareIds = Object.entries(SHARE_TOKEN_UNDERLYING_ID)
-    .filter(([, displayId]) => displayId === assetId)
-    .map(([shareId]) => Number(shareId))
-  if (foldedShareIds.length) {
-    return cached(pageKey, 30000, async () => {
-      const prices = await ensurePrices()
-      const all = await getFoldedDisplayAssetHolders(assetId, foldedShareIds)
-      const totalRaw = all.reduce((sum, row) => sum + BigInt(row.balance), 0n)
-      const totalUsd = usdValue(prices, assetId, totalRaw.toString(), a.decimals) ?? 0
-      const page = all.slice(offset, limit > 0 ? offset + limit : all.length)
-        .map((holder, index) => ({ ...holder, rank: offset + index + 1 }))
-      return { asset: a, holders: enrichShare(page, prices, totalUsd), total: all.length, totalUsd }
-    })
-  }
-
   return cached(pageKey, 30000, async () => {
     const prices = await ensurePrices()
     const groupKeySql = `if(t.label_id = '', latest.account_id, t.label_id)`
@@ -2305,81 +2269,37 @@ export function topHeldTokens(balances: AddressBalance[]): { asset: AssetRef; va
 }
 
 
-// Rescale a base-10 integer amount string from `fromDec` to `toDec` decimal places
-// (truncating when shrinking). Used to bring amounts onto a common decimal scale.
-function rescaleRaw(raw: string, fromDec: number, toDec: number): string {
-  if (fromDec === toDec || !raw) return raw
-  const neg = raw.startsWith('-')
-  let s = neg ? raw.slice(1) : raw
-  if (toDec > fromDec) s += '0'.repeat(toDec - fromDec)
-  else { const drop = fromDec - toDec; s = s.length > drop ? s.slice(0, -drop) : '0' }
-  return (neg ? '-' : '') + (s || '0')
-}
-
-// Fold a held receipt token into the asset it stands for, for per-account display.
-// The folded token is already priced through that asset, so value is preserved and
-// the portfolio total is unchanged; rows for the same display asset merge. The two
-// can carry different decimals, so raw amounts are normalised to the display asset's
-// scale before summing. No-op when nothing the account holds folds — which is every
-// account while SHARE_TOKEN_UNDERLYING_ID is empty.
-export function foldShareBalances(balances: AddressBalance[]): AddressBalance[] {
-  if (!balances.some(b => displayAssetId(b.asset.assetId) !== b.asset.assetId)) return balances
-  const byId = new Map<number, AddressBalance>()
-  for (const b of balances) {
-    const did = displayAssetId(b.asset.assetId)
-    const dispAsset = did === b.asset.assetId ? b.asset : asset(did)
-    const total = rescaleRaw(b.total, b.asset.decimals, dispAsset.decimals)
-    const free = rescaleRaw(b.free, b.asset.decimals, dispAsset.decimals)
-    const reserved = rescaleRaw(b.reserved, b.asset.decimals, dispAsset.decimals)
-    const cur = byId.get(did)
-    if (!cur) {
-      byId.set(did, { ...b, asset: dispAsset, total, free, reserved })
-    } else {
-      cur.total = (BigInt(cur.total) + BigInt(total)).toString()
-      cur.free = (BigInt(cur.free) + BigInt(free)).toString()
-      cur.reserved = (BigInt(cur.reserved) + BigInt(reserved)).toString()
-      cur.valueUsd = (cur.valueUsd ?? 0) + (b.valueUsd ?? 0)
-      cur.lastBlock = Math.max(cur.lastBlock, b.lastBlock)
-    }
-  }
-  return [...byId.values()].sort((x, y) => (y.valueUsd ?? 0) - (x.valueUsd ?? 0))
-}
-
 // Attach the background lock-snapshot components to the final displayed balance
-// rows. Components are keyed by on-chain asset id; folding may have merged a
-// source asset into its display asset (share tokens), so components map through
-// displayAssetId with a decimal rescale, merging additively when several source
-// assets land on one display row.
+// rows. Components are keyed by on-chain asset id — the same id the balance row
+// carries, since nothing folds one asset's holdings into another's — and several
+// components of one kind+source on the same asset merge additively.
 export function attachLockBreakdowns(balances: AddressBalance[], breakdowns: Map<number, AssetLockBreakdown>): AddressBalance[] {
   if (!breakdowns.size) return balances
   interface ComponentAgg { kind: BalanceLockComponent['kind']; source: string; amount: bigint; claimable: bigint; tranches?: BalanceLockTranche[]; mixed: boolean }
-  const byDisplay = new Map<number, { frozen: bigint; components: Map<string, ComponentAgg>; timeline?: BalanceUnlockSlice[] }>()
+  const byAsset = new Map<number, { frozen: bigint; components: Map<string, ComponentAgg>; timeline?: BalanceUnlockSlice[] }>()
   for (const [assetId, b] of breakdowns) {
-    const did = displayAssetId(assetId)
-    const fromDec = asset(assetId).decimals
-    const toDec = did === assetId ? fromDec : asset(did).decimals
-    const scale = (v: string) => BigInt(rescaleRaw(v, fromDec, toDec) || '0')
-    const agg = byDisplay.get(did) ?? { frozen: 0n, components: new Map<string, ComponentAgg>() }
-    agg.frozen += scale(b.frozen)
-    if (b.timeline?.length && !agg.timeline) agg.timeline = b.timeline.map(s => ({ ...s, amount: scale(s.amount).toString() }))
+    const num = (v: string) => BigInt(v || '0')
+    const agg = byAsset.get(assetId) ?? { frozen: 0n, components: new Map<string, ComponentAgg>() }
+    agg.frozen += num(b.frozen)
+    if (b.timeline?.length && !agg.timeline) agg.timeline = b.timeline.map(s => ({ ...s, amount: num(s.amount).toString() }))
     for (const c of b.components) {
       const key = `${c.kind}|${c.source}`
       const cur = agg.components.get(key)
-      const tranches = c.tranches?.map(t => ({ ...t, amount: scale(t.amount).toString() }))
+      const tranches = c.tranches?.map(t => ({ ...t, amount: num(t.amount).toString() }))
       if (cur) {
-        // Two source assets folded onto one display row: amounts add, but the
-        // tranche timelines would interleave misleadingly — drop them.
-        cur.amount += scale(c.amount)
-        cur.claimable += scale(c.claimable ?? '0')
+        // Two components of one kind+source: amounts add, but the tranche
+        // timelines would interleave misleadingly — drop them.
+        cur.amount += num(c.amount)
+        cur.claimable += num(c.claimable ?? '0')
         cur.mixed = true
       } else {
-        agg.components.set(key, { kind: c.kind, source: c.source, amount: scale(c.amount), claimable: scale(c.claimable ?? '0'), tranches, mixed: false })
+        agg.components.set(key, { kind: c.kind, source: c.source, amount: num(c.amount), claimable: num(c.claimable ?? '0'), tranches, mixed: false })
       }
     }
-    byDisplay.set(did, agg)
+    byAsset.set(assetId, agg)
   }
   return balances.map(b => {
-    const agg = byDisplay.get(b.asset.assetId)
+    const agg = byAsset.get(b.asset.assetId)
     if (!agg?.components.size) return b
     const breakdown = [...agg.components.values()]
       .sort((x, y) => (y.amount > x.amount ? 1 : y.amount < x.amount ? -1 : 0))
@@ -2415,19 +2335,6 @@ export interface MultisigDisplay {
   pending: { callHash: string; depositor: AccountRef; approvals: AccountRef[]; sinceBlock: number }[]
 }
 export interface MultisigMembershipDisplay { account: AccountRef; threshold: number; signatories: number }
-
-// --- contract tab activity (§9) ----------------------------------------------
-//
-// Two contract-scoped pages for the Contract tab. Transactions ride
-// evm_executed, whose ORDER BY starts with to_address — a primary-key prefix
-// read — grouped on the row identity so replayed raw ranges cannot duplicate a
-// page. Events ride raw_evm_logs key-first: the identity page carries only
-// (block_height, event_index) — raw_evm_logs is block-first, so the contract
-// predicate leans on its bloom-filter index and never touches the ZSTD payload
-// columns — and the payload pass then reads exactly the page's own keys through
-// the table's primary key. Decoding happens strictly on the fetched page: the
-// method chip is named from the target's cached verified-ABI index, and log
-// rows fall back from a verified-ABI decode to the ingest decode to raw topics.
 
 export interface AddressDetail {
   input: string
@@ -2491,7 +2398,7 @@ export async function getAddress(addressInput: string, opts: { summary?: boolean
       ensureAccountValuePrices(),
     ])
 
-    let balances: AddressBalance[] = foldShareBalances(valueAccountBalances(balanceRows, prices))
+    let balances: AddressBalance[] = valueAccountBalances(balanceRows, prices)
 
     // Attach the lock/reserve components once the display rows are final.
     balances = attachLockBreakdowns(balances, lockBreakdowns)
@@ -2585,74 +2492,10 @@ export function samePriceGeneration(a: Map<number, PriceInfo>, b: Map<number, Pr
   return true
 }
 
-interface HolderBalanceClaim { accountId: string; bal: bigint; lastBlock: number; memberKey?: string }
-
-// Combine wallet and receipt-token claims by their canonical displayed account,
-// then collapse tagged members exactly once. This is the shared beneficial-owner
-// grouping for a displayed asset whose supply spans several storage locations.
-export function groupHolderBalanceClaims(
-  claims: HolderBalanceClaim[],
-  refFor: (accountId: string) => AccountRef,
-): HolderRow[] {
-  const singles = new Map<string, { account: AccountRef; bal: bigint; lastBlock: number }>()
-  const tagGroups = new Map<string, {
-    tag: NonNullable<AccountRef['tag']>
-    bal: bigint
-    lastBlock: number
-    members: Set<string>
-  }>()
-  for (const claim of claims) {
-    if (claim.bal <= 0n) continue
-    const account = refFor(claim.accountId)
-    if (account.tag) {
-      const group = tagGroups.get(account.tag.id) ?? {
-        tag: account.tag, bal: 0n, lastBlock: 0, members: new Set<string>(),
-      }
-      group.bal += claim.bal
-      group.lastBlock = Math.max(group.lastBlock, claim.lastBlock)
-      group.members.add(claim.memberKey ?? account.accountId)
-      tagGroups.set(account.tag.id, group)
-      continue
-    }
-    const current = singles.get(account.accountId)
-    if (current) {
-      current.bal += claim.bal
-      current.lastBlock = Math.max(current.lastBlock, claim.lastBlock)
-    } else {
-      singles.set(account.accountId, { account, bal: claim.bal, lastBlock: claim.lastBlock })
-    }
-  }
-  const rows: (Omit<HolderRow, 'rank'> & { bal: bigint })[] = [
-    ...[...singles.values()].map(row => ({
-      account: row.account, tag: null, balance: row.bal.toString(), lastBlock: row.lastBlock, bal: row.bal,
-    })),
-    ...[...tagGroups.values()].map(group => ({
-      account: null,
-      tag: {
-        tagId: group.tag.id, name: group.tag.name, color: group.tag.color,
-        icon: group.tag.icon, memberCount: group.members.size,
-      },
-      balance: group.bal.toString(), lastBlock: group.lastBlock, bal: group.bal,
-    })),
-  ]
-  return rows
-    .sort((left, right) => left.bal < right.bal ? 1 : left.bal > right.bal ? -1 : 0)
-    .map(({ bal: _bal, ...row }, index) => ({ ...row, rank: index + 1 }))
-}
-
-// Omnipool LP positions (NFT-based, read from indexed state)
-// Omnipool liquidity is held as position NFTs, not fungible Tokens.Accounts
-// balances, so it never appears in the balances query. Maintained aggregate
-// tables provide current ownership and position state without per-request RPC.
-// hubAmount: the position's H2O (LRNA hub) leg, present for Omnipool positions
-// whose withdraw value includes a hub component (already folded into valueUsd).
-export interface LpPosition { positionId: string; asset: AssetRef; amount: string; hubAmount?: string; shares: string; valueUsd: number | null; venue: string }
-export interface DecodedPosition { assetId: number; amount: bigint; shares: bigint; priceNum: bigint; priceDen: bigint }
-
-// Omnipool remove-liquidity (full position) → (asset out, hub/LRNA out), mirroring
-// the node's calculate_remove_liquidity_state_changes (withdrawalFee = 0). Verified
-// bit-exact against the official indexer's per-position liquidityAmount.
-export const OMNI_FIXED = 10n ** 18n
+// An account's LP position, valued at pool NAV. Basilisk's only liquidity venue is
+// XYK, whose positions are fungible share tokens (held directly or staked in a farm)
+// rather than position NFTs — `venue` distinguishes the two holdings of one pool.
+export interface LpPosition { positionId: string; asset: AssetRef; amount: string; shares: string; valueUsd: number | null; venue: string }
 
 // XYK LP redeemable reserve legs for `shares` of a pool with raw reserves `reserveA/B` and
 // `totalShares` outstanding — amountX = floor(reserveX * shares / totalShares). Integer/
@@ -2925,7 +2768,7 @@ export interface AssetListItem extends AssetRef { price: number | null; change24
 
 function explorerAssetType(asset: AssetRef): ExplorerAssetType {
   if (asset.assetId === 0) return 'Native'
-  return isXykShareToken(asset.assetId) || SHARE_TOKEN_UNDERLYING_ID[asset.assetId] != null || asset.symbol.startsWith('v')
+  return isXykShareToken(asset.assetId) || asset.symbol.startsWith('v')
     ? 'Derivative'
     : 'Token'
 }
@@ -2946,15 +2789,6 @@ async function getAssetTotals(): Promise<Map<number, bigint>> {
     })
     const m = new Map<number, bigint>()
     for (const r of await res.json<{ asset_id: string; raw: string }>()) m.set(parseInt(r.asset_id, 10), BigInt(r.raw || '0'))
-    // Pool-share assets are hidden from the directory and displayed as their
-    // underlying. Move—not duplicate—their held total onto that visible id.
-    for (const [shareIdText, displayId] of Object.entries(SHARE_TOKEN_UNDERLYING_ID)) {
-      const shareId = Number(shareIdText)
-      const shareRaw = m.get(shareId) ?? 0n
-      if (shareRaw <= 0n) continue
-      const normalized = BigInt(rescaleRaw(shareRaw.toString(), asset(shareId).decimals, asset(displayId).decimals))
-      m.set(displayId, (m.get(displayId) ?? 0n) + normalized)
-    }
     return m
   })
 }
@@ -2977,62 +2811,8 @@ export async function getAssetHolderCounts(): Promise<Map<number, number>> {
     })
     const m = new Map<number, number>()
     for (const r of await res.json<{ asset_id: string; n: string | number }>()) m.set(parseInt(r.asset_id, 10), Number(r.n))
-    const withFolded = (counts: Map<number, number>, folded: Map<number, number>) => {
-      for (const [displayId, count] of folded) counts.set(displayId, count)
-      return counts
-    }
-    return withFolded(m, await foldedDisplayHolderCounts()
-      .catch(error => { console.error('[Explorer] folded display holder counts failed:', error); return new Map<number, number>() }))
+    return m
   })
-}
-
-// The beneficial holders of a display asset: its own direct balances plus the
-// balances of every hidden pool-share id that displays as it, rescaled onto the
-// display asset's decimals and grouped by canonical account (tagged members
-// collapse into one row, like every other holder surface).
-async function getFoldedDisplayAssetHolders(displayAssetId: number, shareAssetIds: number[]): Promise<HolderRow[]> {
-  const claims = await cached(`explorer:folded-display-claims:${displayAssetId}`, 30000, async (): Promise<HolderBalanceClaim[]> => {
-    const normalizedShareIds = [...new Set(shareAssetIds.filter(id => SHARE_TOKEN_UNDERLYING_ID[id] === displayAssetId))]
-    if (!normalizedShareIds.length) return []
-    const res = await client.query({
-      query: `SELECT account_id,asset_id,toString(latest_bal) AS balance,last_block FROM (
-                SELECT account_id,asset_id,
-                  toUInt256OrZero(argMaxMerge(total_state)) AS latest_bal,
-                  maxMerge(last_block_state) AS last_block
-                FROM price_data.account_asset_latest_balances
-                WHERE asset_id IN ({assetIds:Array(String)})
-                GROUP BY account_id,asset_id
-              ) WHERE latest_bal > 0`,
-      query_params: { assetIds: [displayAssetId, ...normalizedShareIds].map(String) }, format: 'JSONEachRow',
-    })
-    const out: HolderBalanceClaim[] = []
-    for (const row of await res.json<{ account_id: string; asset_id: string; balance: string; last_block: number }>()) {
-      const sourceId = Number(row.asset_id)
-      const bal = BigInt(rescaleRaw(row.balance, asset(sourceId).decimals, asset(displayAssetId).decimals) || '0')
-      if (bal > 0n) out.push({ accountId: row.account_id, bal, lastBlock: Number(row.last_block) })
-    }
-    return out
-  })
-  return groupHolderBalanceClaims(claims, accountRef)
-}
-
-// A display asset holds its supply in hidden pool-share ids. getAssetTotals
-// already folds those into the display asset, so its holder count has to come
-// from the same folded identity the detail page pages — counting the display
-// id's direct balances alone reports "—" for an asset with real holders.
-async function foldedDisplayHolderCounts(): Promise<Map<number, number>> {
-  const shareIdsByDisplay = new Map<number, number[]>()
-  for (const [shareId, displayId] of Object.entries(SHARE_TOKEN_UNDERLYING_ID)) {
-    const ids = shareIdsByDisplay.get(displayId) ?? []
-    ids.push(Number(shareId))
-    shareIdsByDisplay.set(displayId, ids)
-  }
-  const counts = new Map<number, number>()
-  await Promise.all([...shareIdsByDisplay].map(async ([displayId, shareIds]) => {
-    const holders = await getFoldedDisplayAssetHolders(displayId, shareIds)
-    if (holders.length) counts.set(displayId, holders.length)
-  }))
-  return counts
 }
 
 // 7-day price samples per asset (oldest→newest) for the assets-list sparkline
@@ -3078,11 +2858,6 @@ async function getWeeklyPriceSamples(): Promise<Map<number, number[]>> {
       for (const [assetId, arr] of m) {
         if (arr.length > SPARKLINE_BUCKETS) m.set(assetId, arr.slice(-SPARKLINE_BUCKETS))
       }
-      // Aliased assets borrow the (transitively resolved) underlying's sparkline + 7D.
-      for (const aliased of Object.keys(PRICE_ALIAS_ID)) {
-        const u = m.get(priceAssetId(Number(aliased)))
-        if (u && !m.has(Number(aliased))) m.set(Number(aliased), u)
-      }
     } catch { /* prices may be unavailable */ }
     return m
   })
@@ -3094,8 +2869,7 @@ export async function getAssets(): Promise<AssetListItem[]> {
     return allExplorerAssets()
       .filter(a => !isXykShareToken(a.assetId) && !a.symbol.startsWith('Asset') && a.symbol.trim() !== '')
       .map(a => {
-          // An asset with no feed of its own falls back to the asset it prices through.
-        const p = prices.get(a.assetId) ?? prices.get(priceAssetId(a.assetId))
+        const p = prices.get(a.assetId)
         const type = explorerAssetType(a)
         const raw = totals.get(a.assetId) ?? 0n
         const amountUsd = p ? (Number(raw) / 10 ** a.decimals) * p.price : null
@@ -4287,16 +4061,16 @@ export interface LiquidityTransferLeg {
   amount: string
 }
 
-// Omnipool/Stableswap liquidity events carry only shares (sharesRemoved / shares),
-// never the underlying token amount — that lives on the paired pool↔who transfer
-// leg. Recover it by matching each amount-less row to a leg with the same asset +
+// A removal event carries only the burnt share count (XYK.LiquidityRemoved), never
+// the underlying token amounts — those live on the paired pool↔who transfer legs.
+// Recover them by matching each amount-less row to a leg with the same asset +
 // account and the nearest preceding event index, consuming each leg once.
 //
 // Legs are matched within the same DISPATCH SCOPE: signed user actions scope to
-// their extrinsic, while scheduler/hook-dispatched events (an Omnipool asset being
-// offboarded force-removes every position from a runtime hook) carry no extrinsic
-// and scope to the block's out-of-extrinsic legs. Isolating the scopes stops a
-// signed same-block transfer from being mistaken for an offboarding leg.
+// their extrinsic, while events dispatched outside one (a runtime hook or the
+// scheduler) carry no extrinsic index and scope to the block's out-of-extrinsic
+// legs. Isolating the scopes stops a signed same-block transfer from being
+// mistaken for a hook's leg.
 export function matchLiquidityAmounts(missing: LiquidityAmountCandidate[], legs: LiquidityTransferLeg[]): void {
   const scopeOf = (ext: number | null | undefined): string => ext == null ? 'blk' : String(ext)
   const byTo = new Map<string, { event_index: number; amount: string; used: boolean }[]>()
@@ -6635,8 +6409,7 @@ async function suppressTransferCandidates(transfers: TransferRow[]): Promise<Tra
 // internals, not user activity.
 // A pool's LP share token. Basilisk registers these unnamed, so there is no symbol
 // to match on: membership comes from the XYK pool registry (see isXykShareToken).
-// The displayAssetId arm additionally catches any asset folded into another.
-const isShareAssetId = (id: number) => isXykShareToken(id) || displayAssetId(id) !== id
+const isShareAssetId = (id: number) => isXykShareToken(id)
 function dropShareRoutedTrades<T extends { blockHeight: number; extrinsicIndex: number | null; assetIn: AssetRef | null; assetOut: AssetRef | null }>(trades: T[], liquidityExtrinsics: Set<string>): T[] {
   return trades.filter(t => !(t.extrinsicIndex != null && liquidityExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)
     && ((t.assetIn && isShareAssetId(t.assetIn.assetId)) || (t.assetOut && isShareAssetId(t.assetOut.assetId)))))
@@ -7591,9 +7364,9 @@ async function getBlockHookActivity(height: number): Promise<ActivityRow[]> {
       query_params: { h: height },
       format: 'JSONEachRow',
     }),
-    // Extrinsic-less liquidity (Stableswap/Omnipool add/remove triggered by a
-    // hook, e.g. protocol-owned liquidity rebalances) — same event list +
-    // module-account exclusion as getRecentLiquidity (source of truth).
+    // Extrinsic-less liquidity (an add/remove dispatched by a runtime hook or the
+    // scheduler rather than a signed call) — same event list + module-account
+    // exclusion as getRecentLiquidity (source of truth).
     client.query({
       query: `SELECT block_height, toString(block_timestamp) AS ts, event_index, extrinsic_index, event_name,
                 if(JSONHas(args_json,'who'), JSONExtractString(args_json,'who'), JSONExtractString(args_json,'owner')) AS who,
@@ -8243,27 +8016,20 @@ async function getAccountHistory(accounts: string[]): Promise<{ portfolioSeries:
         GROUP BY account_id, asset_id, b ORDER BY asset_id, account_id, b`,
     format: 'JSONEachRow',
   })
-  // Fold a series into the asset it displays as, the same per-account rule
-  // foldShareBalances applies, so the display asset's series carries the combined
-  // balance. Identity while nothing folds (see SHARE_TOKEN_UNDERLYING_ID).
-  const balRows: HistoryBalanceRow[] = (await balRes.json<{ account_id: string; asset_id: string; b: number; bal: string }>())
-    .map(r => {
-      const did = displayAssetId(Number(r.asset_id))
-      // Share token and underlying can differ in decimals (2-Pool-PRIME 18 vs PRIME 6);
-      // normalise the raw balance to the display asset's scale so the folded series and
-      // portfolio value aren't off by 10^Δ (downactivity divides by the display decimals).
-      return { ...r, asset_id: String(did), bal: rescaleRaw(r.bal, asset(r.asset_id).decimals, asset(did).decimals) }
-    })
+  // Each asset keeps its own series: nothing folds one asset's balance into
+  // another's (see explorerAssets), so the id the query returns is the id charted.
+  const balRows: HistoryBalanceRow[] = await balRes.json<{ account_id: string; asset_id: string; b: number; bal: string }>()
   const assetIds = [...new Set(balRows.map(r => r.asset_id))]
   if (!assetIds.length) return { portfolioSeries: [], portfolioDates: [], portfolioBlocks: [], balanceHistory: [] }
   // Historical XYK LP principal (direct wallet shareToken balances + farm
   // deposits) valued at pool NAV. Loaded before the price query so both pool assets are priced.
   const xykHist = await loadXykPrincipalHistory(accounts, assetIds.map(Number), rng.minb, BUCKET, N)
-  // Aliased assets have no price feed of their own — query the underlying's
-  // historical prices for them.
-  const priceIdFor = new Map(assetIds.map(id => [id, String(priceAssetId(Number(id)))]))
+  // Asset ids arrive as strings from two sources — the balance rows and the price
+  // query's `toString(asset_id)` — so normalise both sides through one map rather
+  // than trusting the two text forms to be byte-identical.
+  const priceIdFor = new Map(assetIds.map(id => [id, String(Number(id))]))
   const lpPriceIds: string[] = []
-  const xykPriceIds = xykHist ? xykHist.underlyingAssetIds.map(id => String(priceAssetId(id))) : []
+  const xykPriceIds = xykHist ? xykHist.underlyingAssetIds.map(id => String(id)) : []
   const priceIds = [...new Set([...priceIdFor.values(), ...lpPriceIds, ...xykPriceIds])]
   // The daily close states are a replay-safe compact projection of prices. The
   // raw table contains a row for every asset at every indexed block; grouping it
@@ -8306,7 +8072,7 @@ async function getAccountHistory(accounts: string[]): Promise<{ portfolioSeries:
     }
     pxByPriceId.set(id, byBucket)
   }
-  // Key the per-bucket price series back by the original (possibly aToken) id.
+  // Key the per-bucket price series back by the id the balance rows carry.
   const pxByAsset = new Map<string, Map<number, number>>()
   for (const id of assetIds) pxByAsset.set(id, pxByPriceId.get(priceIdFor.get(id)!) ?? new Map())
   // The prices table doesn't reach as far back as the balance range (the feed
@@ -8408,8 +8174,8 @@ async function getAccountHistory(accounts: string[]): Promise<{ portfolioSeries:
         const shares = directRaw[b] + farm[b]
         if (shares <= 0n) continue
         const { amountA, amountB } = xykShareLegs(shares, st.reserveA, st.reserveB, st.totalShares)
-        const pxA = pxByPriceId.get(String(priceAssetId(st.assetA)))
-        const pxB = pxByPriceId.get(String(priceAssetId(st.assetB)))
+        const pxA = pxByPriceId.get(String(st.assetA))
+        const pxB = pxByPriceId.get(String(st.assetB))
         const priceA = pxA?.get(b) ?? earliestPrice(pxA)
         const priceB = pxB?.get(b) ?? earliestPrice(pxB)
         portfolio[b] += (Number(amountA) / 10 ** asset(st.assetA).decimals) * priceA + (Number(amountB) / 10 ** asset(st.assetB).decimals) * priceB
@@ -8417,18 +8183,9 @@ async function getAccountHistory(accounts: string[]): Promise<{ portfolioSeries:
     }
   }
 
-  // Money-market net worth folded into the portfolio. Each isolated pool is
-  // forward-filled independently. Staking-backed collateral (GIGAHDX) is not
-  // added here because its locked HDX already lives in the wallet curve; its
-  // debt is still deducted.
-  // getUserAccountData totals are already indexed per (user, block) in base currency
-  // (1e8 = USD); bucket + forward-fill the same way (positions are only written on MM
-  // events, so the last known position carries forward until the next event).
-  // Bucket per account (not collapsed across the list): each account's MM net must
-  // be forward-filled independently then summed, same as balances — otherwise the
-  // combined tag series sawtooths.
-  // account_money_market_position_history is raw_money_market_positions reordered
-  // account-first. The raw table is ordered (block_height, user_address, ...), so a
+  // The portfolio curve is wallet balances + XYK LP principal; Basilisk has no
+  // lending market to fold in on top of them.
+
   // Drop leading zero buckets, keep a clean series.
   let start = 0; while (start < portfolio.length - 1 && portfolio[start] === 0) start++
   const alignedBalanceHistory = alignBalanceHistoryDailyPoints(balanceHistory)
@@ -8658,7 +8415,7 @@ const MAX_EXACT_TRANSFER_CANDIDATES = 6_000_000
 // it is interpolated per request: a `kind` column baked at ingest could not learn
 // that a newly registered share token now routes its trade legs to liquidity.
 function shareAssetIdsSql(): string {
-  const ids = new Set<number>(Object.keys(SHARE_TOKEN_UNDERLYING_ID).map(Number))
+  const ids = new Set<number>()
   for (const registered of allExplorerAssets()) if (isShareAssetId(registered.assetId)) ids.add(registered.assetId)
   // A share token can be traded before its registry row is loaded, and an empty IN
   // list would silently widen the arm rather than narrow it.
@@ -10754,7 +10511,7 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
             FROM price_data.account_activity_v3 AS a FINAL
             ASOF LEFT JOIN ${closes} value_price
               ON value_price.asof_join_key = toUInt8(isNotNull(a.block_timestamp))
-             AND value_price.asset_id = ${priceAliasIdSql('a.asset_id')}
+             AND value_price.asset_id = toUInt32(a.asset_id)
              AND value_price.price_time <= a.block_timestamp
             WHERE a.account IN (${list}) AND ${bound}
               AND a.has_amount = 1
@@ -10787,7 +10544,7 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
             FROM price_data.account_activity_v3 AS a FINAL
             ASOF LEFT JOIN ${closes} value_price
               ON value_price.asof_join_key = toUInt8(isNotNull(a.block_timestamp))
-             AND value_price.asset_id = ${priceAliasIdSql('a.asset_id')}
+             AND value_price.asset_id = toUInt32(a.asset_id)
              AND value_price.price_time <= a.block_timestamp
             WHERE a.account IN (${list}) AND (${windowCondFor('a.block_height')})
               AND a.has_amount = 1
@@ -10948,7 +10705,6 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
         if (value > cur.bestValue) { cur.best = event; cur.bestValue = value }
         causes.set(key, cur)
       }
-      const seenWindowSwaps = new Set<string>()
       // Value-descending so per-trade/per-execution dedup keeps the largest leg.
       const sortedWindowRows = [...windowRows].sort((x, y) => Number(y.value_usd) - Number(x.value_usd))
       for (const r of sortedWindowRows) {
@@ -10976,17 +10732,11 @@ async function getAccountValueEvents(accounts: string[], cacheKey: string, from?
             { ...base, ...(sent ? { eventIndex: sent.eventIndex } : {}), kind: 'cross-chain', direction }, 'sum')
           continue
         }
-        if (SWAP_EVENTS.includes(r.event_name)) {
-          // A swap between priced assets is value-neutral churn and must never
-          // "explain" a jump. Only a swap INTO an unpriced asset (a share token,
-          // valued off the wallet curve) actually moves the reconstructed line.
-          if (!isUnpricedAsset(Number(r.asset_id))) continue
-          const tradeKey = `${w}:${r.block_height}:${r.extrinsic_index ?? `e${r.event_index}`}`
-          if (seenWindowSwaps.has(tradeKey)) continue
-          seenWindowSwaps.add(tradeKey)
-          bump(`${w}:swap`, value, { ...base, kind: 'swap' }, 'max')
-          continue
-        }
+        // A swap between priced assets is value-neutral churn and must never
+        // "explain" a jump. On Basilisk every asset a swap can land in is priced
+        // by its own feed — the one token that is not (the XYK share) is minted by
+        // a liquidity add, never bought — so no swap moves the reconstructed line.
+        if (SWAP_EVENTS.includes(r.event_name)) continue
         // Liquidity add/remove — direction-agnostic: LP flows are value shuffles
         // whose reconstructed line can move either way (drip unwinds, principal
         // entering/leaving the LP-valued curve).
@@ -11582,7 +11332,7 @@ export async function getAssetDetail(assetId: number): Promise<AssetDetail> {
                 FROM price_data.ohlc_1d_query(asset_id={id:UInt32}, start_time={s:DateTime}, end_time={e:DateTime})
                 WHERE close > 0
                 ORDER BY interval_start`,
-        query_params: { id: priceAssetId(assetId), s: fmt(start), e: fmt(end) }, format: 'JSONEachRow',
+        query_params: { id: assetId, s: fmt(start), e: fmt(end) }, format: 'JSONEachRow',
       })
       for (const r of await pxRes.json<{ ts: string; px: number }>()) {
         if (!(r.px > 0)) continue
@@ -12492,10 +12242,9 @@ async function enrichAccountRows(
     moduleBalanceRows = await moduleRes.json<{ account_id: string; asset_id: string; bal: string }>()
   }
 
-  // Weekly closes for every involved asset, keyed back by the original id
-  // (pool shares priced via their underlying).
+  // Weekly closes for every involved asset, keyed by its own id.
   const assetIds = [...new Set([...obsRows, ...baseRows].map(r => r.asset_id).concat(moduleBalanceRows.map(r => r.asset_id)))]
-  const priceIdFor = new Map(assetIds.map(id => [id, String(priceAssetId(Number(id)))]))
+  const priceIdFor = new Map(assetIds.map(id => [id, String(Number(id))]))
   const priceIds = sqlUIntList([...priceIdFor.values()])
   const pricesByPriceId = new Map<string, Map<number, number>>()
   if (priceIds) {
@@ -12591,16 +12340,15 @@ export function resampleValueSeriesToTrailingYear(values: number[], dates: strin
 // narrowing the span shrinks each bucket from ~8 days to ~2, so the weekly resampler
 // lands on different samples and 92 of 127 live sparklines moved by 1-6% — the list and
 // the detail chart would no longer agree, which is exactly the parity this shared path
-// exists to guarantee. The cost came out of the reads instead: account-first ordering of
-// raw_money_market_positions, whose own ORDER BY is block-first so the per-account
-// predicate cannot use it. That is account_money_market_position_history, which cut the
-// bucket pass from 1.25 GiB to 6.57 MiB per call without moving a single value; what is
-// left here is the 180-bucket reconstruction itself, not the reads under it.
+// exists to guarantee. The cost came out of the reads instead — every per-account
+// table this walks is ordered account-first, so the per-account predicate rides the
+// primary key; what is left here is the 180-bucket reconstruction itself, not the
+// reads under it.
 //
 // Reuses the detail page's own getAccountHistory so the row sparkline and the
 // account/tag value-history chart are computed by the SAME code path (wallet
 // balances + XYK LP principal, historical closes) and therefore cannot diverge — the
-// earlier wallet-only weekly approximation understated LP/MM-heavy accounts by ~2-3×.
+// earlier wallet-only weekly approximation understated LP-heavy accounts by ~2-3×.
 // Overwrites the wallet-only series enrichAccountRows produced, which stays as the
 // fallback when the history reconstruction yields nothing (a row never regresses to
 // blank). Module/sovereign accounts are excluded — reconstructing their millions of
@@ -12842,7 +12590,7 @@ async function buildTagDetailForMembers(
       summary ? Promise.resolve(new Map<number, AssetLockBreakdown>()) : queryLockBreakdownsSafe(list),
       ensureAccountValuePrices(),
     ])
-    let balances: AddressBalance[] = foldShareBalances(valueAccountBalances(balanceRows, prices))
+    let balances: AddressBalance[] = valueAccountBalances(balanceRows, prices)
 
     const tagHistoryAccounts = [...new Set(members)]
     // LP stays (it feeds the displayed value); only the heavy portfolio-history

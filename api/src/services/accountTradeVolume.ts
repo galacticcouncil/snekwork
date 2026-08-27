@@ -8,7 +8,7 @@
 // whole CH month-partitions in a staging twin and publishes them atomically
 // (REPLACE PARTITION), so re-runs are idempotent and readers never see a gap.
 
-import { allExplorerAssets, PRICE_ALIAS_ID, SHARE_TOKEN_UNDERLYING_ID, priceAssetId } from './explorerAssets.ts'
+import { allExplorerAssets } from './explorerAssets.ts'
 
 // First block emitting Broadcast.Swapped (the unified swap-event era) — the first
 // Basilisk block of runtime spec 124, where pallet-broadcast arrived. At/above
@@ -53,18 +53,10 @@ function normFactorSql(expr: string, target: number): string {
   return `toDecimal256(transform(toUInt32(${expr}), [${ids.join(',') || '0'}], [${factors.join(',') || "'1'"}], '${fallback}'), 0)`
 }
 
-// asset id → the id whose ohlc feed prices it (aTokens/bonds → underlying; share
-// tokens stay themselves — they are priced directly by their own feed).
-function priceAliasSql(expr: string): string {
-  const from = Object.keys(PRICE_ALIAS_ID).map(Number).filter(k => SHARE_TOKEN_UNDERLYING_ID[k] == null)
-  const to = from.map(k => priceAssetId(k))
-  if (!from.length) return `toUInt32(${expr})`
-  return `transform(toUInt32(${expr}), [${from.join(',')}], [${to.join(',')}], toUInt32(${expr}))`
-}
-
+// The asset ids the ohlc feed can price. Every asset prices through its own id —
+// Basilisk has no asset that borrows another's feed (see explorerAssets).
 function priceIdUniverse(): string {
-  const ids = new Set<number>()
-  for (const a of allExplorerAssets()) { ids.add(a.assetId); ids.add(priceAssetId(a.assetId)) }
+  const ids = new Set<number>(allExplorerAssets().map(a => a.assetId))
   return [...ids].join(',') || '0'
 }
 
@@ -254,7 +246,7 @@ valued AS (
   ASOF LEFT JOIN (
     SELECT asset_id, interval_start + INTERVAL 1 HOUR AS price_time, argMaxMerge(close_state) AS close
     FROM price_data.ohlc_1h WHERE asset_id IN (${priceIdUniverse()})${priceWindowSql(maxBlockTime)} GROUP BY asset_id, interval_start
-  ) p ON p.asset_id = ${priceAliasSql('n.asset_id')} AND p.price_time <= n.block_time
+  ) p ON p.asset_id = toUInt32(n.asset_id) AND p.price_time <= n.block_time
 )
 SELECT account, block_height, trade_key,
        toDecimal128(greatest(sum(greatest(net_usd, toDecimal256(0, 12))), sum(greatest(-net_usd, toDecimal256(0, 12)))), 12) AS volume_usd,

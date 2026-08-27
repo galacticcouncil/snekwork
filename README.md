@@ -29,6 +29,8 @@ Local services:
 
 The live pipelines start immediately. Historical ingestion continues in the background, so a fresh installation fills older explorer and price history over time.
 
+One more step is needed before anything shows a USD value: see [Valuation bring-up](#valuation-bring-up).
+
 Useful status commands:
 
 ```bash
@@ -37,6 +39,62 @@ docker logs -f snekwork-ingestion-supervisor
 docker exec -it snekwork-clickhouse clickhouse-client \
   --database=price_data --password "${CLICKHOUSE_PASSWORD:-dev}"
 ```
+
+## Valuation bring-up
+
+**Nothing has a USD value until the KSM/USD reference table is populated.** This is a
+one-time step, and it is separate from `docker compose up`.
+
+Snekwork does not derive USD from on-chain stablecoin pools. It anchors on an external
+KSM/USD reference persisted in `price_data.ksm_usd_reference`, and prices BSX from it
+through the BSX/KSM XYK pool's reserve ratio. With that table empty, the indexer logs
+
+```text
+[Reference] price_data.ksm_usd_reference is empty: no KSM anchor, so no asset gets a USD price.
+```
+
+and every price, portfolio total and USD-denominated chart reads as null — the pipeline
+is healthy, it just has no anchor. Fill it once:
+
+```bash
+# In Compose (the indexer image carries the script):
+docker compose run --rm --no-deps indexer src/scripts/backfill-ksm-reference.ts
+
+# Outside Compose:
+npm run backfill:ksm-reference
+```
+
+The backfill takes CoinGecko's rolling 365 days and Binance daily klines for everything
+older, so one run covers the chain's whole history. Re-run it with `--refresh` to rewrite
+stored days, or `--from=`/`--to=` to fill a specific span. After that the live indexer
+keeps the head current on its own: an indexer run with no `--to-block` polls CoinGecko
+for the current day and settles recent days as they close, so the backfill does not need
+to be re-run daily.
+
+### Pricing policy: two assets
+
+Snekwork publishes USD prices for exactly **BSX (0) and KSM (1)**. Every other registered
+asset is deliberately unpriced — it keeps its symbol, name, decimals and balances
+everywhere in the explorer, but carries no price, no USD value and no candles. The
+BSX/USDT pool is deliberately *not* a pricing input. See
+[REMOVED.md](REMOVED.md#replaced-not-removed) for why this replaced the upstream
+stablecoin-basket/Omnipool price graph.
+
+### Reference variables
+
+These are read by the price indexer (`src/config.ts`) and passed through to the `indexer`
+service — and therefore to the supervisor-created `main-live` worker, which is the same
+service image — in [`docker-compose.yml`](docker-compose.yml). Leaving one unset in `.env`
+means "use the code default".
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `KSM_REFERENCE_POLL_MS` | `300000` | Live CoinGecko poll cadence, wall-clock. Five minutes is what the keyless free tier tolerates; shorter intervals were observed being throttled. |
+| `KSM_REFERENCE_LIVE_WINDOW_HOURS` | `48` | How recent a block must be to be valued at the intraday poll. Older blocks read settled daily closes only, which is what makes a replay reproducible. |
+| `KSM_REFERENCE_COIN_ID` | `kusama` | CoinGecko coin id for the anchor. |
+| `KSM_REFERENCE_SYMBOL` | `KSMUSDT` | Binance symbol for the pre-CoinGecko history. |
+| `COINGECKO_API_URL` | `https://api.coingecko.com/api/v3` | Point at a keyed endpoint to poll faster than the free tier allows. |
+| `BINANCE_API_URL` | `https://api.binance.com` | Daily-klines source used only by the backfill. |
 
 ## Architecture
 
@@ -79,6 +137,9 @@ Docker Compose provides working defaults. Override them in an untracked `.env` f
 | `RANGE_SIZE` | `1000` | Blocks per raw historical range |
 | `MAIN_WORKERS` | `3` | Concurrent historical price workers |
 | `MAIN_MAX_RANGES` | `3` | Raw ranges consumed per price batch |
+
+The KSM/USD reference variables (`KSM_REFERENCE_*`, `COINGECKO_API_URL`,
+`BINANCE_API_URL`) are listed under [Valuation bring-up](#reference-variables).
 
 Every RPC endpoint must serve Basilisk. Both indexers read `state_getRuntimeVersion`
 at startup and abort unless `specName` is `basilisk`, because the generated codecs in

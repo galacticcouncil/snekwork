@@ -226,7 +226,6 @@ export function LiquidityPositionsTable({ positions }: { positions: LpPosition[]
                 <td data-label="Venue"><span className="badge" style={{ background: `color-mix(in srgb, ${col} 14%, transparent)`, color: col }}>{p.venue}</span></td>
                 <td data-label="Amount" className="r mono">
                   {F.amount(p.amount, p.asset.decimals)} {p.asset.symbol}
-                  {p.hubAmount && <div className="muted" style={{ fontSize: 11, fontWeight: 400 }}>+ {F.amount(p.hubAmount, 12)} H2O</div>}
                 </td>
                 <td data-label="Value" className="r mono">{F.usd(p.valueUsd)}</td>
               </tr>

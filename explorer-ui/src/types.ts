@@ -257,7 +257,7 @@ export interface BalanceUnlockSlice { state: 'releasable' | 'scheduled' | 'activ
 // `frozen` is the non-transferable part of `free` (per-account max lock, summed
 // across the account set for tags).
 export interface AddressBalance { asset: AssetRef; total: string; free: string; reserved: string; frozen?: string; breakdown?: BalanceLockComponent[]; timeline?: BalanceUnlockSlice[]; lastBlock: number; valueUsd: number | null }
-export interface LpPosition { positionId: string; asset: AssetRef; amount: string; hubAmount?: string; shares: string; valueUsd: number | null; venue: string }
+export interface LpPosition { positionId: string; asset: AssetRef; amount: string; shares: string; valueUsd: number | null; venue: string }
 // Proxy & multisig relations (accounts resolved to displayable refs).
 export interface ProxyRelation { account: AccountRef; proxyType: string; delay: number }
 export interface AccountProxyInfo {

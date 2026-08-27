@@ -36,13 +36,18 @@ Two kinds of removals:
 | OTC | chain-absent | Order pages, place/pull/fill activity slugs. |
 | Staking | chain-absent | Staking activity, lock reasons, GIGAHDX. |
 | Referrals | chain-absent | Referral activity and rewards slugs. |
+| Exchange-pallet trades | verified-dead | Basilisk's genesis-era intention-matching AMM (specs 16–76) emitted **zero events over its entire life** (verified by a complete genesis→2.14M block sweep). Its events are decoded in the swap catalogue for correctness but deliberately not admitted to the activity views: the AMM marker double-counts the XYK leg beside it, and direct-trade events carry no asset ids. |
+| Snakewatch icon easter eggs | product-cut | The remote degen-emoji list and custom icon overrides were keyed to Hydration accounts; account emojis use the built-in deterministic fallback. |
 
 ## Replaced (not removed)
 
 | Was | Is |
 | --- | --- |
-| USD pricing via stablecoin basket → LRNA → Omnipool → pool-graph BFS | CoinGecko KSM/USD reference (persisted in ClickHouse) × BSX/KSM XYK pool ratio. Priced assets are whitelisted to exactly BSX (0) and KSM (1); every other asset is deliberately unpriced. |
-| SQD gateway + RPC ingestion | RPC-only ingestion (no SQD dataset exists for Basilisk). |
-| Hydration SQD typegen (`v2.archive.subsquid.io/metadata/hydradx`) | Metadata-explorer over the Basilisk RPC, specs 16→current, with the V13-era old-types bundle for blocks 1–395,663. |
-| Polkadot-prefix SS58 display | Basilisk SS58 (prefix 10041). |
+| USD pricing via stablecoin basket → LRNA → Omnipool → pool-graph BFS | KSM/USD reference persisted in ClickHouse (`ksm_usd_reference`: CoinGecko for the rolling year + live head; Binance daily klines for history beyond CoinGecko's 365-day free-tier limit) × the BSX/KSM XYK pool ratio. Priced assets are whitelisted to exactly BSX (0) and KSM (1); every other asset is deliberately unpriced. The BSX/USDT pool is not a pricing input. |
+| SQD gateway + RPC ingestion | RPC-only ingestion (no SQD dataset exists for Basilisk); chain-identity guard aborts on a non-`basilisk` RPC. |
+| Hydration SQD typegen (`v2.archive.subsquid.io/metadata/hydradx`) | Metadata-explorer over the Basilisk RPC (35 specs, 16→134), with the built-in `basilisk` old-types bundle plus the orml `AccountData` alias it lacks for the V13 era (blocks 1–395,663). |
+| Hydration SS58 (63) / Polkadot SS58 (0) display | Basilisk SS58 (prefix 10041, canonical) + Kusama SS58 (prefix 2, secondary). |
+| Polkadot-relay XCM counterparty table | Kusama-relay table (Asset Hub, Karura, Bifrost, Moonriver, …). |
 | `hydration.subsquare.io` referendum titles | `basilisk.subsquare.io`. |
+| Hydration OpenGov tracks | Basilisk's 8 tracks (root … tipper). |
+| Hydration default-tag address book | Minimal Basilisk seed (treasury et al.) + auto-generated structural tags (XYK pool accounts, LM pots). |
