@@ -270,9 +270,16 @@ export async function runAccountTradeVolume(client: ClickHouseClient): Promise<D
 const LP_LIFECYCLE_SOURCE = 'price_data.lp_lifecycle_events FINAL'
 
 // ─────────────────── xyk_farm_principal_intervals ───────────────────
-// Bounded full recompute of collection-5389 farm deposits via the pure
+// Bounded full recompute of the XYK farm deposits via the pure
 // buildXykFarmIntervals domain function; result is swapped into the live
 // table atomically (see atomicFullReplace).
+
+// The Uniques collection the XYK liquidity-mining pallet mints its deposit NFTs
+// into, from the runtime constant `xykLiquidityMining.nftCollectionId`. The only
+// place the API layer names it; lp_lifecycle_events_mv carries the matching
+// literal on the schema side (clickhouse/schema/003_materialized_views.sql), and
+// the test below holds the two together.
+export const XYK_FARM_NFT_COLLECTION_ID = '1'
 
 export const XYK_FARM_EVENT_KIND: Record<string, XykFarmLifecycleKind> = {
   'Uniques.Issued': 'nft_issue',
@@ -323,7 +330,7 @@ export function xykFarmLifecycleSelectSql(): string {
         owner, from_account AS from, to_account AS to,
         lp_token AS lpToken, amount
       FROM ${LP_LIFECYCLE_SOURCE}
-      WHERE (event_name IN ('Uniques.Issued','Uniques.Transferred','Uniques.Burned') AND collection='5389')
+      WHERE (event_name IN ('Uniques.Issued','Uniques.Transferred','Uniques.Burned') AND collection='${XYK_FARM_NFT_COLLECTION_ID}')
          OR event_name IN ('XYKLiquidityMining.SharesDeposited','XYKLiquidityMining.SharesRedeposited','XYKLiquidityMining.DepositDestroyed')
       ORDER BY block_height, event_index`
 }
@@ -393,29 +400,11 @@ export async function runXykFarmIntervals(client: ClickHouseClient): Promise<Der
 // silently orphan the INSERT from the table atomicFullReplace actually swaps.
 const XYK_TOTAL_SHARES_TABLE = 'price_data.xyk_lp_total_shares_history'
 
-// First asset id the Hydration asset registry mints sequentially. XYK's
-// create_pool registers its share token through that counter, so every share
-// token — past and future — sits at or above this floor, while the
-// governance-registered assets that dominate the observation table sit below it.
-// That makes `asset_id >= floor` a join-free predicate the
-// xyk_lp_share_observations MV can apply per inserted row (see
-// clickhouse/schema/003_materialized_views.sql) and still be a provable superset
-// of the pool set, which the reconstruction below re-filters to exactly.
-export const XYK_SHARE_ASSET_ID_FLOOR = 1_000_000
-
 // The pool set. price_data.xyk_pool_registry is the MV over XYK.PoolCreated and
 // decodes shareToken with the same expression this used to run inline, so the two
 // sets are equal by construction — but the registry is 729 rows against a 302M-row
 // raw_events scan the event-name index barely prunes.
 const XYK_SHARE_TOKENS_SQL = 'SELECT DISTINCT lp_asset_id AS lp FROM price_data.xyk_pool_registry FINAL'
-
-// Guard on the superset claim. A share token below the floor would simply never
-// reach the projection, and its pool would silently vanish from the model, so
-// the job checks the real pool set against the floor every run and refuses to
-// publish rather than publish a hole.
-export function xykShareTokensBelowFloorSql(): string {
-  return `SELECT count() AS n FROM (${XYK_SHARE_TOKENS_SQL}) WHERE lp < ${XYK_SHARE_ASSET_ID_FLOOR}`
-}
 
 // The single INSERT…SELECT for the total-shares reconstruction, keyed by run id.
 // Targets the staging twin (never the live table directly) so the run's
@@ -445,14 +434,6 @@ export function xykTotalSharesInsertSql(runId: number): string {
 export async function runXykTotalShares(client: ClickHouseClient): Promise<DerivationResult> {
   const runId = Date.now()
   const liveTable = XYK_TOTAL_SHARES_TABLE
-  const guard = await client.query({ query: xykShareTokensBelowFloorSql(), format: 'JSONEachRow' })
-  const below = Number((await guard.json<{ n: string }>())[0]?.n ?? 0)
-  if (below > 0) {
-    throw new Error(
-      `${below} XYK share token(s) below asset id ${XYK_SHARE_ASSET_ID_FLOOR}: `
-      + 'xyk_lp_share_observations cannot see them, so their pools would be missing from the model',
-    )
-  }
   // No memory carve-out: windowing 1.2M projected rows in their stored order
   // fits the long-op client's default cap, where the 244M-row scan and sort this
   // replaced needed 8 GB.

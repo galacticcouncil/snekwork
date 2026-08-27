@@ -1,12 +1,14 @@
-// Reconstructs account-first ownership intervals for XYK farm deposits (collection 5389)
-// from their NFT + liquidity-mining lifecycle. Pure and deterministic for unit testing and
-// idempotent re-runs. Verified against raw_events (Phase 2 design doc):
-//   - collection 5389 NFT is the deposit; its owner is the economic owner throughout
-//     (unlike Omnipool there is no separate "bare" NFT — direct XYK LP is a fungible balance).
+// Reconstructs account-first ownership intervals for XYK farm deposits from their NFT +
+// liquidity-mining lifecycle. Pure and deterministic for unit testing and idempotent
+// re-runs. The deposit-NFT collection is selected by the caller (see
+// XYK_FARM_NFT_COLLECTION_ID in derivations/jobs.ts); this walk sees only its events.
+// Verified against raw_events (Phase 2 design doc):
+//   - the deposit NFT's owner is the economic owner throughout (unlike Omnipool there is
+//     no separate "bare" NFT — direct XYK LP is a fungible balance).
 //   - XYKLiquidityMining.SharesDeposited{lpToken,amount} sets the principal (once).
 //   - SharesRedeposited restates the SAME amount for another yield farm — association, never
 //     new principal — and must not open a second interval.
-//   - The deposit persists until DepositDestroyed / 5389 burn (SharesWithdrawn from one yield
+//   - The deposit persists until DepositDestroyed / NFT burn (SharesWithdrawn from one yield
 //     farm is not a boundary), so those end the interval.
 
 // Where an interval opens: the exact event position plus its wall-clock time.
@@ -104,15 +106,15 @@ export function buildXykFarmIntervals(events: XykFarmLifecycleEvent[]): XykFarmI
     switch (e.kind) {
       case 'nft_issue':
         holder.set(e.depositId, norm(e.owner))
-        recompute(e.depositId, at, 'nft_issue_5389')
+        recompute(e.depositId, at, 'nft_issue')
         break
       case 'nft_transfer':
         holder.set(e.depositId, norm(e.to))
-        recompute(e.depositId, at, 'nft_transfer_5389')
+        recompute(e.depositId, at, 'nft_transfer')
         break
       case 'nft_burn':
         holder.set(e.depositId, null)
-        recompute(e.depositId, at, 'nft_burn_5389')
+        recompute(e.depositId, at, 'nft_burn')
         break
       case 'shares_deposited':
       case 'shares_redeposited':

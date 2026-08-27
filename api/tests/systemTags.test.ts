@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { modlAccountId, stableswapPoolAccount, economicModuleAccounts, truncatedH160Index, initTagService, loadTags, retireUnknownTagMemberships, SYSTEM_TAG_IDS, DEFAULT_TAGS, INCENTIVES_REWARD_POT, SOVEREIGN_PREFIXES } from '../src/services/tagService.ts'
+import { modlAccountId, stableswapPoolAccount, economicModuleAccounts, truncatedH160Index, initTagService, loadTags, retireUnknownTagMemberships, SYSTEM_TAG_IDS, DEFAULT_TAGS, SOVEREIGN_PREFIXES } from '../src/services/tagService.ts'
 import type { Tag } from '../src/services/tagService.ts'
 import type { ClickHouseClient } from '../src/db/client.ts'
 
@@ -21,19 +21,6 @@ describe('system-account derivations', () => {
     for (const t of ['omnipool', 'staking-pot', 'fee-processor', 'gigahdx-pots', 'pallet-pots']) expect(ids).toContain(t)
     const treasury = DEFAULT_TAGS.find(t => t.tagId === 'treasury')!
     expect(treasury.addresses.length).toBeGreaterThan(1) // main + sub-pot
-  })
-
-  // The pot the money market's rewards controller pays claims from. It has never
-  // signed an extrinsic, so nothing else would ever name it, and it read as an
-  // anonymous six-figure holder. The tag and the reward-claim classification in
-  // explorerService must keep naming the same account, hence one exported constant.
-  it('labels the incentives reward pot, and shares its id with the claim classifier', () => {
-    const pot = DEFAULT_TAGS.find(t => t.tagId === 'incentive-pot')
-    expect(pot?.name).toBe('Incentive Pot')
-    expect(pot?.addresses).toEqual([INCENTIVES_REWARD_POT])
-    expect(INCENTIVES_REWARD_POT).toBe('0x45544800112c208b900bcfc9ff8131d0f45769cb6c7c7d8d0000000000000000')
-    // It is protocol plumbing, not a deliberate actor: keep it out of top movers.
-    expect(SYSTEM_TAG_IDS.has('incentive-pot')).toBe(true)
   })
 
   // A sovereign account is 20 meaningful bytes under one of two markers. Matching

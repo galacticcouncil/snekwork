@@ -1,6 +1,6 @@
 # ClickHouse query guide
 
-Hydration Neckwork stores price data in the `price_data` database. The schema exposes
+Snekwork stores price data in the `price_data` database. The schema exposes
 parameterized views for common price and OHLCV queries; use those views unless a
 direct table query is necessary.
 
@@ -10,7 +10,7 @@ Docker Compose exposes ClickHouse HTTP on port `18123` and the native protocol o
 port `19000`:
 
 ```bash
-docker exec -it hydration-neckwork-clickhouse \
+docker exec -it snekwork-clickhouse \
   clickhouse-client --database=price_data --password "${CLICKHOUSE_PASSWORD:-dev}"
 ```
 
@@ -19,7 +19,7 @@ configured credentials to `clickhouse-client`.
 
 ## Price views
 
-The views in `clickhouse/schema/006_query_views.sql` read the deduplicated
+The views in `clickhouse/schema/002_views.sql` read the deduplicated
 `prices` and `assets` tables.
 
 ### Price at a block
@@ -132,8 +132,8 @@ FROM price_data.ohlc_1h_query(
 );
 ```
 
-Use the corresponding view name for another interval. Ordered definitions and
-upgrade migrations live in `clickhouse/schema/`.
+Use the corresponding view name for another interval. The definitions live in
+`clickhouse/schema/002_views.sql`; there are no migrations.
 
 ## Direct table queries
 
@@ -220,15 +220,17 @@ observations before aggregation.
 
 ## Schema sources
 
-- `clickhouse/schema/001_prices.sql`: `prices`
-- `clickhouse/schema/002_blocks.sql`: `blocks`
-- `clickhouse/schema/003_assets.sql`: `assets`
-- `clickhouse/schema/006_query_views.sql`: block and timestamp price views
-- `clickhouse/schema/007_ohlc_5min.sql`, `008_ohlc_15min.sql`,
-  `009_ohlc_1h.sql`, `010_ohlc_4h.sql`, `011_ohlc_1d.sql`,
-  `014_ohlc_30min.sql`, `015_ohlc_1w.sql`, and `016_ohlc_1m.sql`: OHLCV tables
-- `clickhouse/schema/012_ohlc_query_views.sql`, `013_volume_migration.sql`, and
-  `017_ohlc_query_views_new.sql`: OHLCV query views
+The whole schema is four declarative files, applied in numeric order to an empty
+database by the `schema-bootstrap` service. There are no migrations.
 
-Treat the ordered schema files as the source of truth when this guide and a
-deployed database disagree.
+- `clickhouse/schema/000_database.sql`: the `price_data` database
+- `clickhouse/schema/001_tables.sql`: every table, raw and derived — `prices`,
+  `blocks`, `assets`, the `ohlc_*` candle tables, and the rest
+- `clickhouse/schema/002_views.sql`: the parameterized price views
+  (`price_at_block`, `price_at_block_by_symbol`, `price_at_timestamp`,
+  `price_range`) and the `ohlc_*_query` views
+- `clickhouse/schema/003_materialized_views.sql`: every materialized view,
+  including the `ohlc_*_mv` views that maintain the candle tables from `prices`
+
+Treat the schema files as the source of truth when this guide and a deployed
+database disagree.

@@ -91,10 +91,10 @@ describe('action filters invert their labelling exactly', () => {
 
   it('selects every liquidity event under exactly one action', () => {
     const all = liquidityActionEventNames()
-    expect(all.length).toBe(11)
+    expect(all.length).toBe(5)
     const selected = LIQUIDITY_ACTIONS.flatMap(action => liquidityActionEventNames(action))
     expect([...selected].sort()).toEqual([...all].sort())
-    expect(LIQUIDITY_ACTIONS.map(action => liquidityActionEventNames(action).length)).toEqual([4, 3, 1, 2, 1])
+    expect(LIQUIDITY_ACTIONS.map(action => liquidityActionEventNames(action).length)).toEqual([1, 1, 1, 1, 1])
   })
 
   it('gives an action no liquidity event produces an empty selection, not everything', () => {
@@ -140,7 +140,7 @@ describe('per-action selections partition their category', () => {
     }
     // Pinned so a category dropped from the table above fails here rather than silently
     // shrinking the check to nothing.
-    expect(checked).toBe(16)
+    expect(checked).toBe(10)
   })
 
   it('keeps every transfer under every action, which is why no transfer arm filters', () => {

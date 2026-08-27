@@ -3,9 +3,8 @@ import { fileURLToPath } from 'node:url'
 import { describe, it, expect } from 'vitest'
 import {
   XYK_FARM_EVENT_KIND,
-  XYK_SHARE_ASSET_ID_FLOOR,
+  XYK_FARM_NFT_COLLECTION_ID,
   xykFarmLifecycleSelectSql,
-  xykShareTokensBelowFloorSql,
   xykTotalSharesInsertSql,
   stalePartitionsSql,
   partitionsNeedingRebuild,
@@ -47,8 +46,13 @@ describe('lp_lifecycle_events projection', () => {
     }
   })
 
-  it('scopes the job to the XYK farm deposit collection', () => {
-    expect(xykFarmLifecycleSelectSql()).toContain("collection='5389'")
+  // Basilisk's `xykLiquidityMining.nftCollectionId` runtime constant is 1. The job
+  // and the MV each carry it once; a change on one side without the other would
+  // leave the job re-filtering rows the projection never admitted (or vice versa).
+  it('scopes the job to the XYK farm deposit collection the projection admits', () => {
+    expect(XYK_FARM_NFT_COLLECTION_ID).toBe('1')
+    expect(xykFarmLifecycleSelectSql()).toContain(`collection='${XYK_FARM_NFT_COLLECTION_ID}'`)
+    expect(mv).toContain(`'collection') = '${XYK_FARM_NFT_COLLECTION_ID}'`)
   })
 
   it('decodes the JSON fields once, at insert time', () => {
@@ -59,19 +63,20 @@ describe('lp_lifecycle_events projection', () => {
   })
 })
 
-// The total-shares reconstruction windows over balance observations. Only 0.48%
-// of them belong to an XYK share token, but an MV predicate is evaluated per
-// inserted row and cannot join the pool set, which arrives from a different
-// pipeline and may arrive later. So the projection filters on a static superset —
-// the asset registry's sequential id range, where the XYK pallet's share tokens
-// are minted — and the job re-filters to the real set.
+// The total-shares reconstruction windows over balance observations. An MV
+// predicate is evaluated per inserted row and cannot join the pool set, which
+// arrives from a different pipeline and may arrive later; nor is the pool set
+// identifiable by id range on Basilisk, which registers PoolShare assets both
+// below and above the registry's sequential-id offset. So the projection admits
+// every substrate token observation and the job re-filters to the real set.
 describe('xyk_lp_share_observations projection', () => {
   const mv = schemaStatement('003_materialized_views.sql', 'xyk_lp_share_observations_mv')
   const table = schemaStatement('001_tables.sql', 'price_data.xyk_lp_share_observations')
 
-  it('filters on a static join-free superset, never on a set that can arrive later', () => {
-    expect(mv).toContain(`>= ${XYK_SHARE_ASSET_ID_FLOOR}`)
+  it('never filters on a set that can arrive later, nor on an asset-id range', () => {
     expect(mv).toContain("asset_kind = 'substrate'")
+    // An id floor would silently drop the pools whose share token sits below it.
+    expect(mv).not.toMatch(/asset_id\)? *[<>]=?/)
     for (const lateBound of ['XYK.PoolCreated', 'xyk_pool_registry', 'dictGet', 'dictHas', 'joinGet']) {
       expect(mv).not.toContain(lateBound)
     }
@@ -90,12 +95,6 @@ describe('xyk_lp_share_observations projection', () => {
     expect(sql).toContain('price_data.xyk_lp_share_observations FINAL')
     expect(sql).not.toContain('price_data.raw_balance_observations')
     expect(sql).toContain('asset_id IN (SELECT lp FROM lps)')
-  })
-
-  it('fails loudly if a share token is ever minted below the projection floor', () => {
-    const sql = xykShareTokensBelowFloorSql()
-    expect(sql).toContain('price_data.xyk_pool_registry')
-    expect(sql).toContain(`lp < ${XYK_SHARE_ASSET_ID_FLOOR}`)
   })
 })
 

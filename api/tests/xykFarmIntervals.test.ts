@@ -7,7 +7,7 @@ const ev = (o: Partial<XykFarmLifecycleEvent>): XykFarmLifecycleEvent =>
   ({ kind: 'nft_issue', depositId: '', block: 0, extrinsic: 0, event: 0, ts: 0, ...o } as XykFarmLifecycleEvent)
 
 describe('buildXykFarmIntervals', () => {
-  it('opens on 5389 issue + SharesDeposited and closes on DepositDestroyed', () => {
+  it('opens on deposit-NFT issue + SharesDeposited and closes on DepositDestroyed', () => {
     const out = buildXykFarmIntervals([
       ev({ kind: 'nft_issue', depositId: '907', owner: USER, block: 100, event: 116 }),
       ev({ kind: 'shares_deposited', depositId: '907', owner: USER, lpAssetId: 1000227, principalShares: '1332604317070', block: 100, event: 117 }),
@@ -37,7 +37,7 @@ describe('buildXykFarmIntervals', () => {
     expect(out[0].validTo).toBeNull()
   })
 
-  it('follows the 5389 deposit NFT to a new owner (transfer), same principal', () => {
+  it('follows the deposit NFT to a new owner (transfer), same principal', () => {
     const out = buildXykFarmIntervals([
       ev({ kind: 'nft_issue', depositId: '5', owner: USER, block: 10, event: 1 }),
       ev({ kind: 'shares_deposited', depositId: '5', owner: USER, lpAssetId: 42, principalShares: '1000', block: 10, event: 2 }),

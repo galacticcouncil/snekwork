@@ -9,9 +9,9 @@ import type { ReferendumListRow, ReferendumPallet } from './governanceService.ts
 import { weightedFromLabels } from './convictionWeight.ts'
 import { assetDescriptor, allExplorerAssets, PRICE_ALIAS_ID, SHARE_TOKEN_UNDERLYING_ID, priceAssetId, displayAssetId, type ExplorerAsset } from './explorerAssets.ts'
 import { accountVolumeSource } from './accountTradeVolume.ts'
-import { tagForAccount, taggedAccountByH160, taggedTruncationPairs, ammPoolAccounts, getTag as getTagRecord, allTags, INCENTIVES_REWARD_POT } from './tagService.ts'
+import { tagForAccount, taggedAccountByH160, ammPoolAccounts, getTag as getTagRecord, allTags } from './tagService.ts'
 import { identityForAccount, searchIdentitiesByDisplay, type AccountIdentity } from './identityService.ts'
-import { normalizeAddress, hydrationAddress, polkadotAddress, reservedH160AccountId, type NormalizedAddress } from './addressIdentity.ts'
+import { normalizeAddress, hydrationAddress, polkadotAddress, reservedH160AccountId } from './addressIdentity.ts'
 import { accountIcon, emojisMatchingName, emojiNameFor, parseSuffixEmojiQuery } from './omniwatchIdentity.ts'
 import { encodeAddress } from '@polkadot/util-crypto'
 import { hexToU8a } from '@polkadot/util'
@@ -103,7 +103,6 @@ export function accountRef(accountId: string): AccountRef {
 }
 
 const ACCOUNT_RE = /^0x[0-9a-f]{64}$/
-const EVM_RE = /^0x[0-9a-f]{40}$/
 function sqlAccountList(accounts: string[]): string {
   const safe = accounts.filter(a => ACCOUNT_RE.test(a))
   return safe.length ? safe.map(a => `'${a}'`).join(',') : "''"
@@ -111,9 +110,6 @@ function sqlAccountList(accounts: string[]): string {
 function sqlUIntList(values: Array<string | number>): string {
   const safe = [...new Set(values.map(v => String(v)).filter(v => /^\d+$/.test(v)))]
   return safe.length ? safe.join(',') : ''
-}
-function evmAccountIdFromAddress(evmAddress: string): string | null {
-  return EVM_RE.test(evmAddress) ? '0x45544800' + evmAddress.slice(2) + '0000000000000000' : null
 }
 
 // Every XCM consumer collapses stable (block,event) identities while decoding.
@@ -624,43 +620,6 @@ export function nonPlumbingTransferLegSql(fromExpr: string, toExpr: string, plum
                 AND ${toExpr} NOT IN (${plumbingList})`
 }
 
-// The `bind` CTE body shared by grouped rankings: ETH-prefixed rows standing
-// for a real account map onto it — explicit EVMAccounts bindings plus
-// truncations of TAGGED derived accounts (a stableswap pool's aToken pot must
-// fold into the pool's row, not rank as its own "Stableswap Pool" lookalike).
-// LIMIT 1 BY guards the join against a same-eth_id pair from both sources.
-// An account's directory key: its bound substrate owner when the row is that owner's
-// EVM-side pot, otherwise the account itself (module/sovereign truncations remapped
-// onto the full id). The `bind` LEFT JOIN fills unmatched rows with the owner column's
-// DEFAULT, so "no bound owner" looks different depending on that column's type: read out
-// of raw_account_aliases (Nullable(String)) it arrived as NULL and coalesce fell through,
-// but account_alias_directory stores it as a plain String, so it arrived as '' and
-// coalesce returned the empty owner — which collapsed every unbound account into a single
-// ''-keyed group (114,045 directory rows became 3,217, with one $135M row holding every
-// HDX on the chain). Test emptiness explicitly so the fallback cannot depend on the
-// column's nullability, this join's algorithm, or join_use_nulls.
-function boundAccountSql(alias: string): string {
-  const account = `${alias}.account_id`
-  return `if(ifNull(b.owner, '') != '', ifNull(b.owner, ''), if(
-                substring(${account}, 3, 8) = '45544800' AND substring(${account}, 11, 8) IN ('6d6f646c', '7369626c', '70617261'),
-                concat('0x', substring(${account}, 11, 40), '000000000000000000000000'),
-                ${account}))`
-}
-
-function bindCteSql(): string {
-  const pairs = taggedTruncationPairs()
-    .map(([h160, owner]) => `('0x45544800${h160.slice(2).toLowerCase()}0000000000000000', '${owner.toLowerCase()}')`)
-  return `SELECT eth_id, owner FROM (
-              SELECT DISTINCT concat('0x45544800', substring(evm_address, 3, 40), '0000000000000000') AS eth_id,
-                     account_id AS owner
-              FROM price_data.account_alias_directory
-              WHERE relationship = 'explicit_binding' AND alias_type = 'substrate_account_id'
-                AND account_id != '' AND evm_address != ''${pairs.length ? `
-              UNION DISTINCT
-              SELECT eth_id, owner FROM values('eth_id String, owner String', ${pairs.join(', ')})` : ''}
-            ) ORDER BY eth_id LIMIT 1 BY eth_id`
-}
-
 // XYK.PoolCreated seeds a brand-new pool — a liquidity action in its own
 // right ('Create'), not a pair of raw transfers to an unknown account.
 export function liqActionFor(eventName: string): 'Add' | 'Remove' | 'Create' | 'Claim' | 'Destroy' {
@@ -679,26 +638,20 @@ export function liquidityActionEventNames(action?: string): string[] {
 
 // Which event arg holds the amount a liquidity row displays AGAINST ITS asset_id,
 // decided per event name because the denominations don't line up. A generic
-// presence chain (claimed → amount → shares) silently mixes them: `shares` is the
-// displayed amount only for Stableswap, whose asset_id is the poolId share token,
-// while XYK.LiquidityRemoved carries `shares` next to assetA — reading it renders
-// LP-share units at assetA's price. '' means the event has no field in the
-// displayed denomination at all; those rows stay empty on purpose and
-// fillMissingLiquidityAmounts recovers the real amount from the paired pool↔who
-// transfer leg in the same dispatch scope. Mirrored by the `amount` expressions of
-// liquidity_activity_mv and account_activity_v3_mv (see liquidityAmountPairing).
+// presence chain (claimed → amount → shares) silently mixes them: no XYK liquidity
+// event is denominated in the asset its row displays — XYK.LiquidityRemoved carries
+// `shares` next to assetA, and reading it renders LP-share units at assetA's price.
+// '' means the event has no field in the displayed denomination at all; those rows
+// stay empty on purpose and fillMissingLiquidityAmounts recovers the real amount
+// from the paired pool↔who transfer leg in the same dispatch scope. Mirrored by the
+// `amount` expressions of liquidity_activity_mv and account_activity_v3_mv (see
+// liquidityAmountPairing).
 export const LIQUIDITY_AMOUNT_ARG: Record<string, string> = {
-  'Omnipool.LiquidityAdded': 'amount',                     // assetId + amount
-  'Omnipool.LiquidityRemoved': '',                         // sharesRemoved vs assetId
-  'Omnipool.PositionCreated': 'amount',                    // asset + amount (listing grant)
-  'Stableswap.LiquidityAdded': 'shares',                   // asset_id IS the share token
-  'Stableswap.LiquidityRemoved': 'shares',
   'XYK.LiquidityAdded': '',                                // amountA/amountB vs assetA
   'XYK.LiquidityRemoved': '',                              // shares vs assetA
   'XYK.PoolCreated': '',                                   // initialSharesAmount vs assetA
   'XYK.PoolDestroyed': '',                                 // no amount field; see AMOUNTLESS_LIQUIDITY_EVENTS
-  'OmnipoolLiquidityMining.RewardClaimed': 'claimed',      // claimed + rewardCurrency
-  'XYKLiquidityMining.RewardClaimed': 'claimed',
+  'XYKLiquidityMining.RewardClaimed': 'claimed',           // claimed + rewardCurrency
 }
 
 // Events whose empty amount is the ANSWER, not a gap to be recovered.
@@ -2242,22 +2195,16 @@ export async function getHolders(assetId: number, limit: number, offset = 0): Pr
             WHERE asset_id = {asset:String}
             GROUP BY account_id
           ),
-          bind AS (
-            ${bindCteSql()}
-          ),
           latest AS (
             -- Holder pages must reflect current state. The latest-balance aggregate
             -- is refreshed by full RPC balance snapshots; falling back to an older
             -- non-zero observation resurrects accounts that now hold zero.
-            -- ETH-prefixed rows standing for a real account (module/sovereign
-            -- truncations, bound H160s) are remapped onto it, like the accounts list.
             SELECT
-              ${boundAccountSql('l')} AS account_id,
+              l.account_id AS account_id,
               sum(l.bal) AS bal, max(l.last_block) AS last_block FROM (
               SELECT latest_raw.account_id AS account_id, latest_raw.latest_bal AS bal, latest_raw.latest_block AS last_block
               FROM latest_raw
             ) l
-            LEFT JOIN bind b ON b.eth_id = l.account_id
             GROUP BY account_id
           ),
           grouped AS (
@@ -2500,7 +2447,6 @@ export interface AddressDetail {
   tag: { id: string; name: string; color: string; icon: string } | null
   identity: AccountIdentity | null
   relatedAccountIds: string[]
-  aliases: { accountId: string | null; evmAddress: string | null; primaryProfile: string; relationship: string; confidence: number }[]
   balances: AddressBalance[]
   // Up to 4 largest holdings (> $10 and ≥ 10% of held value) — the shared icon set
   // for the accounts list and the hover card. Derived from `balances` above.
@@ -2513,129 +2459,37 @@ export interface AddressDetail {
   multisigMemberships: MultisigMembershipDisplay[]
 }
 
-// Resolve an address input to its canonical AccountId32 + the full set of
-// related account_ids (self + alias-linked accounts of the same entity). Shared
-// by getAddress and the per-account activity/extrinsics/events endpoints so they
-// all scope to the same related set. Returns null when the input isn't a valid
-// address.
-interface AccountAliasRow {
-  account_id: string | null
-  evm_address: string | null
-  primary_profile: string
-  relationship: string
-  confidence: number
-}
-
+// Resolve an address input to its canonical AccountId32 + the account_ids that
+// scope its reads. Shared by getAddress and the per-account
+// activity/extrinsics/events endpoints so they all scope to the same set.
+// Returns null when the input isn't a valid address.
 interface RelatedAccounts {
   norm: NonNullable<ReturnType<typeof normalizeAddress>>
   related: string[]
-  aliasRows: AccountAliasRow[]
-}
-// A bare EVM H160 is ambiguous: it is either a genuine ("pure") EVM account, or
-// the default first-20-bytes EVM mapping of a real substrate account that touched
-// the EVM money market (borrow/lending) — Hydration encodes the latter as a
-// truncated AccountId32 0x45544800 + H160 + zeros, which normalizeAddress reports
-// as kind 'evm'. An EVMAccounts.Bound event records the true substrate AccountId32
-// behind an H160; when one exists we re-anchor identity to that substrate account
-// so it is shown by its SS58 (e.g. 16Cbxt…) instead of the H160. The bound
-// account's first 20 bytes equal the H160, so money-market H160 derivation
-// (norm.accountId.slice(2,42)) still resolves to the same EVM-side position.
-export function boundSubstrateAccount(
-  aliasRows: { account_id: string | null; evm_address: string | null; relationship: string }[],
-  evmAddress: string,
-): string | null {
-  for (const a of aliasRows) {
-    if (a.relationship !== 'explicit_binding' || a.evm_address !== evmAddress) continue
-    if (a.account_id && ACCOUNT_RE.test(a.account_id) && !evmFromAccountId(a.account_id)) return a.account_id
-  }
-  return null
-}
-
-// The two alias queries below are ORDER BY'd because their rows reach the client as
-// an array. Reading raw_account_aliases they came back in part order, which changed
-// under merges; the directory is small enough to sort outright, so `aliases` is now
-// stable across requests instead of merely usually-stable.
-// Like normalizeAddress, but re-anchors a bound EVM H160 to its substrate account
-// (see boundSubstrateAccount). For callers that don't already hold the alias rows.
-async function canonicalizeAddress(input: string): Promise<NormalizedAddress | null> {
-  const norm = normalizeAddress(input)
-  if (!norm || norm.kind !== 'evm' || !norm.evmAddress) return norm
-  const res = await client.query({
-    query: `SELECT account_id FROM price_data.account_alias_directory
-            WHERE primary_profile = {pp:String}
-              AND alias_type = 'substrate_account_id' AND relationship = 'explicit_binding'
-            LIMIT 1`,
-    query_params: { pp: 'evm:' + norm.evmAddress }, format: 'JSONEachRow',
-  })
-  const bound = (await res.json<{ account_id: string }>())[0]?.account_id
-  if (bound && ACCOUNT_RE.test(bound) && !evmFromAccountId(bound)) return normalizeAddress(bound) ?? norm
-  return norm
 }
 
 export async function resolveRelatedAccounts(addressInput: string): Promise<RelatedAccounts | null> {
   const norm0 = normalizeAddress(addressInput)
   if (!norm0 || !norm0.accountId) return null
-  const aliasRes = await client.query({
-    query: `SELECT DISTINCT account_id, evm_address, primary_profile, relationship, confidence
-            FROM price_data.account_alias_directory
-            WHERE account_id = {acc:String} OR evm_address = {evm:String}
-            ORDER BY account_id, evm_address, primary_profile, relationship, confidence`,
-    query_params: { acc: norm0.accountId, evm: norm0.evmAddress ?? '' }, format: 'JSONEachRow',
-  })
-  let aliasRows = await aliasRes.json<AccountAliasRow>()
-  const queriedEvms = new Set<string>()
-  if (norm0.evmAddress && EVM_RE.test(norm0.evmAddress)) queriedEvms.add(norm0.evmAddress)
-  const evmAliases = new Set<string>()
-  if (norm0.evmAddress && EVM_RE.test(norm0.evmAddress)) evmAliases.add(norm0.evmAddress)
-  for (const a of aliasRows) {
-    const evm = a.evm_address?.toLowerCase()
-    if (evm && EVM_RE.test(evm)) evmAliases.add(evm)
-  }
-  const evmsToLoad = [...evmAliases].filter(evm => !queriedEvms.has(evm))
-  if (evmsToLoad.length) {
-    const evmAliasRes = await client.query({
-      query: `SELECT DISTINCT account_id, evm_address, primary_profile, relationship, confidence
-              FROM price_data.account_alias_directory
-              WHERE evm_address IN ({evms:Array(String)})
-              ORDER BY account_id, evm_address, primary_profile, relationship, confidence`,
-      query_params: { evms: evmsToLoad }, format: 'JSONEachRow',
-    })
-    const seen = new Set(aliasRows.map(a => JSON.stringify(a)))
-    for (const row of await evmAliasRes.json<AccountAliasRow>()) {
-      const key = JSON.stringify(row)
-      if (!seen.has(key)) {
-        seen.add(key)
-        aliasRows.push(row)
-      }
-    }
-  }
-  // Re-anchor H160 inputs to the substrate side when EVMAccounts.Bound proves a
-  // real account owns the H160, or when the H160 is the runtime truncation of a
-  // tagged derived account (e.g. a stableswap pool's EVM-side aToken holdings).
-  // Substrate inputs may discover the same H160 from the first query, so
-  // related also includes its truncated EVM AccountId below.
+  // Basilisk has no EVM, so there is no cross-account alias graph to fold: an
+  // account is exactly itself. An H160-shaped input that is the runtime
+  // truncation of a TAGGED derived account still re-anchors onto that account,
+  // which is an in-memory tag lookup rather than an indexed alias.
   let norm = norm0
   if (norm0.kind === 'evm' && norm0.evmAddress) {
-    const bound = boundSubstrateAccount(aliasRows, norm0.evmAddress) ?? taggedAccountByH160(norm0.evmAddress)
+    const bound = taggedAccountByH160(norm0.evmAddress)
     if (bound) norm = normalizeAddress(bound) ?? norm0
   }
   const related = new Set<string>([norm.accountId])
-  // The account's own truncated-H160 pot (runtime AccountId→EVM mapping) always
-  // belongs to this entity — include it even when no alias row was observed yet.
   const ownEvmForm = evmAccountForm(norm.accountId)
   if (ownEvmForm) related.add(ownEvmForm)
-  for (const a of aliasRows) if (a.account_id && ACCOUNT_RE.test(a.account_id)) related.add(a.account_id.toLowerCase())
-  for (const evm of evmAliases) {
-    const accountId = evmAccountIdFromAddress(evm)
-    if (accountId) related.add(accountId)
-  }
-  return { norm, related: [...related], aliasRows }
+  return { norm, related: [...related] }
 }
 
 export async function getAddress(addressInput: string, opts: { summary?: boolean } = {}): Promise<AddressDetail | null> {
   const resolved = await resolveRelatedAccounts(addressInput)
   if (!resolved) return null
-  const { norm, aliasRows } = resolved
+  const { norm } = resolved
   // The hover card shows only name + value + top holdings + volumes. `summary` skips
   // the expensive extras it never renders (proxy/multisig live reads) so the
   // preview loads fast; the detail page still requests the full object.
@@ -2699,7 +2553,6 @@ export async function getAddress(addressInput: string, opts: { summary?: boolean
       tag: tag ? { id: tag.tagId, name: tag.name, color: tag.color, icon: tag.icon } : null,
       identity: onchainId,
       relatedAccountIds: [...related],
-      aliases: aliasRows.map(a => ({ accountId: a.account_id, evmAddress: a.evm_address, primaryProfile: a.primary_profile, relationship: a.relationship, confidence: a.confidence })),
       balances,
       topAssets: topHeldTokens(balances),
       portfolioUsd: portfolioUsd + lpUsd,
@@ -2821,7 +2674,7 @@ export const OMNI_FIXED = 10n ** 18n
 // XYK LP redeemable reserve legs for `shares` of a pool with raw reserves `reserveA/B` and
 // `totalShares` outstanding — amountX = floor(reserveX * shares / totalShares). Integer/
 // bigint throughout (values exceed 2^53); callers convert to USD only after this. Shared by
-// direct wallet LP balances and collection-5389 farm-deposit principal (Phase 2, XYK).
+// direct wallet LP balances and farm-deposit principal (Phase 2, XYK).
 export function xykShareLegs(shares: bigint, reserveA: bigint, reserveB: bigint, totalShares: bigint): { amountA: bigint; amountB: bigint } {
   if (totalShares <= 0n || shares <= 0n) return { amountA: 0n, amountB: 0n }
   return { amountA: (reserveA * shares) / totalShares, amountB: (reserveB * shares) / totalShares }
@@ -2865,7 +2718,7 @@ async function loadXykCurrentState(lpAssetIds: number[]): Promise<Map<number, Xy
   return out
 }
 
-// Current XYK LP positions (direct wallet shareToken balances + open collection-5389 farm
+// Current XYK LP positions (direct wallet shareToken balances + open farm
 // deposits) valued at pool NAV, so the account's headline value and the history's pinned
 // final point include XYK. Direct LP token balances contribute NAV here, not their (null)
 // token price in `balances` — no double count.
@@ -2894,7 +2747,7 @@ async function getXykPositions(accounts: string[], balances: AddressBalance[]): 
 }
 
 // Historical XYK principal for the value-history chart (Phase 2). For the account's LP holdings
-// — direct wallet shareToken balances AND collection-5389 farm-deposit principal — this loads
+// — direct wallet shareToken balances AND farm-deposit principal — this loads
 // the per-bucket pool state needed to value each at NAV (reserves × shares / total supply).
 // Total supply is the reconstructed step function; reserves are the sampled snapshot. All
 // account/pool/asset-bounded. Callers combine direct + farmed shares and apply xykShareLegs.
@@ -3567,7 +3420,7 @@ export function swapRouteReps<T extends SwapGroupRow>(rows: T[], prefer: (row: T
 // number alone merges a swap in extrinsic N with an unrelated event at index N in
 // the same block, so the space belongs in the key. This list must stay identical to
 // the swap-event list in clickhouse/schema/003_materialized_views.sql.
-const HISTOGRAM_SWAP_EVENTS_SQL = `'Router.Executed','Omnipool.SellExecuted','Omnipool.BuyExecuted','Stableswap.SellExecuted','Stableswap.BuyExecuted','XYK.SellExecuted','XYK.BuyExecuted','LBP.SellExecuted','LBP.BuyExecuted'`
+const HISTOGRAM_SWAP_EVENTS_SQL = `'Router.Executed','XYK.SellExecuted','XYK.BuyExecuted','LBP.SellExecuted','LBP.BuyExecuted'`
 const SWAP_EVENTS = ['Router.Executed', 'Router.RouteExecuted', 'XYK.SellExecuted', 'XYK.BuyExecuted', 'LBP.SellExecuted', 'LBP.BuyExecuted']
 // The router's net-trade summary was emitted as Router.RouteExecuted before the
 // pallet renamed it to Router.Executed (block ~4,542,080); both carry the same
@@ -4032,20 +3885,9 @@ export async function getTradeDetailByEvent(height: number, eventIndex: number):
     const direction: 'Sell' | 'Buy' = ev.event_name.includes('Buy') ? 'Buy' : 'Sell'
     const netWho = String(args.who ?? '')
 
-    const dcaRes = await client.query({
-      query: `SELECT who, amount_in, event_index
-              FROM price_data.dca_events
-              WHERE block_height = {h:UInt32} AND event_name = 'DCA.TradeExecuted'
-              LIMIT 1000`,
-      query_params: { h: height }, format: 'JSONEachRow',
-    })
-    // Same-amount executions can share a block; DCA.TradeExecuted follows its
-    // swap's events, so prefer the nearest matching row after this event.
-    const dcaCandidates = (await dcaRes.json<{ who: string; amount_in: string; event_index: number }>())
-      .filter(d => d.amount_in === netAmts.amountIn)
-      .sort((a, b) => Number(a.event_index) - Number(b.event_index))
-    const dca = dcaCandidates.find(d => Number(d.event_index) > eventIndex) ?? dcaCandidates.at(-1)
-    const actorId = dca?.who || (ACCOUNT_RE.test(netWho) && netWho !== ROUTER_PALLET_ACCT ? netWho : null)
+    // An extrinsic-less swap event carries its actor in `who`, unless that is the
+    // router's own pallet account standing in for the real trader.
+    const actorId = ACCOUNT_RE.test(netWho) && netWho !== ROUTER_PALLET_ACCT ? netWho : null
 
     const route: TradeHop[] = isRouterNet(ev.event_name)
       ? await inferredRouterRoute(height, eventIndex, netAmts)
@@ -6793,27 +6635,6 @@ async function suppressTransferCandidates(transfers: TransferRow[]): Promise<Tra
     }
   }
 
-  // Incentive claims own their reward-pot transfer even though the semantic
-  // evidence lives in the compact call model rather than an event.
-  const incentiveKeys = transfers
-    .filter(row => row.extrinsicIndex != null && row.from.accountId.toLowerCase() === INCENTIVES_REWARD_POT)
-    .map(row => `${row.blockHeight}:${row.extrinsicIndex}`)
-  const incentiveChunks = await mapChunksConcurrently(incentiveKeys, 5_000, CHUNK_QUERY_CONCURRENCY, async chunk => {
-    const tuples = [...new Set(chunk)].map(key => { const [height, index] = key.split(':'); return `(${height},${index})` })
-    const result = await client.query({
-      query: `SELECT DISTINCT block_height, extrinsic_index
-              FROM price_data.incentive_claim_calls
-              WHERE (block_height, extrinsic_index) IN (${tuples.join(',')})`,
-      format: 'JSONEachRow',
-    })
-    return result.json<{ block_height: number; extrinsic_index: number }>()
-  })
-  for (const rows of incentiveChunks) {
-    for (const row of rows) {
-      semanticExtrinsics.add(`${row.block_height}:${row.extrinsic_index}`)
-    }
-  }
-
   return transfers.filter(row => {
     if (row.extrinsicIndex != null) return !semanticExtrinsics.has(`${row.blockHeight}:${row.extrinsicIndex}`)
     const owners = hookAccounts.get(row.blockHeight)
@@ -8447,7 +8268,7 @@ async function getAccountHistory(accounts: string[]): Promise<{ portfolioSeries:
     })
   const assetIds = [...new Set(balRows.map(r => r.asset_id))]
   if (!assetIds.length) return { portfolioSeries: [], portfolioDates: [], portfolioBlocks: [], balanceHistory: [] }
-  // Historical XYK LP principal (direct wallet shareToken balances + collection-5389 farm
+  // Historical XYK LP principal (direct wallet shareToken balances + farm
   // deposits) valued at pool NAV. Loaded before the price query so both pool assets are priced.
   const xykHist = await loadXykPrincipalHistory(accounts, assetIds.map(Number), rng.minb, BUCKET, N)
   // Aliased assets have no price feed of their own — query the underlying's
@@ -8576,7 +8397,7 @@ async function getAccountHistory(accounts: string[]): Promise<{ portfolioSeries:
   }
 
   // XYK LP principal on the historical curve, valued at pool NAV: combine the account's
-  // direct wallet shareToken balance and its collection-5389 farm-deposit principal per
+  // direct wallet shareToken balance and its farm-deposit principal per
   // bucket, decompose to underlying reserve legs (integer), value at the bucket's closed
   // price. Replaces the (null) direct-token contribution suppressed above — no double count.
   if (xykHist && xykHist.lpAssetIds.size) {
@@ -8916,10 +8737,6 @@ const SWAP_GROUP_KEY_SQL = 'ifNull(toInt64(extrinsic_index), -toInt64(event_inde
 // trailing run with no summary is one more route represented by its highest event. So
 // the count and the page cannot disagree about how many trades an extrinsic held.
 //
-// The liquidation set is the liquidation_extrinsics projection, not raw_events: an
-// event_name predicate there is only a set(200) skip index, so it prunes no granules and
-// the scan pulled args_json along with it — 17.2M rows for 8k extrinsics.
-//
 // The token filter reads the SAME representative the page renders, so a multi-hop route
 // is matched on its NET assets in both halves and an intermediate asset the user never
 // named does not pull the route in on one side only.
@@ -8936,9 +8753,9 @@ function accountSwapTradeArm(list: string, bound: string, tokenIds?: number[]): 
                if(empty(tail), net_routes, arrayPushBack(net_routes, tuple(tail[-1].3, tail[-1].4))) AS routes
         FROM (
           SELECT block_height,
-                 -- Null for a hook swap, which owns no extrinsic; the liquidation and
-                 -- share-leg exclusions below are extrinsic-scoped and skip it for free,
-                 -- since a tuple holding NULL matches nothing on either side.
+                 -- Null for a hook swap, which owns no extrinsic; the share-leg
+                 -- exclusion below is extrinsic-scoped and skips it for free, since a
+                 -- tuple holding NULL matches nothing on either side.
                  any(extrinsic_index) AS ext_index,
                  arraySort(x -> x.1, groupArray(tuple(event_index, event_name IN (${ROUTER_NET_EVENTS_SQL}), asset_in, asset_out))) AS evs,
                  arrayFilter(x -> x.2, evs) AS nets
@@ -8950,10 +8767,6 @@ function accountSwapTradeArm(list: string, bound: string, tokenIds?: number[]): 
       ARRAY JOIN routes AS route
     )
     WHERE 1 ${tokenFilter}
-      AND (ext_index IS NULL OR (block_height, ext_index) NOT IN (
-        -- Read whole and without FINAL: this is the right side of a NOT IN, which is
-        -- set-semantic, so an unmerged replacement duplicate cannot change the answer.
-        SELECT block_height, extrinsic_index FROM price_data.liquidation_extrinsics))
       AND NOT ((rep_in IN (${shareAssetIdsSql()}) OR rep_out IN (${shareAssetIdsSql()}))
         AND (block_height, ext_index) IN (
           SELECT block_height, extrinsic_index FROM price_data.liquidity_activity
@@ -10243,20 +10056,9 @@ async function countAccountActivity(accounts: string[], type: string, action: st
 // that acts invalidates itself immediately, which is also faster than waiting
 // out a TTL.
 //
-// Two sources, because one does not see everything: account_activity_v3 is
-// ORDER BY (account, block_height, …) so its half is an index-prefix read,
-// while a DCA execution is attributed to the schedule's OWNER, whom the
-// per-account event index does not name — measured against 17 recently active
-// accounts, that was the single case where the index sat 12 blocks behind a
-// trade the feed was already showing.
-//
-// dca_events is ORDER BY (event_name, block_height, …), so `who` prunes nothing
-// and that arm reads the table. What it is asked, though, is only whether it
-// beats the first arm — so it is bounded by that height, which puts a range on
-// the key's SECOND column and leaves each event_name's granules above it. Same
-// answer (a lower DCA height could never have won the `greatest`), 7.32M rows
-// down to 705k. At ~2,000 of these an hour it was the second-largest read in the
-// deployment.
+// account_activity_v3 is ORDER BY (account, block_height, …), so the watermark is
+// an index-prefix read of the same projection every per-account feed is built from
+// — it sees exactly what the page can show.
 async function accountActivityWatermark(accounts: string[]): Promise<number> {
   if (!accounts.length) return 0
   // Briefly cached: one page asks for several lists at once, and they should
@@ -10264,12 +10066,8 @@ async function accountActivityWatermark(accounts: string[]): Promise<number> {
   return cached(`explorer:acct-watermark:${accounts.join(',')}`, 2_000, async () => {
     try {
       const res = await client.query({
-        query: `WITH (SELECT max(block_height) FROM price_data.account_activity_v3 WHERE account IN {accounts:Array(String)}) AS indexed
-                SELECT greatest(
-                  indexed,
-                  (SELECT max(block_height) FROM price_data.dca_events
-                   WHERE who IN {accounts:Array(String)} AND block_height > indexed)
-                ) AS w`,
+        query: `SELECT max(block_height) AS w FROM price_data.account_activity_v3
+                WHERE account IN {accounts:Array(String)}`,
         query_params: { accounts }, format: 'JSONEachRow',
       })
       return Number((await res.json<{ w: number | null }>())[0]?.w ?? 0)
@@ -12424,7 +12222,7 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
     const orderBy = ACCOUNT_SORT_SQL[sort] ?? ACCOUNT_SORT_SQL.value
     const includeActivitySort = sort === 'activity'
     const includeVolumeSort = sort === 'volume'
-    const memberFilter = members ? `WHERE ${boundAccountSql('l')} IN {members:Array(String)}` : ''
+    const memberFilter = members ? `WHERE l.account_id IN {members:Array(String)}` : ''
     // Every CTE below groups by this SAME `gkey` — a system tag's label_id when
     // the account has one, else the account itself. Scoped to one tag's members
     // the tag IS the page, so grouping by it would collapse every member into
@@ -12457,10 +12255,9 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
               SELECT ${gkeySql('v.account_id')} AS gkey, sum(v.volume_usd) AS volume_usd
               FROM (
                 SELECT
-                  ${boundAccountSql('vr')} AS account_id,
+                  vr.account_id AS account_id,
                   sum(vr.volume_usd) AS volume_usd
                 FROM trade_volume_raw vr
-                LEFT JOIN bind b ON b.eth_id = vr.account_id
                 GROUP BY account_id
               ) v
               LEFT JOIN tags t ON t.account_id = v.account_id
@@ -12474,20 +12271,9 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
           WITH
             tags AS (SELECT account_id, any(label_id) AS lid, any(label_name) AS lname, any(color) AS c, any(icon) AS ic
                        FROM price_data.account_tags FINAL WHERE deleted = 0 GROUP BY account_id),
-            -- H160 → bound substrate owner (EVMAccounts.Bound; the bound H160 is
-            -- the owner's first 20 bytes, so the ETH-prefixed row is the same
-            -- entity's EVM-side pot).
-            bind AS (
-              ${bindCteSql()}
-            )
-            ,
             latest AS (
-              -- ETH-prefixed rows that stand for a real account are remapped onto
-              -- it before grouping: module/sovereign truncations ('modl', 'sibl',
-              -- 'para' — full id = the 20 bytes + zero padding) and bound H160s.
-              -- Only genuine, unbound EVM accounts keep the ETH-prefixed key.
               SELECT
-                ${boundAccountSql('l')} AS account_id,
+                l.account_id AS account_id,
                 l.asset_id AS asset_id, l.bal AS bal, l.lb AS lb
               FROM (
                 SELECT
@@ -12498,7 +12284,6 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
                 FROM price_data.account_asset_latest_balances
                 GROUP BY account_id, asset_id
               ) l
-              LEFT JOIN bind b ON b.eth_id = l.account_id
               ${memberFilter}
             ),
             -- One name per account across every identity source: lowest chain
@@ -13270,7 +13055,7 @@ const TRANSFER_EVENTS = ['Balances.Transfer', 'Tokens.Transfer', 'Currencies.Tra
 // This list, LIQUIDITY_AMOUNT_ARG and HISTOGRAM_SWAP_EVENTS_SQL mirror the event
 // sets clickhouse/schema/003_materialized_views.sql ingests, and the parity is
 // pinned by tests: they are trimmed together with the schema, never here alone.
-const LIQUIDITY_EVENTS = ['Omnipool.LiquidityAdded', 'Omnipool.LiquidityRemoved', 'Omnipool.PositionCreated', 'Stableswap.LiquidityAdded', 'Stableswap.LiquidityRemoved', 'XYK.LiquidityAdded', 'XYK.LiquidityRemoved', 'XYK.PoolCreated', 'XYK.PoolDestroyed', 'OmnipoolLiquidityMining.RewardClaimed', 'XYKLiquidityMining.RewardClaimed']
+const LIQUIDITY_EVENTS = ['XYK.LiquidityAdded', 'XYK.LiquidityRemoved', 'XYK.PoolCreated', 'XYK.PoolDestroyed', 'XYKLiquidityMining.RewardClaimed']
 // Every event the vote CATEGORY renders: the capital-locking conviction/Democracy
 // votes plus the collective (Council / Technical Committee) ones the feed merges
 // in. Used for the daily histogram's name set and for transfer subordination (a
@@ -13782,7 +13567,7 @@ async function searchUncached(query: string): Promise<SearchResult[]> {
   // A 64-hex value is ambiguous (could be an AccountId32 or a block/extrinsic hash);
   // only offer it as an account when it didn't resolve to a known hash.
   const seenAccounts = new Set<string>()
-  const norm = await canonicalizeAddress(query)
+  const norm = normalizeAddress(query)
   if (norm?.accountId && (!is64Hex || !hashHit)) {
     const id = identityForAccount(norm.accountId)
     const ic = accountIcon(norm.accountId)

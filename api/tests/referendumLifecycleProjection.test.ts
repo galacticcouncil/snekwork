@@ -42,7 +42,7 @@ describe('the referendum lifecycle projection replaces the raw_events scans', ()
     expect(governanceService).toContain(`FROM price_data.vote_activity\n            WHERE event_name = 'Democracy.Voted' AND toUInt32(JSONExtractInt(args_json, 'refIndex')) = {idx:UInt32}`)
   })
 
-  // Unlike dust_lost_events and liquidation_extrinsics, this projection is not a lookup
+  // Unlike dust_lost_events, this projection is not a lookup
   // set: its rows are returned and read positionally (first row, last concluding row,
   // last row carrying a tally) and grouped into the directory. A replayed range therefore
   // has to be collapsed, which is what FINAL does — re-running the backfill doubled the

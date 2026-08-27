@@ -92,11 +92,6 @@ let byH160 = new Map<string, string>()
 export function taggedAccountByH160(h160: string): string | null {
   return byH160.get(h160.toLowerCase()) ?? null
 }
-// All (h160 → owner) truncation pairs — for SQL-side remapping of ETH-prefixed
-// rows in grouped rankings (accounts directory, holders).
-export function taggedTruncationPairs(): [string, string][] {
-  return [...byH160.entries()]
-}
 // AMM pool accounts (XYK pair + stableswap accounts) — derived, non-modl ids
 // whose transfer legs are pool plumbing behind trade/liquidity rows.
 export function ammPoolAccounts(): Set<string> {
@@ -126,11 +121,6 @@ const BIL_ICON = 'https://cdn.jsdelivr.net/gh/galacticcouncil/intergalactic-asse
 // member's omniwatch emoji (e.g. Treasury → 🏦). seedDefaultTags() syncs this set
 // into the database on every start, so a fresh database gets all of them and an
 // existing one picks up additions.
-// The money market's reward vault, in the truncated-account form its on-chain
-// activity is indexed under. Lives here rather than beside its reader so the tag
-// and the reward-claim classification in explorerService name the same account.
-export const INCENTIVES_REWARD_POT = '0x45544800112c208b900bcfc9ff8131d0f45769cb6c7c7d8d0000000000000000'
-
 export const DEFAULT_TAGS: { tagId: string; name: string; color: string; note: string; icon: string; addresses: string[] }[] = [
   {
     tagId: 'kraken', name: 'Kraken', color: '#7b6cf6', note: '', icon: '/tag-icons/kraken.jpg',
@@ -228,16 +218,6 @@ export const DEFAULT_TAGS: { tagId: string; name: string; color: string; note: s
     // EVM precompile (contract interface) + the py/hsmod substrate pallet pot
     // holding the module's aToken collateral — same module, two account forms.
     addresses: ['0x000000000000000000000000000000000000090a', modlAccountId('py/hsmod')],
-  },
-  {
-    // The vault the money market's Aave RewardsController pulls from when a user
-    // claims incentives: it has never signed an extrinsic, yet has paid BNC, PRIME,
-    // GDOT and HDX out to 1.7k distinct claimants. Untagged it reads as an
-    // anonymous six-figure whale rather than as the pot behind every reward claim.
-    tagId: 'incentive-pot', name: 'Incentive Pot', color: '#6aa5f8',
-    note: 'Money-market incentives reward pot — the vault the rewards controller pays claimed lending incentives from',
-    icon: '🎁',
-    addresses: [INCENTIVES_REWARD_POT],
   },
   {
     // Primary issuance of BIL (Decentral × DUX Group invoice-receivables RWA):

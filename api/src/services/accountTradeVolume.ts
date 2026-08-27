@@ -10,13 +10,15 @@
 
 import { allExplorerAssets, PRICE_ALIAS_ID, SHARE_TOKEN_UNDERLYING_ID, priceAssetId } from './explorerAssets.ts'
 
-// First block emitting Broadcast.Swapped (the unified swap-event era). At/above
+// First block emitting Broadcast.Swapped (the unified swap-event era) — the first
+// Basilisk block of runtime spec 128, where pallet-broadcast arrived. At/above
 // this height a swap's hops are Broadcast.Swapped* events (grouped by their
 // operationStack Router id); below it, legacy pallet *Executed events (grouped by
-// extrinsic index).
-const BROADCAST_MIN_BLOCK = 6_837_788
+// extrinsic index). Mirrored by swap_source_partition_watermarks_mv in
+// clickhouse/schema/003_materialized_views.sql (parity asserted in jobs.test.ts).
+const BROADCAST_MIN_BLOCK = 12_663_601
 const EVENT_ANCHOR_OFFSET = 1_099_511_627_776n // 2^40 — event-index anchors clear of real router ids
-const LEGACY_EVENTS = "'Omnipool.SellExecuted','Omnipool.BuyExecuted','XYK.SellExecuted','XYK.BuyExecuted','Stableswap.SellExecuted','Stableswap.BuyExecuted','LBP.SellExecuted','LBP.BuyExecuted'"
+const LEGACY_EVENTS = "'XYK.SellExecuted','XYK.BuyExecuted','LBP.SellExecuted','LBP.BuyExecuted'"
 const BROADCAST_EVENTS = "'Broadcast.Swapped','Broadcast.Swapped2','Broadcast.Swapped3'"
 
 // Source for per-account trading volume: the de-duped net-trade model, whose

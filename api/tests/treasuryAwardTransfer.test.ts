@@ -22,7 +22,8 @@ const mvLine = (name: string): string =>
 // recreate leaves a gap for every block landing in between, which is silent data loss
 // rather than downtime); and `Treasury.Awarded` shares none of the other events' field
 // names, so folding it in would mean branching all four extractions on event_name.
-// price_data.pool_swap_legs already fans five MVs into one table for the same reason.
+// price_data.daily_chain_identity_counts_v2 is fanned into by two MVs for the same
+// reason — one per source table, each with its own extraction.
 describe('treasury awards enter the transfer read model', () => {
   const mv = mvLine('account_transfer_activity_treasury_mv')
 
