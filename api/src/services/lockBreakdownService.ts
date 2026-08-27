@@ -23,7 +23,7 @@ import { NOMINAL_RELAY_BLOCK_MS, paraBlockMs } from './blockTime.ts'
 //    non-transferable part of `free` is max(lock amounts), not their sum.
 //  - Named reserves, holds and pallet deposits are ADDITIVE slices of
 //    `reserved` (holds are accounted inside `reserved` by pallet-balances).
-//  - `claimable` on the vesting lock is HDX whose periods already elapsed but
+//  - `claimable` on the vesting lock is BSX whose periods already elapsed but
 //    that no one claimed yet — locked on-chain, releasable with vesting.claim.
 
 export type BreakdownKind = 'lock' | 'reserve' | 'hold' | 'deposit'
@@ -56,7 +56,7 @@ function projector(headTsMs: number, anchorBlock: number, msPerBlock: number): (
 }
 
 // RELAY heights (vesting schedules) — do not convert. Polkadot's 6s slot time
-// is not part of Hydration's 2s migration, so this stays hard-coded and must
+// is not part of the parachain's block-time migrations, so this stays hard-coded and must
 // never be routed through the parachain pace.
 export function relayBlockProjector(headTsMs: number, anchorRelayBlock: number): (block: number) => number {
   return projector(headTsMs, anchorRelayBlock, NOMINAL_RELAY_BLOCK_MS)
@@ -71,9 +71,9 @@ export function paraBlockProjector(headTsMs: number, anchorBlock: number, msPerB
 
 // One raw Balances.Locks / Tokens.Locks entry (id is the 8-byte ascii lock id).
 export interface LockRow { accountId: string; id: string; amount: bigint }
-// Structurally matches hdxService's VestingScheduleAgg (start/period in RELAY blocks).
+// Vesting schedules are keyed on RELAY block heights (start/period), not parachain ones.
 export interface VestingScheduleRaw { accountId: string; start: number; period: number; periodCount: number; perPeriod: bigint }
-// Structurally matches hdxService's VoteClassState (one entry per conviction class).
+// One entry per conviction class.
 export interface VoteClassState { activeAmount: bigint; hasActiveVotes: boolean; priorUnlock: number; priorBalance: bigint }
 // Stored rows also carry the synthetic per-account 'timeline' kind (the binding
 // unlock timeline) — it is not a balance component and never sums with them.
@@ -427,7 +427,7 @@ function serializeTimeline(slices: TimelineSlice[]): string {
 
 // Persisted tranche form: block numbers become estimated timestamps at snapshot
 // time (at the chain's slot time — ~6s today, 2s planned — via the caller's
-// projector, same convention as the HDX dashboard) so readers never need a
+// projector) so readers never need a
 // para-vs-relay block basis.
 function serializeTranches(tranches: LockTranche[], blockToMs: (block: number) => number): string {
   if (!tranches.length) return ''

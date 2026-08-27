@@ -1,7 +1,7 @@
 import type { ClickHouseClient } from '../db/client.ts'
 
 // On-chain identities snapshotted into price_data.account_identities from the
-// Identity pallet of Hydration and of every other configured chain (the Polkadot
+// Identity pallet of Basilisk and of every other configured chain (the Polkadot
 // and Kusama People chains, where both relays' identities now live). The set is
 // small (~thousands) and changes slowly, so it lives in memory keyed by canonical
 // account_id (0x + 64 hex) for O(1) display resolution on every accountRef.
@@ -9,7 +9,7 @@ import type { ClickHouseClient } from '../db/client.ts'
 //
 // The pallet is keyed by AccountId, so one public key can hold a registration on
 // several chains. The snapshot stamps each row with its chain's display priority
-// (0 = Hydration) and the lowest one wins here, collapsing the table to a single
+// (0 = Basilisk) and the lowest one wins here, collapsing the table to a single
 // name per account. Nothing downstream learns which chain that name came from.
 export interface AccountIdentity { display: string; verified: boolean; email: string; web: string; twitter: string }
 

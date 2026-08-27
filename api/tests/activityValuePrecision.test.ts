@@ -137,57 +137,53 @@ describe('value-aware account activity precision', () => {
     expect(occurrences('FROM liquidation_legs n)')).toBe(1)
     // Both sides of the ASOF equality resolve the same alias chain, or the narrowed
     // set would exclude a feed the join still wants and silently zero those legs.
-    const aliasExprs = [...sql.matchAll(/transform\(toUInt32\([ln]\.asset_id\),[^\n]*?, toUInt32\([ln]\.asset_id\)\)/g)]
-      .map(m => m[0].replace(/\b[ln]\.asset_id\b/g, 'X'))
-    expect(aliasExprs).toHaveLength(2)
-    expect(aliasExprs[0]).toBe(aliasExprs[1])
+    // Read as whole expressions rather than by matching a `transform(` shape: the
+    // alias table is empty on Basilisk, so the expression is currently the bare cast
+    // — and a test keyed to the populated shape would pass by finding neither side.
+    const narrowed = /AND asset_id IN \(SELECT DISTINCT (.+?) FROM /.exec(sql)?.[1]
+    const joined = /p\.asset_id = (.+?) AND p\.price_time/.exec(sql)?.[1]
+    expect(narrowed, 'narrowed-set alias expression').toBeTruthy()
+    expect(joined, 'ASOF alias expression').toBeTruthy()
+    expect(narrowed!.replace(/\bn\./g, 'X.')).toBe(joined!.replace(/\bl\./g, 'X.'))
     // The legs relation is read twice, so it must stay the cheap one.
     expect(occurrences('liquidation_legs')).toBe(2)
   })
 })
 
-// A pool-share token is quoted only while it is its pool's tradeable leg:
-// 2-Pool-GDOT (690) has six hourly closes from April 2025 and none after, because
-// GDOT (69) took over. Excluding share tokens from the historical price alias does
-// NOT leave their flows unpriced — it leaves them matched against that abandoned
-// feed, and since the ASOF join has no lower bound it values a 2026 liquidation at
-// the April-2025 close forever (a ~4x overstatement that survives into every
-// liquidation/supply/withdraw value and the account's liquidation volume). Valuing
-// through the underlying is the near-peg unit-price proxy the current-price path
-// already applies, and it is the only alias with a live feed.
-describe('pool-share flows value through their underlying price feed', () => {
-  it('resolves a share token to its underlying, never to itself', () => {
-    expect(SHARE_TOKEN_UNDERLYING_ID[690]).toBe(69)
-    expect(historicalPriceAssetId(690)).toBe(69)
-    for (const shareId of Object.keys(SHARE_TOKEN_UNDERLYING_ID).map(Number)) {
-      expect(historicalPriceAssetId(shareId)).not.toBe(shareId)
-    }
-  })
-
-  // Chained aliases must land on the terminal priced id (GIGAHDX -> stHDX -> HDX),
-  // and historical valuation must agree with the current-price path about which id
-  // that is.
+// An asset with no price feed of its own values through the asset it is priced
+// through, on BOTH the current and the historical path. Basilisk has no such asset —
+// its only derived token is the XYK share, and an LP share is a claim on two reserves
+// that no single feed stands for — so the alias table is empty and every assertion
+// below is about the mechanism holding at zero entries. That is the state worth
+// pinning: an alias resolved one way in TypeScript and another in the pushed-down SQL
+// filters pages on a value the rows never show, and an empty table hides the
+// disagreement until the first entry is added.
+describe('price aliasing agrees across the historical and current paths', () => {
   it('resolves every alias transitively, exactly as the current-price path does', () => {
     for (const aliasedId of Object.keys(PRICE_ALIAS_ID).map(Number)) {
       expect(historicalPriceAssetId(aliasedId)).toBe(priceAssetId(aliasedId))
     }
   })
 
+  it('leaves an unaliased asset as itself', () => {
+    expect(SHARE_TOKEN_UNDERLYING_ID[0]).toBeUndefined()
+    expect(historicalPriceAssetId(0)).toBe(0)
+    expect(historicalPriceAssetId(5)).toBe(5)
+  })
+
   // The min-value predicate is pushed into ClickHouse while the displayed row value
   // is computed in TypeScript. If the SQL alias and the row alias disagree, a
   // filtered page admits or drops rows against a value the rows never show.
-  it('aliases share tokens in the pushed-down SQL exactly as the row builder does', () => {
+  it('aliases in the pushed-down SQL exactly as the row builder does', () => {
     const sql = historicalVolumeSql('legs', 'out')
     // The amount normalisation emits its own transform with quoted scale factors;
     // only the unquoted asset-id -> asset-id pairs are price aliases.
-    const transforms = [...sql.matchAll(/transform\(toUInt32\([^)]*\), \[([\d,]+)\], \[([\d,]+)\]/g)]
-    expect(transforms).toHaveLength(2)
-    for (const [, fromList, toList] of transforms) {
+    for (const [, fromList, toList] of sql.matchAll(/transform\(toUInt32\([^)]*\), \[([\d,]+)\], \[([\d,]+)\]/g)) {
       const from = fromList.split(',').map(Number)
       const to = toList.split(',').map(Number)
-      expect(from).toContain(690)
-      expect(to[from.indexOf(690)]).toBe(69)
       from.forEach((id, i) => expect(to[i]).toBe(historicalPriceAssetId(id)))
     }
+    // With no alias to apply the SQL must cast, never drop the expression.
+    if (!Object.keys(PRICE_ALIAS_ID).length) expect(sql).toContain('p.asset_id = toUInt32(l.asset_id)')
   })
 })

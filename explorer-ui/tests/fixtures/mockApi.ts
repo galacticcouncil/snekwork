@@ -48,14 +48,14 @@ const ASSETS: MAsset[] = [
   { assetId: 0, symbol: 'BSX', name: 'Basilisk', decimals: 12, parachainId: null, price: 0.02184, ch: 4.28, ch7d: 11.2, ch1h: 0.4, type: 'Native' },
   { assetId: 5, symbol: 'DOT', name: 'Polkadot', decimals: 10, parachainId: null, price: 4.4422, ch: -1.16, ch7d: -3.1, ch1h: -0.2, type: 'Token' },
   { assetId: 10, symbol: 'USDT', name: 'Tether USD', decimals: 6, parachainId: 1000, price: 1.0001, ch: 0.01, ch7d: 0.02, ch1h: 0.0, type: 'Token' },
-  { assetId: 1002, symbol: 'aUSDT', name: 'Aave USDT', decimals: 6, parachainId: null, price: 1.0001, ch: 0.01, ch7d: 0.02, ch1h: 0.0, type: 'Token' },
+  { assetId: 1002, symbol: 'DAI', name: 'Dai Stablecoin', decimals: 18, parachainId: 2023, price: 1.0001, ch: 0.01, ch7d: 0.02, ch1h: 0.0, type: 'Token' },
   { assetId: 22, symbol: 'USDC', name: 'USD Coin', decimals: 6, parachainId: 1000, price: 0.9999, ch: -0.01, ch7d: -0.01, ch1h: 0.0, type: 'Token' },
   { assetId: 15, symbol: 'vDOT', name: 'Voucher DOT', decimals: 10, parachainId: 2030, price: 5.8401, ch: 1.84, ch7d: 4.0, ch1h: 0.1, type: 'Derivative' },
   { assetId: 19, symbol: 'WBTC', name: 'Wrapped BTC', decimals: 8, parachainId: 1000, price: 67241.1, ch: -0.72, ch7d: 2.4, ch1h: -0.05, type: 'Token' },
   { assetId: 20, symbol: 'WETH', name: 'Wrapped ETH', decimals: 18, parachainId: 1000, price: 3204.4, ch: 2.18, ch7d: 5.9, ch1h: 0.3, type: 'Token' },
-  { assetId: 16, symbol: 'GLMR', name: 'Moonbeam', decimals: 18, parachainId: 2004, price: 0.1842, ch: 9.18, ch7d: 14.0, ch1h: 1.1, type: 'Token' },
-  { assetId: 1000, symbol: 'HOLLAR', name: 'Hollar', decimals: 18, parachainId: null, price: 1.0, ch: 0.02, ch7d: 0.0, ch1h: 0.0, type: 'Token' },
-  { assetId: 1001, symbol: 'GDOT', name: 'Gigadot', decimals: 10, parachainId: null, price: 4.4501, ch: -1.1, ch7d: -2.0, ch1h: -0.1, type: 'Derivative' },
+  { assetId: 16, symbol: 'MOVR', name: 'Moonriver', decimals: 18, parachainId: 2023, price: 0.1842, ch: 9.18, ch7d: 14.0, ch1h: 1.1, type: 'Token' },
+  { assetId: 1000, symbol: 'aUSD', name: 'Acala Dollar', decimals: 12, parachainId: 2000, price: 1.0, ch: 0.02, ch7d: 0.0, ch1h: 0.0, type: 'Token' },
+  { assetId: 1001, symbol: 'LKSM', name: 'Liquid KSM', decimals: 12, parachainId: 2000, price: 4.4501, ch: -1.1, ch7d: -2.0, ch1h: -0.1, type: 'Derivative' },
   // An XYK pair's LP token: pool id == share asset id, so /pool/690 and the
   // Liquidity tab's card for it share one identity.
   { assetId: 690, symbol: 'vDOT/DOT LP', name: 'vDOT/DOT share token', decimals: 18, parachainId: null, price: 5.1, ch: 0.4, ch7d: 1.1, ch1h: 0.0, type: 'Token' },
@@ -681,7 +681,7 @@ function buildAssetLiquidity(assetId: number): AssetLiquidity {
     totalUsd: totalAmountNum * a.price,
     sources,
     // DOT keeps one former pool so the section renders deterministically.
-    former: assetId === 5 ? [{ kind: 'xyk', poolId: 1_000_044, name: 'DOT / GLMR', lastActiveBlock: TIP - 400_000, lastActiveAt: tsAt(TIP - 400_000) }] : [],
+    former: assetId === 5 ? [{ kind: 'xyk', poolId: 1_000_044, name: 'DOT / MOVR', lastActiveBlock: TIP - 400_000, lastActiveAt: tsAt(TIP - 400_000) }] : [],
     history: { buckets: POOL_BUCKETS, series: histSeries },
   }
 }

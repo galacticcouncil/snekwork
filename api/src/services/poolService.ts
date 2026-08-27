@@ -1,7 +1,7 @@
 import type { ClickHouseClient } from '../db/client.ts'
 import { cachedSwr } from './cache.ts'
 import {
-  accountRef, ensurePrices, hasExplorerClient, initExplorerService, resolveDisplayAccountId,
+  accountRef, ensurePrices, hasExplorerClient, initExplorerService,
   type AccountRef, type AssetRef, type PriceInfo,
 } from './explorerService.ts'
 import { assetDescriptor, priceAssetId } from './explorerAssets.ts'
@@ -728,7 +728,7 @@ async function loadPoolLpEntries(poolId: number): Promise<PoolLpEntry[]> {
   const farmed = (await farmRes.json<{ account_id: string; shares: string }>())
     .map(r => ({ accountId: r.account_id, shares: BigInt(r.shares) }))
     .filter(f => f.shares > 0n)
-  return foldPoolLpEntries(direct, farmed, XYK_LM_ACCOUNT, resolveDisplayAccountId)
+  return foldPoolLpEntries(direct, farmed, XYK_LM_ACCOUNT)
 }
 
 // Paginated LP list for a pool, ranked by shares. Share % and value are

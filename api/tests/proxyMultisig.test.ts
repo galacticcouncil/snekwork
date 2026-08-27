@@ -5,7 +5,9 @@ import { signedOrigin } from '../src/services/explorerService.ts'
 
 describe('decodeProxiesValue', () => {
   it('decodes a real Proxy.Proxies storage value (3 proxies + deposit)', () => {
-    // Captured from Hydration state: Vec of 3 ProxyDefinition + u128 deposit.
+    // A real Proxy.Proxies value: Vec of 3 ProxyDefinition + u128 deposit. The
+    // bytes are the pallet's encoding, which is the same on any chain; only the
+    // proxy-type INDEX is runtime-specific, and it is named from PROXY_TYPES.
     const hex = '0x0c4d5184fcebd910b43badc23531209a3d1546dd4a1853114e20005d61c49725fb0000000000'
       + 'ee24cdac0c090625c7ac9110d9dc9a9fedd76d6588bffc23660d4eca2b5edf520200000000'
       + 'ee24cdac0c090625c7ac9110d9dc9a9fedd76d6588bffc23660d4eca2b5edf520300000000'
@@ -14,11 +16,21 @@ describe('decodeProxiesValue', () => {
     expect(proxies).toEqual([
       { delegate: '0x4d5184fcebd910b43badc23531209a3d1546dd4a1853114e20005d61c49725fb', proxyType: 'Any', delay: 0 },
       { delegate: '0xee24cdac0c090625c7ac9110d9dc9a9fedd76d6588bffc23660d4eca2b5edf52', proxyType: 'Governance', delay: 0 },
-      { delegate: '0xee24cdac0c090625c7ac9110d9dc9a9fedd76d6588bffc23660d4eca2b5edf52', proxyType: 'Transfer', delay: 0 },
+      { delegate: '0xee24cdac0c090625c7ac9110d9dc9a9fedd76d6588bffc23660d4eca2b5edf52', proxyType: 'Exchange', delay: 0 },
     ])
   })
 
+  // The stored value is a bare variant index, so this list alone decides what a
+  // proxy is SHOWN to permit. Basilisk's ProxyType is not Hydration's: index 3 is
+  // Exchange here and Transfer there, so the inherited order labelled an Exchange
+  // proxy "Transfer" and a Transfer proxy "Liquidity". Read off
+  // basilisk_runtime::system::ProxyType (spec 134).
+  it('names every proxy-type index in the runtime variant order', () => {
+    expect([0, 1, 2, 3, 4].map(proxyTypeName)).toEqual(['Any', 'CancelProxy', 'Governance', 'Exchange', 'Transfer'])
+  })
+
   it('names unknown proxy-type indexes without throwing', () => {
+    expect(proxyTypeName(5)).toBe('Type#5')
     expect(proxyTypeName(99)).toBe('Type#99')
   })
 
@@ -35,7 +47,7 @@ describe('decodeProxiesValue', () => {
 
 describe('deriveMultisigAccountId', () => {
   // Fixed derivation vector for a three-of-five multisig.
-  it('derives the 3-of-5 Hydration multisig from its signatories', () => {
+  it('derives a 3-of-5 multisig from its signatories', () => {
     const signatories = [
       '0x0c691601793de060491dab143dfae19f5f6413d4ce4c363637e5ceacb2836a4e',
       '0x6ae93e7162785a77d3a2c0413a9ee04af1b948ba5df9ac191552b72e1dd49b71',
@@ -46,7 +58,7 @@ describe('deriveMultisigAccountId', () => {
     expect(deriveMultisigAccountId(signatories, 3)).toBe('0xefb69c118cc48c08e9ce072dafcce8d9e5e00c02f83b1a6463ba7d4155dc2ded')
   })
 
-  it('derives the 2-of-3 Hydration multisig from its signatories', () => {
+  it('derives a 2-of-3 multisig from its signatories', () => {
     const signatories = [
       '0x1ab695ff7ac486604f2965b57cfad12793124015a8dbf6856dbbbc34e438bc0d',
       '0x4a154ce100d43672e3cab61d2196621d0d69dccbf86d432595f2d0fc4eb5ee61',

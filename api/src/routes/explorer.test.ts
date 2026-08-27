@@ -72,7 +72,7 @@ describe('liquidity pool lifecycle classification', () => {
     expect(liqActionFor('XYK.PoolCreated')).toBe('Create')
     expect(liqActionFor('XYK.LiquidityRemoved')).toBe('Remove')
     expect(liqActionFor('XYK.LiquidityAdded')).toBe('Add')
-    expect(liqActionFor('OmnipoolLiquidityMining.RewardClaimed')).toBe('Claim')
+    expect(liqActionFor('XYKLiquidityMining.RewardClaimed')).toBe('Claim')
   })
 
   it('keeps the derived action inverse consistent with the label', () => {
@@ -87,7 +87,7 @@ describe('liquidity pool lifecycle classification', () => {
     expect(isAmountlessLiquidityEvent('XYK.PoolCreated')).toBe(false)
     expect(isAmountlessLiquidityEvent('XYK.LiquidityAdded')).toBe(false)
     expect(isAmountlessLiquidityEvent('XYK.LiquidityRemoved')).toBe(false)
-    expect(isAmountlessLiquidityEvent('Omnipool.LiquidityRemoved')).toBe(false)
+    expect(isAmountlessLiquidityEvent('LBP.LiquidityRemoved')).toBe(false)
   })
 
   // The read model hands an amountless event exactly '' (see

@@ -2,28 +2,34 @@ import { describe, expect, it } from 'vitest'
 import { curveThresholdPerbill, perbillOfRational, PERBILL, referendaTracks, trackById, undecidingTimeoutBlocks } from './referendaTracks.ts'
 
 // The pinned tracks (no RPC in unit tests, so referendaTracks() serves the
-// fallback copy) must reproduce hydration-node's tracks.rs. The curve shape
-// checks below pin the CONSTRUCTION anchors of the runtime's `make_linear` /
-// `make_reciprocal` calls — the points the Rust const-eval solved for — so a
-// mistranscribed parameter cannot pass.
+// fallback copy) must reproduce the runtime's own `referenda.tracks` constant,
+// transcribed from Basilisk spec 134. The curve shape checks below pin the
+// CONSTRUCTION anchors of the runtime's `make_linear` / `make_reciprocal` calls —
+// the points the Rust const-eval solved for — so a mistranscribed parameter
+// cannot pass.
+//
+// Every block count here is a duration at Basilisk's CURRENT 2s block, which spec
+// 134 rescaled by 3 from the 6s era. The fallback is only reached when the node's
+// RPC is down, so a stale copy shows every referendum the wrong pace at exactly
+// the moment nothing can correct it.
 
 const day = (n: number) => Math.round((n / 7) * PERBILL) // decision periods are 7 days
 
 describe('referendaTracks (pinned fallback)', () => {
-  it('carries the tracks.rs periods', () => {
+  it('carries the runtime track periods', () => {
     const treasurer = trackById(5)!
     expect(treasurer.name).toBe('treasurer')
-    expect(treasurer.preparePeriod).toBe(600)       // 60 minutes of 6s blocks
-    expect(treasurer.decisionPeriod).toBe(100_800)  // 7 days
-    expect(treasurer.confirmPeriod).toBe(7_200)     // 12 hours
-    expect(treasurer.decisionDeposit).toBe('750000000000000000') // 750k HDX
-    expect(trackById(1)!.decisionPeriod).toBe(43_200) // whitelisted_caller: 3 days
-    expect(referendaTracks()).toHaveLength(10)
+    expect(treasurer.preparePeriod).toBe(1_800)     // 1 hour of 2s blocks
+    expect(treasurer.decisionPeriod).toBe(302_400)  // 7 days
+    expect(treasurer.confirmPeriod).toBe(21_600)    // 12 hours
+    expect(treasurer.decisionDeposit).toBe('50000000000000000000') // 50M BSX (12 dec)
+    expect(trackById(1)!.decisionPeriod).toBe(43_200) // whitelisted_caller: 1 day
+    expect(referendaTracks()).toHaveLength(8)
     expect(trackById(99)).toBeNull()
   })
 
-  it('undeciding timeout pins to 2 days of 6s blocks without a node', () => {
-    expect(undecidingTimeoutBlocks()).toBe(28_800)
+  it('undeciding timeout pins to 14 days of 2s blocks without a node', () => {
+    expect(undecidingTimeoutBlocks()).toBe(604_800)
   })
 })
 
@@ -35,10 +41,21 @@ describe('curveThresholdPerbill', () => {
     expect(Math.abs(curveThresholdPerbill(curve, PERBILL) - 0.5 * PERBILL)).toBeLessThan(10)
   })
 
-  it('SUP_FAST_LINEAR = make_linear(7, 7, 0%, 18%): 18% at open, halved mid-period, 0 at close', () => {
-    const curve = trackById(5)!.minSupport
-    expect(curveThresholdPerbill(curve, 0)).toBe(0.18 * PERBILL)
-    expect(curveThresholdPerbill(curve, PERBILL / 2)).toBe(0.09 * PERBILL)
+  it('SUP_LINEAR = make_linear(7, 7, 0%, 50%): 50% at open, halved mid-period, 0 at close', () => {
+    const curve = trackById(5)!.minSupport // treasurer, and root
+    expect(curveThresholdPerbill(curve, 0)).toBe(0.5 * PERBILL)
+    expect(curveThresholdPerbill(curve, PERBILL / 2)).toBe(0.25 * PERBILL)
+    expect(curveThresholdPerbill(curve, PERBILL)).toBe(0)
+    expect(trackById(0)!.minSupport).toEqual(curve)
+  })
+
+  // whitelisted_caller's support bar is a linear curve, not a reciprocal: it opens
+  // at 1% and reaches zero after a single day, which is what lets a whitelisted
+  // referendum confirm on almost no turnout.
+  it('SUP_WHITELISTED = make_linear(1, 7, 0%, 1%): 1% at open, 0 from day 1', () => {
+    const curve = trackById(1)!.minSupport
+    expect(curveThresholdPerbill(curve, 0)).toBe(0.01 * PERBILL)
+    expect(Math.abs(curveThresholdPerbill(curve, day(1)))).toBeLessThan(10)
     expect(curveThresholdPerbill(curve, PERBILL)).toBe(0)
   })
 
@@ -51,18 +68,29 @@ describe('curveThresholdPerbill', () => {
     expect(curveThresholdPerbill(curve, PERBILL)).toBe(0.5 * PERBILL)
   })
 
-  it('SUP_RECIP = make_reciprocal(5, 7, 1%, 0%, 36%): 36% at open, 1% after day 5, clamps at 0', () => {
-    const curve = trackById(6)!.minSupport // spender
-    expect(Math.abs(curveThresholdPerbill(curve, 0) - 0.36 * PERBILL)).toBeLessThan(10)
+  it('SUP_RECIP = make_reciprocal(5, 7, 1%, 0%, 50%): 50% at open, 1% after day 5, clamps at 0', () => {
+    const curve = trackById(6)!.minSupport // spender, and general_admin
+    expect(Math.abs(curveThresholdPerbill(curve, 0) - 0.5 * PERBILL)).toBeLessThan(10)
     expect(Math.abs(curveThresholdPerbill(curve, day(5)) - 0.01 * PERBILL)).toBeLessThan(10)
-    // Negative yOffset region: the raw curve dips below zero near the close and
-    // the pallet clamps.
+    // Negative yOffset region: the raw curve dips below zero at the close and the
+    // pallet clamps.
     expect(curveThresholdPerbill(curve, PERBILL)).toBe(0)
+    expect(trackById(4)!.minSupport).toEqual(curve)
+  })
+
+  // The fast tracks reach the same 1% two days earlier, which is the whole
+  // difference between them and the deliberative ones.
+  it('SUP_FAST_RECIP = make_reciprocal(3, 7, 1%, 0%, 50%): 1% after day 3', () => {
+    const curve = trackById(7)!.minSupport // tipper, canceller, killer
+    expect(Math.abs(curveThresholdPerbill(curve, 0) - 0.5 * PERBILL)).toBeLessThan(100)
+    expect(Math.abs(curveThresholdPerbill(curve, day(3)) - 0.01 * PERBILL)).toBeLessThan(10)
+    expect(curveThresholdPerbill(curve, PERBILL)).toBe(0)
+    expect(trackById(2)!.minSupport).toEqual(curve)
   })
 
   it('clamps x outside [0, 1]', () => {
     const curve = trackById(5)!.minSupport
-    expect(curveThresholdPerbill(curve, -50)).toBe(0.18 * PERBILL)
+    expect(curveThresholdPerbill(curve, -50)).toBe(0.5 * PERBILL)
     expect(curveThresholdPerbill(curve, 2 * PERBILL)).toBe(0)
   })
 })

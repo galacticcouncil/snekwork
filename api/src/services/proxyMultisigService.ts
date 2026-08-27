@@ -8,7 +8,7 @@ import { signedOrigin } from './explorerService.ts'
 // Proxy & multisig relations for account pages.
 //
 // Current proxy state comes from a periodic full enumeration of Proxy.Proxies
-// (a small map — ~180 entries on Hydration), which yields BOTH directions
+// (a small map — a few hundred entries), which yields BOTH directions
 // (delegates of an account, and the accounts an account is a proxy for) with no
 // per-request chain reads. Pure-proxy provenance comes from Proxy.PureCreated /
 // legacy Proxy.AnonymousCreated events in ClickHouse.
@@ -34,9 +34,13 @@ export interface PureProxyInfo { creator: string; proxyType: string; blockHeight
 export interface MultisigComposition { threshold: number; signatories: string[] }
 export interface PendingMultisigOp { callHash: string; depositor: string; approvals: string[]; sinceBlock: number }
 
-// Hydration runtime ProxyType — index order validated against decoded
-// Proxy.ProxyAdded events vs live Proxy.Proxies storage bytes.
-const PROXY_TYPES = ['Any', 'CancelProxy', 'Governance', 'Transfer', 'Liquidity', 'LiquidityMining']
+// The runtime's ProxyType, in variant-index order — read off Basilisk's own
+// metadata (`basilisk_runtime::system::ProxyType`, spec 134). The stored value is
+// a bare index, so the NAMES are entirely this list's doing: the Hydration order
+// this forked from put Transfer at 3 and Liquidity at 4, which on Basilisk labels
+// an Exchange proxy "Transfer" and a Transfer proxy "Liquidity" — a proxy shown as
+// holding a permission it does not have, and not shown as holding the one it does.
+const PROXY_TYPES = ['Any', 'CancelProxy', 'Governance', 'Exchange', 'Transfer']
 export function proxyTypeName(index: number): string { return PROXY_TYPES[index] ?? `Type#${index}` }
 
 const PROXIES_PREFIX = u8aToHex(u8aConcat(xxhashAsU8a('Proxy', 128), xxhashAsU8a('Proxies', 128)))

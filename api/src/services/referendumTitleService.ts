@@ -9,7 +9,7 @@ import type { ClickHouseClient } from '../db/client.ts'
 // title lookup free on every vote row the explorer renders, instead of joining a
 // table into every activity query.
 //
-// Keys are `${pallet}:${index}`: Hydration voted through both pallets and both
+// Keys are `${pallet}:${index}`: this chain voted through both pallets and both
 // index from 0 (Democracy 0-206, OpenGov 0-369), so a bare number would collide.
 let client: ClickHouseClient
 let byRef = new Map<string, string>()
@@ -85,7 +85,7 @@ export function referendumTitleCount(): number {
 // notification waits for a real one (the parked map in notifications/evaluator).
 //
 // Deliberately narrow: only the bare template counts as generic. A title that
-// merely CONTAINS the index ("Referendum #123 — raise the HDX fee") says
+// merely CONTAINS the index ("Referendum #123 — raise the BSX fee") says
 // something, and treating it as absent would hold a perfectly good alert forever.
 const GENERIC_TITLE_RE = /^(?:\[[^\]]*\]\s*)?(?:referend(?:um|a)|ref)\.?\s*#?\s*\d+\.?$/i
 export function isGenericReferendumTitle(title: string | null | undefined): boolean {

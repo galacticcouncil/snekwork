@@ -1,8 +1,6 @@
 import type { ClickHouseClient } from '../db/client.ts'
 import { normalizeAddress } from './addressIdentity.ts'
 import { accountIcon } from './omniwatchIdentity.ts'
-import { blake2AsU8a } from '@polkadot/util-crypto'
-import { u8aToHex } from '@polkadot/util'
 
 // Address tags. The whole tag set is user-curated and small, so it lives in
 // memory (refreshed on every edit) for O(1) display resolution, and is also
@@ -64,41 +62,17 @@ export async function loadTags(): Promise<void> {
       byAccount.set(accountId, { tagId: tag.tagId, name: tag.name, color: tag.color, icon, memberCount: tag.members.length })
     }
   }
-  byH160 = truncatedH160Index([...byTag.values()])
 }
 
 export function tagForAccount(accountId: string): AccountTag | null {
   return byAccount.get(accountId) ?? null
 }
 
-// ERC-20/aToken balances of NATIVE accounts are recorded EVM-side under
-// H160 = first 20 bytes of the AccountId32 (runtime truncation). blake2-derived
-// accounts (stableswap pools, …) can't be reconstructed from the H160 alone, so
-// this reverse index over the tagged accounts resolves such aliases back to the
-// real account. ETH-prefixed members are skipped — their truncation is a
-// genuine EVM address, not an alias.
-export function truncatedH160Index(tags: Tag[]): Map<string, string> {
-  const idx = new Map<string, string>()
-  for (const tag of tags) {
-    for (const accountId of tag.members) {
-      if (!/^0x[0-9a-f]{64}$/i.test(accountId) || accountId.toLowerCase().startsWith('0x45544800')) continue
-      idx.set('0x' + accountId.slice(2, 42).toLowerCase(), accountId)
-    }
-  }
-  return idx
-}
-
-let byH160 = new Map<string, string>()
-export function taggedAccountByH160(h160: string): string | null {
-  return byH160.get(h160.toLowerCase()) ?? null
-}
-// AMM pool accounts (XYK pair + stableswap accounts) — derived, non-modl ids
-// whose transfer legs are pool plumbing behind trade/liquidity rows.
+// AMM pool accounts — derived, non-modl ids whose transfer legs are pool plumbing
+// behind trade/liquidity rows.
 export function ammPoolAccounts(): Set<string> {
   const out = new Set<string>()
-  for (const tagId of ['xyk-pools', 'stableswap-pools']) {
-    for (const m of byTag.get(tagId)?.members ?? []) out.add(m.toLowerCase())
-  }
+  for (const m of byTag.get('xyk-pools')?.members ?? []) out.add(m.toLowerCase())
   return out
 }
 export function getTag(tagId: string): Tag | null {
@@ -108,183 +82,66 @@ export function allTags(): Tag[] {
   return [...byTag.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
-// The HDX token icon (asset 0 on the Galactic Council asset-metadata CDN), used by
-// the fee tags so they render the HDX logo.
-const HDX_ICON = 'https://cdn.jsdelivr.net/gh/galacticcouncil/intergalactic-asset-metadata@master/v2/polkadot/2034/assets/0/icon.svg'
-// The HOLLAR token icon (asset 222 on the same CDN), used by the HOLLAR tags.
-const HOLLAR_ICON = 'https://cdn.jsdelivr.net/gh/galacticcouncil/intergalactic-asset-metadata@master/v2/polkadot/2034/assets/222/icon.svg'
-// The BIL token icon (asset 55 on the same CDN), used by the BIL issuer tag.
-const BIL_ICON = 'https://cdn.jsdelivr.net/gh/galacticcouncil/intergalactic-asset-metadata@master/v2/polkadot/2034/assets/55/icon.svg'
+// system-account derivations
+// A reserved system account is a short ASCII marker right-padded with zeros to 32
+// bytes. Both forms below are that shape, so they share one derivation.
+function paddedAccountId(marker: string, sub = ''): string {
+  const body = Buffer.from(marker, 'latin1').toString('hex') + sub
+  return ('0x' + body.padEnd(64, '0')).toLowerCase()
+}
+// "modl" pallet account: 0x6d6f646c + the 8-byte PalletId + zero padding — the ids
+// are compile-time constants in the runtime (PalletId(*b"…")).
+export function modlAccountId(palletId: string, sub = ''): string {
+  return paddedAccountId('modl' + palletId, sub)
+}
+// The relay chain's sovereign account here: XCM's ParentIsPreset converter maps the
+// `Parent` origin to the ASCII bytes "Parent", right-padded with zeros. The same
+// marker the activity decoders recognise as an XCM origin (XCM_SOVEREIGN_PREFIXES
+// in explorerService.ts).
+export function parentSovereignAccountId(): string {
+  return paddedAccountId('Parent')
+}
 
 // Tags are a fixed, code-defined set — there is no create/edit/delete API. This is
 // the canonical definition; an empty `icon` derives the avatar from the first
 // member's omniwatch emoji (e.g. Treasury → 🏦). seedDefaultTags() syncs this set
 // into the database on every start, so a fresh database gets all of them and an
 // existing one picks up additions.
+//
+// Deliberately tiny. Everything an address book can carry that is not derived from
+// the chain itself is a claim about who owns an account, and a claim inherited from
+// another network is simply false here — so this seed holds only accounts whose
+// identity follows from a runtime constant, and syncStructuralTags() generates the
+// rest (pool accounts, LM pots, sovereigns) from indexed data.
 export const DEFAULT_TAGS: { tagId: string; name: string; color: string; note: string; icon: string; addresses: string[] }[] = [
   {
-    tagId: 'kraken', name: 'Kraken', color: '#7b6cf6', note: '', icon: '/tag-icons/kraken.jpg',
-    addresses: [
-      '14n8ferDrb3uorc5esxHgt2gePPFDTSn4qvxBywVEosejVFL',
-      '12p8TxkyfmQBaSLooHA1NWRVjv7R8qgWfvKbVabEoH41L8jJ',
-      '12xtAYsRUrmbniiWQqJtECiBQrMn8AypQcXhnQAc6RB6XkLW',
-      '15DajYeqgb4ADkb8scVCcNaXjfM1SV9PLvqjNDkpH6kBDRLZ',
-      '1oJ65RyN3Ht7SMzWjdVKAbv9FBC6gUXNd97h4AjeVNTFqQn',
-      '148GnWxDeGsoF6yZMEWyk1LDkx25gGDVWfrLEE7wyzsxVJ4U',
-      '16MLQm1sSzec4JJN4NKvH8xUMz9vt6weRvRKu2gXgWxMcZ5S',
-    ],
+    // Explicit icon: with no explicit icon a tag borrows its first member's emoji,
+    // and "first" follows account-id sort order — adding a member can silently
+    // change the tag's face.
+    tagId: 'treasury', name: 'Treasury', color: '', note: 'Basilisk treasury pallet account (PalletId py/trsry)', icon: '🏦',
+    addresses: [modlAccountId('py/trsry')],
   },
   {
-    tagId: 'hdx-kraken-lp', name: 'HDX Kraken LP', color: 'var(--accent)', note: '', icon: HDX_ICON,
-    addresses: ['121VfWrMN1DwrHu1Jc8UE7Cppp7YHcZxtnFDZnZCztpdeHDX'],
-  },
-  {
-    tagId: 'polkadot-treasury', name: 'Polkadot Treasury', color: '#e6007a', note: 'Polkadot relay-chain treasury accounts', icon: '',
-    addresses: [
-      '12pPnA1aFic3ibBh9xMwssM1779vfrJBxqD4mDy8d18r4g95',
-      '141gr5xsEbUwh3wyeANrTqWTEg92KcEzXxiNofVRvW66Dprt',
-      '12cFn9YP36xQyEkvPGyjHQRS1WMNLdVFRs6k8KTTbpswYcus',
-      '15UEyLQvUKMjxPi8NzighnsWfWHWy9jjerCyt4KoF5GuEK5k',
-      '13JjZiX7QvmHCxwAmT92zugLE4yFNcjFFsbGirTaaYUp5xio',
-    ],
-  },
-  {
-    tagId: 'polkadot-fellowship', name: 'Polkadot Fellowship', color: '#e6007a', note: 'Polkadot Technical Fellowship account', icon: '',
-    addresses: ['16VcQSRcMFy6ZHVjBvosKmo7FKqTb8ZATChDYo8ibutzLnos'],
-  },
-  {
-    tagId: 'moonbeam-treasury', name: 'Moonbeam Treasury', color: '#53cbc9', note: 'Moonbeam treasury account', icon: '',
-    addresses: ['13cKp89NgPL56sRoVRpBcjkGZPrk4Vf4tS6ePUD96XhAXozG'],
-  },
-  {
-    // The Moonbeam-side bridge forwarding contract for inbound cross-chain assets
-    // (e.g. Solana via Wormhole): the far leg arrives here, then hops to Hydration
-    // over XCM, so our chain sees this contract as the origin rather than the real
-    // sender. One contract fans out to 100+ Hydration recipients — labelling it
-    // makes clear the transfer came through the Moonbeam/Wormhole bridge.
-    tagId: 'moonbeam-wormhole', name: 'Moonbeam Wormhole', color: '#2ba69c', note: 'Moonbeam-side Wormhole bridge forwarding contract — inbound cross-chain assets (e.g. Solana → Wormhole → Moonbeam) arrive from here before the XCM hop to Hydration', icon: '🌉',
-    addresses: ['0xf1db8c4bfbb3d6a97c9b669a2ffc0b70f41f3547'],
-  },
-  {
-    // Explicit icon: with no explicit icon a tag borrows its first member's
-    // emoji, and "first" follows account-id sort order — adding a member can
-    // silently change the tag's face (🏦 became 🦆 when the pot list grew).
-    tagId: 'treasury', name: 'Treasury', color: '', note: '', icon: '🏦',
-    // main pot + the py/trsry sub-account (suffix 0x08627411) observed on-chain
-    addresses: [
-      '13UVJyLnbVp9RBZYFwFGyDvVd1y27Tt8tkntv6Q7JVPhFsTB', modlAccountId('py/trsry', '08627411'),
-      '15qyoAjtLwtu7stVJ5qdsj7QJsfaxQEU3ZrihHExzC6hQyHA',
-      '1C1rAhLjoNjmm4cP4eYjWDywXVHa5f6XH3bKRmPikSkR3nv',
-      '164x3jtTcyT6tPRjMhi9ojkzXkBhFKdA3LxKbocdZjQaezBC',
-      '123dwFLLwME2hS12qWMREwYFefM4cHnEmH5go3Vq7mAtDdv9',
-      '13NWq5jfYPMthrdBpGsj4EaiJi21vDUUMeExcMVEVzzZzuVh',
-    ],
-  },
-  {
-    tagId: 'hydration-multisig', name: 'Hydration Multisig', color: '', note: 'Hydration protocol multisig accounts', icon: '✍🏻',
-    addresses: [
-      '16RJh4z1eUHpC3ntre9H2noKGKxihkSqog9PBt9bRbAnj4RE',
-      '14SuF79gUvkt2sXEZP6d7PB8prUKWekyLkUGLJ3YJLt3GBZ',
-    ],
-  },
-  // ---- pallet accounts (accounts with no extrinsics, decoded from their
-  // "modl" + PalletId structure and matched to hydration-node constants) ----
-  {
-    tagId: 'omnipool', name: 'Omnipool', color: '#2b7de6', note: 'Omnipool pallet account — the AMM counterparty holding all Omnipool liquidity', icon: '',
-    addresses: [modlAccountId('omnipool')],
-  },
-  {
-    tagId: 'staking-pot', name: 'Staking Pot', color: 'var(--accent)', note: 'HDX staking pallet pot (PalletId staking#)', icon: '',
-    addresses: [modlAccountId('staking#')],
-  },
-  {
-    tagId: 'fee-processor', name: 'Fee Processor', color: 'var(--accent)', note: 'Collected transaction fees awaiting conversion/distribution (PalletId feeproc/)', icon: '',
-    addresses: [modlAccountId('feeproc/')],
-  },
-  {
-    tagId: 'gigahdx-pots', name: 'GIGAHDX Pot', color: 'var(--accent)', note: 'GIGAHDX staking pallet pots — the stHDX gigapot and reward pools', icon: '',
-    addresses: [modlAccountId('gigahdx!'), modlAccountId('gigarwd!'), modlAccountId('gigarwd!', Buffer.from('alc', 'latin1').toString('hex'))],
-  },
-  {
-    tagId: 'pallet-pots', name: 'Pallet Pot', color: '#6a7187', note: 'Assorted pallet accounts: router executor, liquidations, bonds, vesting, OTC settlements, currency reserve', icon: '⚙️',
-    addresses: [modlAccountId('routerex'), modlAccountId('lqdation'), modlAccountId('pltbonds'), modlAccountId('py/vstng'), modlAccountId('otcsettl'), modlAccountId('curreser')],
-  },
-  {
-    tagId: 'fee-referrals', name: 'Fee (Referrals)', color: 'var(--accent)', note: '', icon: HDX_ICON,
-    addresses: ['13UVJyLnyqpyNGDQwYM5WAYntAQ1paUYsH1hhiwjqRcREWYM'],
-  },
-  {
-    tagId: 'hollar-stability-module', name: 'HOLLAR Stability Module', color: '#b3cf92', note: '', icon: HOLLAR_ICON,
-    // EVM precompile (contract interface) + the py/hsmod substrate pallet pot
-    // holding the module's aToken collateral — same module, two account forms.
-    addresses: ['0x000000000000000000000000000000000000090a', modlAccountId('py/hsmod')],
-  },
-  {
-    // Primary issuance of BIL (Decentral × DUX Group invoice-receivables RWA):
-    // this operator wallet is the `caller` of every uBIL supply into the isolated
-    // BIL market, minting BIL straight to each buyer via onBehalfOf — including
-    // the launch seed the treasury passed on to the stableswap pool. It keeps no
-    // balance of its own, so untagged it reads as an anonymous busy EOA rather
-    // than the issuance bot behind every primary BIL sale. Color is the BIL
-    // market's bandeira green (see .mm-market-bil in explorer-ui).
-    tagId: 'bil-issuer', name: 'BIL Issuer', color: '#009739',
-    note: 'BIL issuance operation (Decentral × DUX Group): the operator wallet that supplies uBIL into the isolated BIL market on buyers’ behalf, minting BIL directly to them, and the distribution wallet the treasury passed the launch supply to, which seeded the BIL/HOLLAR stableswap pool',
-    icon: BIL_ICON,
-    addresses: [
-      '0x646fd203bbcf19b35d79f58413bb07450fdbb1db', // issuance operator (supply caller)
-      '0x15304c8f6921694c608312a7a16948454a578df0', // distribution wallet (launch supply → stableswap seed)
-    ],
-  },
-  {
-    // The originator side of the same sale: where the HOLLAR buyers pay for BIL
-    // actually goes. The issuance operator sweeps its proceeds through a
-    // forwarder into a funding vault, and an operator wallet draws them out,
-    // DCAs them into USDT and withdraws over XCM to AssetHub. Untagged, that
-    // wallet reads as an anonymous whale dumping half a million HOLLAR — its
-    // funding leg is an EVM-internal ERC-20 transfer, so the activity feed
-    // cannot yet show where the HOLLAR came from. Same bandeira green as
-    // bil-issuer so both sides of the sale read as one market.
-    tagId: 'bil-originator', name: 'Decentral (BIL)', color: '#009739',
-    note: 'Decentral × DUX Group receivables operation: the uBIL issuance contract that mints the receivable each buyer\'s HOLLAR pays for and passes that HOLLAR on, the funding vault it goes to, and the operator wallet that converts the proceeds to USDT and withdraws to AssetHub. The Treasury lent this vault 200,000 HOLLAR on 2026-03-26 and was repaid 207,337.97 HOLLAR on 2026-06-10.',
-    icon: BIL_ICON,
-    addresses: [
-      '0x2333aa052610012c27e4fc176bc27095651dcbc6', // operator wallet (vault draw → DCA to USDT → XCM out)
-      '0x207a626c07b73e76134177d1f44b0f32e94adb5a', // funding vault (also took the Treasury's 200k pilot)
-      // uBIL token: mints from the zero address to the issuer, hands the mint to the
-      // BIL aToken, and forwards the buyer's HOLLAR to the vault. Its own HOLLAR
-      // balance nets to exactly 0 — a pass-through, which is what made it read as a
-      // forwarder until the mint legs identified it.
-      '0x6a21891db0940491603f3cca0a9f4dba4c6e810c',
-    ],
+    // XCM's ParentIsPreset converter maps the relay's `Parent` origin to the ASCII
+    // bytes "Parent" right-padded with zeros, so this is the account a Kusama-origin
+    // Transact executes as on Basilisk. It holds nothing today — inbound KSM is
+    // backed by Basilisk's sovereign account ON Kusama, not by this one — but it is
+    // exact rather than speculative, and it is the one sovereign the structural
+    // 'sovereigns' tag cannot find: that scan matches the 'sibl'/'para' markers, and
+    // the relay carries neither.
+    tagId: 'kusama-sovereign', name: 'Kusama Sovereign', color: '#e6007a',
+    note: 'The Kusama relay chain\'s sovereign account on Basilisk (XCM Parent origin) — holds assets and dispatches calls on the relay\'s behalf',
+    icon: '🛰️',
+    addresses: [parentSovereignAccountId()],
   },
 ]
 
-// Sync the code-defined tag set into the database: on a fresh database this
-// creates every tag; on an existing one it inserts any tag or membership added
-// to DEFAULT_TAGS since the last start. Idempotent — existing memberships are
-// never rewritten. Called at startup after loadTags(); the only writer of
-// price_data.account_tags.
-// system-account derivations
-// "modl" pallet account: 0x6d6f646c + the 8-byte PalletId + zero padding —
-// the ids are compile-time constants in hydration-node (PalletId(*b"…")).
-export function modlAccountId(palletId: string, sub = ''): string {
-  const body = Buffer.from('modl' + palletId, 'latin1').toString('hex') + sub
-  return ('0x' + body.padEnd(64, '0')).toLowerCase()
-}
-// Stableswap pool account: blake2-256("sts" + poolId LE u32) — the runtime's
-// StableswapAccountIdConstructor (runtime/hydradx/src/assets.rs). Verified
-// against on-chain balances for all 16 live pools.
-export function stableswapPoolAccount(poolId: number): string {
-  const buf = new Uint8Array(7)
-  buf.set(Buffer.from('sts', 'latin1'), 0)
-  new DataView(buf.buffer).setUint32(3, poolId, true)
-  return u8aToHex(blake2AsU8a(buf, 256))
-}
-
-// Tags whose members are protocol PLUMBING (pools, pots, farm sub-accounts) —
-// excluded from "economic actor" surfaces like the HDX top movers, unlike the
-// Treasury/HSM/fee tags which represent deliberate actors.
-export const SYSTEM_TAG_IDS = new Set(['money-market', 'omnipool', 'staking-pot', 'fee-processor', 'gigahdx-pots', 'pallet-pots', 'incentive-pot', 'liquidity-mining', 'xyk-pools', 'stableswap-pools', 'lbp-pools', 'sovereigns', 'moonbeam-wormhole'])
+// Tags whose members are protocol PLUMBING (pools, pots, sovereign accounts) —
+// excluded from "economic actor" surfaces like the BSX top movers, unlike the
+// Treasury, which represents a deliberate actor. Every id here is defined by
+// DEFAULT_TAGS or STRUCTURAL_TAGS; a name no definition claims silently suppresses
+// nothing.
+export const SYSTEM_TAG_IDS = new Set(['liquidity-mining', 'xyk-pools', 'lbp-pools', 'sovereigns', 'kusama-sovereign'])
 
 // Tagged module (modl) accounts that count as economic actors — the top-movers
 // exception list: module plumbing stays hidden, the Treasury's DCA program shows.
@@ -297,8 +154,7 @@ export function economicModuleAccounts(tags: Tag[]): string[] {
 // Structural system-account families, derived from indexed data so they are
 // recreated automatically after a from-scratch reindex and pick up new members
 // (pools, farms, HRMP channels) on every sync:
-//  - XYK pool accounts come with their XYK.PoolCreated event,
-//  - Stableswap pool accounts are computed from Stableswap.PoolCreated ids,
+//  - XYK and LBP pool accounts come with their PoolCreated event,
 //  - liquidity-mining pots and sibling-parachain sovereigns are recognizable
 //    by their account-id structure alone (prefix scan over known balances).
 const LM_PREFIXES = ['OmniWhLM', 'Omni//LM', 'XYK///LM', 'xykLMpID'].map(id => ('0x' + Buffer.from('modl' + id, 'latin1').toString('hex')).toLowerCase())
@@ -308,20 +164,15 @@ const LM_PREFIXES = ['OmniWhLM', 'Omni//LM', 'XYK///LM', 'xykLMpID'].map(id => (
 export const SOVEREIGN_PREFIXES = ['sibl', 'para'].map(id => ('0x' + Buffer.from(id, 'latin1').toString('hex')).toLowerCase())
 const STRUCTURAL_TAGS = [
   { tagId: 'xyk-pools', name: 'XYK Pool', color: '#86c4f5', note: 'XYK AMM pair account — holds the pool reserves', icon: '💧' },
-  { tagId: 'stableswap-pools', name: 'Stableswap Pool', color: '#57a5ec', note: 'Stableswap pool account — holds the pool reserves', icon: '💧' },
   { tagId: 'lbp-pools', name: 'LBP Pool', color: '#4a8fd6', note: 'Liquidity bootstrapping pool account — holds the reserves of a time-boxed token launch', icon: '💧' },
   { tagId: 'liquidity-mining', name: 'Liquidity Mining', color: 'var(--accent)', note: 'Liquidity-mining pallet pots (global/yield farm sub-accounts)', icon: '🚜' },
   { tagId: 'sovereigns', name: 'Parachain Sovereign', color: '#e6007a', note: 'Parachain sovereign account (sibl/para + para id) — holds assets on behalf of that chain', icon: '🛰️' },
 ] as const
 
 export async function syncStructuralTags(): Promise<void> {
-  const [xykRes, stableRes, lbpRes, prefixRes] = await Promise.all([
+  const [xykRes, lbpRes, prefixRes] = await Promise.all([
     client.query({
       query: `SELECT DISTINCT JSONExtractString(args_json, 'pool') AS acc FROM price_data.raw_events WHERE event_name = 'XYK.PoolCreated'`,
-      format: 'JSONEachRow',
-    }),
-    client.query({
-      query: `SELECT DISTINCT JSONExtractInt(args_json, 'poolId') AS pool_id FROM price_data.raw_events WHERE event_name = 'Stableswap.PoolCreated'`,
       format: 'JSONEachRow',
     }),
     // LBP pools name their account on the creation event exactly as XYK does.
@@ -340,11 +191,9 @@ export async function syncStructuralTags(): Promise<void> {
     rows.map(r => r.acc.toLowerCase()).filter(a => /^0x[0-9a-f]{64}$/.test(a))
   const xyk = poolAccounts(await xykRes.json<{ acc: string }>())
   const lbp = poolAccounts(await lbpRes.json<{ acc: string }>())
-  const stable = (await stableRes.json<{ pool_id: number }>()).filter(r => r.pool_id > 0).map(r => stableswapPoolAccount(r.pool_id))
   const prefixAccounts = (await prefixRes.json<{ account_id: string }>()).map(r => r.account_id.toLowerCase())
   const membersByTag: Record<string, string[]> = {
     'xyk-pools': xyk,
-    'stableswap-pools': stable,
     'lbp-pools': lbp,
     'liquidity-mining': prefixAccounts.filter(a => LM_PREFIXES.some(p => a.startsWith(p))),
     'sovereigns': prefixAccounts.filter(a => SOVEREIGN_PREFIXES.some(p => a.startsWith(p))),
@@ -370,6 +219,11 @@ export function startStructuralTagRefresh(): void {
   structuralTagRefreshTimer.unref()
 }
 
+// Sync the code-defined tag set into the database: on a fresh database this
+// creates every tag; on an existing one it inserts any tag or membership added
+// to DEFAULT_TAGS since the last start. Idempotent — existing memberships are
+// never rewritten. Called at startup after loadTags(); the only writer of
+// price_data.account_tags.
 export async function seedDefaultTags(): Promise<void> {
   const rows: Record<string, unknown>[] = []
   for (const def of DEFAULT_TAGS) {

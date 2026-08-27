@@ -171,7 +171,7 @@ export function affinityScore(input: AffinityScoreInput): number {
 }
 
 // Count distinct days on which a candidate signed shortly after/before the
-// target. Same-block matches are deliberately ignored: on Hydration they are
+// target. Same-block matches are deliberately ignored: on this chain they are
 // dominated by reactive proxy/arbitrage bots rather than common operators.
 export function nearSigningDays(targetBlocks: number[], candidateRows: Array<{ blockHeight: number; day: string }>): number {
   if (!targetBlocks.length || !candidateRows.length) return 0

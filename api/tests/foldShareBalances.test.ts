@@ -1,21 +1,42 @@
-import { describe, it, expect } from 'vitest'
-import { foldShareBalances } from '../src/services/explorerService.ts'
-import type { AddressBalance } from '../src/services/explorerService.ts'
-import { assetDescriptor } from '../src/services/explorerAssets.ts'
+import { describe, it, expect, vi } from 'vitest'
 
-// Per-account display fold: a held Stableswap pool-share token (2-Pool-GDOT id 690,
-// 2-Pool-GETH 4200, 2-Pool-GSOL 90001) is shown as its underlying main asset
-// (GDOT 69, GETH 420, GSOL 9001), mirroring preis-ui which hides "-Pool" tokens.
-// Use assetDescriptor for the asset ref so the share token and its underlying carry
-// the SAME decimals here (as the real Giga assets do), making foldShareBalances'
-// decimal rescale a no-op — these cases test the merge/relabel logic, not rescaling.
-const bal = (assetId: number, total: string, valueUsd: number | null): AddressBalance => {
-  const d = assetDescriptor(assetId)
-  return { asset: d, total, free: total, reserved: '0', lastBlock: 1, valueUsd }
-}
+// Per-account display fold: a held receipt token is shown as the asset it stands
+// for, its balance merged into that asset's row. Basilisk registers no such token —
+// its only derived asset is the XYK share, and an LP share is a claim on TWO
+// reserves, so no single asset displays it — which means the live table is empty and
+// the fold is a no-op on every real account.
+//
+// An empty table is exactly why the fold is exercised against an INJECTED one here.
+// The merge is not trivial: it sums 128-bit balances, rescales across a decimal
+// difference, and must leave unfolded assets alone — and a bug in any of that would
+// silently mis-state a portfolio the day the first entry is added, with no test to
+// catch it because no real account would have triggered the path.
+const FOLD: Record<number, number> = { 690: 69, 4200: 420, 90001: 9001, 111: 11 }
+// 111 → 11 is the pair that does NOT share decimals (18 vs 6).
+const DECIMALS: Record<number, number> = { 690: 18, 69: 18, 4200: 18, 420: 18, 90001: 9, 9001: 9, 111: 18, 11: 6, 5: 12, 0: 12 }
+
+vi.mock('../src/services/explorerAssets.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/services/explorerAssets.ts')>()
+  return {
+    ...actual,
+    SHARE_TOKEN_UNDERLYING_ID: FOLD,
+    displayAssetId: (id: number) => FOLD[id] ?? id,
+    assetDescriptor: (id: number) => ({
+      assetId: id, iconAssetId: id, symbol: `#${id}`, name: null,
+      decimals: DECIMALS[id] ?? 12, parachainId: null, origin: null,
+    }),
+  }
+})
+
+const { foldShareBalances } = await import('../src/services/explorerService.ts')
+const { assetDescriptor } = await import('../src/services/explorerAssets.ts')
+type AddressBalance = import('../src/services/explorerService.ts').AddressBalance
+
+const bal = (assetId: number, total: string, valueUsd: number | null): AddressBalance =>
+  ({ asset: assetDescriptor(assetId), total, free: total, reserved: '0', lastBlock: 1, valueUsd })
 
 describe('foldShareBalances', () => {
-  it('relabels a lone pool-share holding as its underlying (2-Pool-GDOT → GDOT)', () => {
+  it('relabels a lone folded holding as its display asset', () => {
     const out = foldShareBalances([bal(690, '100', 100)])
     expect(out).toHaveLength(1)
     expect(out[0].asset.assetId).toBe(69)
@@ -23,7 +44,7 @@ describe('foldShareBalances', () => {
     expect(out[0].valueUsd).toBe(100)
   })
 
-  it('merges a pool-share into an existing underlying row (sums total + value)', () => {
+  it('merges a folded holding into an existing display row (sums total + value)', () => {
     const out = foldShareBalances([bal(69, '30', 30), bal(690, '100', 100)])
     expect(out).toHaveLength(1)
     expect(out[0].asset.assetId).toBe(69)
@@ -40,13 +61,24 @@ describe('foldShareBalances', () => {
     expect(out[0].valueUsd).toBe(16056)
   })
 
-  it('folds multiple share families independently and leaves other assets untouched', () => {
+  it('folds multiple families independently and leaves other assets untouched', () => {
     const out = foldShareBalances([bal(690, '1', 1), bal(90001, '2', 2), bal(5, '3', 3)])
     const ids = out.map(b => b.asset.assetId).sort((a, b) => a - b)
     expect(ids).toEqual([5, 69, 9001])
   })
 
-  it('is a no-op (same array reference) when no share tokens are held', () => {
+  // The two sides of a fold need not share decimals, and summing raw integers across
+  // a scale difference is off by 10^Δ — a whole portfolio's worth of error.
+  it('rescales a folded raw balance to the display asset\'s decimals', () => {
+    const out = foldShareBalances([bal(11, '1000000', 1), bal(111, '1000000000000000000', 1)])
+    expect(out).toHaveLength(1)
+    expect(out[0].asset.assetId).toBe(11)
+    expect(out[0].asset.decimals).toBe(6)
+    // One unit at 18 decimals plus one unit at 6 is two units, not 1e18 + 1e6.
+    expect(out[0].total).toBe('2000000')
+  })
+
+  it('is a no-op (same array reference) when nothing held folds', () => {
     const input = [bal(5, '10', 10), bal(0, '20', 20)]
     expect(foldShareBalances(input)).toBe(input)
   })

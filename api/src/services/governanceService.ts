@@ -11,7 +11,7 @@ import { curveCrossingX, curveThresholdPerbill, PERBILL, perbillOfRational, trac
 
 // Governance referendum detail.
 //
-// Hydration has voted through two pallets and both index from 0 — Democracy
+// Basilisk has voted through two pallets and both index from 0 — Democracy
 // (refIndex 0-206) and OpenGov/Referenda (pollIndex 0-369) — so a referendum is
 // only ever identified by the PAIR (pallet, index). Indexing by number alone would
 // merge two unrelated referenda.
@@ -19,7 +19,7 @@ export type ReferendumPallet = 'opengov' | 'democracy'
 
 export const REFERENDUM_PALLETS: ReferendumPallet[] = ['opengov', 'democracy']
 
-const HDX_ASSET_ID = 0
+const BSX_ASSET_ID = 0
 
 // First block that emitted ConvictionVoting.Voted. Vote CALLS predate it by ~534k
 // blocks, so referenda decided before this point are only visible through the calls.
@@ -231,7 +231,7 @@ export interface ReferendumProgress {
 let client: ClickHouseClient
 export function initGovernanceService(c: ClickHouseClient): void { client = c }
 
-const SUBSQUARE_BASE_URL = (process.env.SUBSQUARE_BASE_URL ?? 'https://hydration.subsquare.io').replace(/\/+$/, '')
+const SUBSQUARE_BASE_URL = (process.env.SUBSQUARE_BASE_URL ?? 'https://basilisk.subsquare.io').replace(/\/+$/, '')
 
 export function subsquareUrl(pallet: ReferendumPallet, index: number): string {
   return `${SUBSQUARE_BASE_URL}${pallet === 'democracy' ? '/democracy/referenda' : '/referenda'}/${index}`
@@ -515,7 +515,7 @@ async function liveReferendumState(index: number): Promise<LiveReferendumTally |
       if (ayes == null || nays == null || support == null) return null
       // The support curve divides by ACTIVE issuance (pallet_conviction_voting
       // tallies against Currency::active_issuance = total − inactive), not total.
-      // On this chain the inactive share is ~2.18B of 6.42B HDX, so using total
+      // On this chain the inactive share is a large fraction of issuance, so using total
       // understated every support figure by a third.
       const electorate = await Promise.all([api.query.balances.totalIssuance(), api.query.balances.inactiveIssuance()])
         .then(([total, inactive]) => {
@@ -850,7 +850,7 @@ const REMOVAL_CALLS: Record<ReferendumPallet, string[]> = {
 // `governance_vote_calls`. Such a withdrawal is invisible and its vote goes on being
 // counted: 35 of the chain's 735 ConvictionVoting.VoteRemoved events sit in exactly that
 // position (32 through dispatch_permit, 3 through Utility.batch_all, between blocks
-// 7,199,364 and 13,162,739), which is why OpenGov 200's attributed support stood 100 HDX
+// 7,199,364 and 13,162,739), which is why OpenGov 200's attributed support stood 100 BSX
 // above the chain's own — an abstain-only vote, withdrawn before the close, still counted.
 //
 // Found the way wrapped VOTES already are (see convictionVoteExtrinsics): an extrinsic
@@ -1014,7 +1014,7 @@ export function toVoter(row: VoteEventRow, withdrawals: Map<string, VotePosition
   } else {
     // A Split/SplitAbstain vote carries no conviction, which in both pallets means
     // Conviction::None — the 0.1x class, NOT an unweighted balance. `Tally::add` runs each
-    // leg through `Conviction::None.votes(balance)` (capital / 10), so a 1.5M HDX split leg
+    // leg through `Conviction::None.votes(balance)` (capital / 10), so a 1.5M BSX split leg
     // contributes 150k votes. Counting the full balance overstated it tenfold and pushed
     // the attributed nays of OpenGov 39 above the chain's own tally, which is impossible.
     // The abstain leg backs neither side but is still part of the capital.
@@ -1119,7 +1119,7 @@ export function tallyResidual(chain: Pick<ReferendumTally, 'ayes' | 'nays'>, dir
 // block, emitting Democracy.PreimageUsed{proposalHash, provider, deposit} before the
 // Democracy.Executed{refIndex} that reports the outcome. So the pair is a single
 // enactment, and the pairing is only trusted where it is unambiguous: each of the 49
-// enactment blocks in Hydration's history holds exactly one PreimageUsed and exactly one
+// enactment blocks in this chain's history holds exactly one PreimageUsed and exactly one
 // Executed, and this returns null rather than a guess for anything else — showing a wrong
 // proposal on a referendum page is worse than showing none.
 //
@@ -1215,8 +1215,8 @@ export async function getReferendum(pallet: ReferendumPallet, index: number, lim
     if (!lifecycle.length && !votes.length) return null
 
     const [prices, titles] = await Promise.all([ensurePrices(), referendumTitles()])
-    const priceUsd = prices.get(HDX_ASSET_ID)?.price ?? null
-    const assetRef = assetDescriptor(HDX_ASSET_ID)
+    const priceUsd = prices.get(BSX_ASSET_ID)?.price ?? null
+    const assetRef = assetDescriptor(BSX_ASSET_ID)
     const decimals = assetRef.decimals
 
     // Withdrawals only count up to the moment the referendum closed (see

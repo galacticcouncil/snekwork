@@ -70,7 +70,9 @@ export function parseSuffixEmojiQuery(query: string): { suffix: string; glyphs: 
 }
 
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-const KUSAMA_SS58_PREFIX = 2
+// Kusama's own prefix. Basilisk's neutral cross-chain display form: the relay it
+// sits on, so a counterparty account reads the same way on every chain of it.
+export const KUSAMA_SS58_PREFIX = 2
 const BASILISK_SS58_PREFIX = 10041
 const SS58_CHECKSUM_PREFIX = Buffer.from('SS58PRE')
 

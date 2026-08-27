@@ -59,7 +59,7 @@ async function stagingBusy(client: ClickHouseClient, stagingTable: string): Prom
 }
 
 // ───────────────────── atomic full-replace helper ─────────────────────
-// The three reconstruction jobs below (omnipool owner intervals, xyk farm
+// The reconstruction jobs below (xyk farm
 // intervals, xyk total shares) each recompute their whole read model from
 // scratch every run. They used to append rows with a fresh run_id, relying on
 // ReplacingMergeTree(run_id) + FINAL to collapse old rows on their stable
@@ -321,7 +321,7 @@ interface XykFarmIntervalRow {
   run_id: number
 }
 
-// The XYK-farm half of lp_lifecycle_events (see omnipoolLifecycleSelectSql).
+// The XYK-farm half of lp_lifecycle_events.
 export function xykFarmLifecycleSelectSql(): string {
   return `
       SELECT block_height AS block, extrinsic_index AS extrinsic, event_index AS event,

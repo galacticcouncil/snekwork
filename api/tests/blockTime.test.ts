@@ -11,43 +11,64 @@ vi.mock('../src/services/runtimeConstants.ts', async importOriginal => ({
 }))
 import { paraBlockMsFromConstants } from '../src/services/runtimeConstants.ts'
 
-// Hydration's block time is ~6s today and 2s is planned. Everything derived
-// from it either measures the chain or is pinned with a documented migration
-// action; these pin the arithmetic that decides which.
+// Basilisk's block time has been 12s, then 6s, and is 2s since spec 134.
+// Everything derived from it either measures the chain or is pinned with a
+// documented migration action; these pin the arithmetic that decides which.
 
-// Runtime 440 DECOUPLES the author slot from the block interval: SLOT_DURATION
-// stays 6000 while MILLISECS_PER_BLOCK drops to 2000, and
-// AllowMultipleBlocksPerSlot lets one author produce 3 blocks per slot. So
-// `aura.slotDuration` reads 6000 before AND after the switch — the one metadata
-// constant that looks authoritative and silently is not. These pin the
-// replacement: constants that are fixed WALL-CLOCK quantities expressed in
-// blocks, which therefore divide out to the block time on both sides.
+// Spec 134 DECOUPLES the author slot from the block interval: SLOT_DURATION stays
+// 6000 while MILLISECS_PER_BLOCK drops to 2000, and AllowMultipleBlocksPerSlot
+// lets one author produce 3 blocks per slot. Read at blocks 8,000,000 and
+// 13,000,000 (6s chains) and at the Aug-2026 head (a measured 2.2s chain),
+// `aura.slotDuration` reads 6000 at all three — the one metadata constant that
+// looks authoritative and silently is not. These pin the replacement: constants
+// that are fixed WALL-CLOCK quantities expressed in blocks, which therefore
+// divide out to the block time in whatever era the chain is in.
+//
+// Every literal below is a real value read off Basilisk at the spec named.
 describe('paraBlockMsFromConstants', () => {
-  // system.blockHashCount = 4h of blocks; gigaHdx.cooldownPeriod = 28d of blocks
-  it('reads 6000 from the pre-upgrade runtime', () => {
-    expect(paraBlockMsFromConstants(2_400, 403_200)).toBe(6_000)
+  // treasury.spendPeriod = 3d of blocks; convictionVoting.voteLockingPeriod = 7d.
+  it('reads 12000 from the oldest era, where only the treasury constant exists', () => {
+    // spec 105 predates OpenGov, so voteLockingPeriod is simply not published.
+    expect(paraBlockMsFromConstants(21_600, null)).toBe(12_000)
   })
 
-  it('reads 2000 from runtime 440, where aura.slotDuration still says 6000', () => {
-    expect(paraBlockMsFromConstants(7_200, 1_209_600)).toBe(2_000)
+  it('reads 6000 from the pre-upgrade runtime', () => {
+    expect(paraBlockMsFromConstants(43_200, 100_800)).toBe(6_000)
+  })
+
+  it('reads 2000 from spec 134, where aura.slotDuration still says 6000', () => {
+    expect(paraBlockMsFromConstants(129_600, 302_400)).toBe(2_000)
   })
 
   it('works from either constant alone', () => {
-    expect(paraBlockMsFromConstants(7_200, null)).toBe(2_000)
-    expect(paraBlockMsFromConstants(null, 1_209_600)).toBe(2_000)
+    expect(paraBlockMsFromConstants(129_600, null)).toBe(2_000)
+    expect(paraBlockMsFromConstants(null, 302_400)).toBe(2_000)
     expect(paraBlockMsFromConstants(null, null)).toBeNull()
   })
 
-  // Disagreement means one of the two wall-clock premises (4h / 28d) changed.
+  // Disagreement means one of the two wall-clock premises (3d / 7d) changed.
   // Picking a side would silently rescale every projected date, so refuse and
   // let the caller fall back to the measured ladder.
   it('refuses when the two constants disagree rather than picking one', () => {
-    expect(paraBlockMsFromConstants(7_200, 403_200)).toBeNull()
+    expect(paraBlockMsFromConstants(129_600, 100_800)).toBeNull()
   })
 
   it('refuses a value that does not divide the wall-clock premise exactly', () => {
     expect(paraBlockMsFromConstants(7_000, null)).toBeNull()
     expect(paraBlockMsFromConstants(0, null)).toBeNull()
+  })
+
+  // system.blockHashCount was the Hydration derivation's other premise, a 4-hour
+  // retention the runtime restated at each block-time change. Basilisk publishes
+  // the bare substrate default and left it at 250 through BOTH of its changes, so
+  // it holds no duration at all: a block time read out of it is invented, and
+  // since metadata OUTRANKS every measurement, that invented value would win.
+  // The reader is gone, and its absence is what this asserts — the arithmetic
+  // cannot refuse an input it is still being handed.
+  it('publishes no reader for a constant that carries no duration', async () => {
+    const module = await import('../src/services/runtimeConstants.ts')
+    expect(Object.keys(module)).not.toContain('runtimeBlockHashCount')
+    expect(Object.keys(module)).toEqual(expect.arrayContaining(['runtimeSpendPeriodBlocks', 'runtimeVoteLockingPeriodBlocks']))
   })
 })
 
@@ -71,8 +92,8 @@ describe('avgBlockMsSql', () => {
 describe('clampBlockMs', () => {
   it('passes a plausible measurement through unchanged', () => {
     // The pace actually measured on the live chain in Aug 2026.
+    expect(clampBlockMs(2298)).toBe(2298)
     expect(clampBlockMs(4969.7)).toBe(4969.7)
-    expect(clampBlockMs(1980)).toBe(1980)
   })
 
   it('falls back to the nominal for an unusable read', () => {
@@ -86,15 +107,15 @@ describe('resolveNominalBlockMs', () => {
   // A measured pace is snapped to the runtime's slot ladder, so the value the
   // date projections ride on is a step function that moves exactly once — at
   // the runtime upgrade — instead of tracking throughput noise.
-  it('keeps today’s elastic-scaling pace on the 6s rung', () => {
-    for (const measured of [4_806, 4_970, 5_414, 5_576, 5_588, 5_810, 6_000, 6_400]) {
-      expect(resolveNominalBlockMs(measured)).toBe(6_000)
+  it('keeps today’s pace on the 2s rung', () => {
+    for (const measured of [1_700, 1_900, 2_000, 2_094, 2_220, 2_308, 2_600]) {
+      expect(resolveNominalBlockMs(measured)).toBe(2_000)
     }
   })
 
-  it('resolves a post-upgrade pace to the 2s rung', () => {
-    for (const measured of [1_700, 1_900, 2_000, 2_200, 2_600]) {
-      expect(resolveNominalBlockMs(measured)).toBe(2_000)
+  it('resolves the pre-upgrade 6s era’s pace to the 6s rung', () => {
+    for (const measured of [4_806, 5_414, 5_588, 6_000, 6_534]) {
+      expect(resolveNominalBlockMs(measured)).toBe(6_000)
     }
   })
 
@@ -118,7 +139,7 @@ describe('resolveNominalBlockMs', () => {
 
 describe('nominalBlockMsMismatch', () => {
   it('stays quiet across the whole range real production covers', () => {
-    for (const measured of [4_806, 4_970, 5_588, 5_810, 6_000, 1_900, 2_400]) {
+    for (const measured of [2_094, 2_220, 2_308, 1_900, 2_400, 4_806, 5_588, 6_000]) {
       expect(nominalBlockMsMismatch(measured)).toBeNull()
     }
   })
@@ -143,12 +164,12 @@ describe('nominalBlockMsMismatch', () => {
 describe('blocksPerHour', () => {
   it('matches the nominal constant at the nominal slot time', () => {
     expect(blocksPerHour(NOMINAL_PARA_BLOCK_MS)).toBe(NOMINAL_BLOCKS_PER_HOUR)
-    expect(NOMINAL_BLOCKS_PER_HOUR).toBe(600)
+    expect(NOMINAL_BLOCKS_PER_HOUR).toBe(1_800)
   })
 
-  it('tracks a faster chain', () => {
-    expect(blocksPerHour(2_000)).toBe(1_800)
-    expect(Math.round(blocksPerHour(5_588))).toBe(644)
+  it('tracks a slower chain', () => {
+    expect(blocksPerHour(6_000)).toBe(600)
+    expect(Math.round(blocksPerHour(2_298))).toBe(1_567)
   })
 
   it('degrades to the nominal rather than dividing by an absurd value', () => {
@@ -157,10 +178,11 @@ describe('blocksPerHour', () => {
 })
 
 describe('relay block time', () => {
-  it('is the relay chain’s own 6s and is not the parachain constant', () => {
-    // Same value today; separate constants because only one of them moves at
-    // the 2s upgrade.
+  it('is Kusama’s own 6s and is not the parachain constant', () => {
+    // Separate constants because only the parachain one moves at a block-time
+    // upgrade — and it already has, twice, while this stayed at 6000.
     expect(NOMINAL_RELAY_BLOCK_MS).toBe(6_000)
+    expect(NOMINAL_RELAY_BLOCK_MS).not.toBe(NOMINAL_PARA_BLOCK_MS)
   })
 })
 
@@ -183,8 +205,8 @@ describe('dailyBlockMs', () => {
   it('turns a day of blocks into a per-block average', () => {
     expect(dailyBlockMs(14_400)).toBe(6_000)
     expect(dailyBlockMs(43_200)).toBe(2_000)
-    // The live Aug 2026 count.
-    expect(Math.round(dailyBlockMs(15_461) as number)).toBe(5_588)
+    // A day at the live Aug 2026 pace of ~2.3s.
+    expect(Math.round(dailyBlockMs(37_600) as number)).toBe(2_298)
   })
 
   it('refuses a sample too small to be a day of chain', () => {

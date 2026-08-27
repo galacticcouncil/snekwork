@@ -3,7 +3,7 @@
 // re-runs. The deposit-NFT collection is selected by the caller (see
 // XYK_FARM_NFT_COLLECTION_ID in derivations/jobs.ts); this walk sees only its events.
 // Verified against raw_events (Phase 2 design doc):
-//   - the deposit NFT's owner is the economic owner throughout (unlike Omnipool there is
+//   - the deposit NFT's owner is the economic owner throughout (there is
 //     no separate "bare" NFT — direct XYK LP is a fungible balance).
 //   - XYKLiquidityMining.SharesDeposited{lpToken,amount} sets the principal (once).
 //   - SharesRedeposited restates the SAME amount for another yield farm — association, never

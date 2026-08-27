@@ -1,12 +1,12 @@
 // Which asset a transaction fee was actually charged in.
 //
 // `pallet-transaction-multi-payment` lets an account nominate any accepted
-// currency as its fee currency (EVM accounts default to WETH). The fee is still
-// COMPUTED in HDX — `TransactionPayment.TransactionFeePaid.actualFee`, mirrored
+// currency as its fee currency. The fee is still
+// COMPUTED in BSX — `TransactionPayment.TransactionFeePaid.actualFee`, mirrored
 // into `raw_extrinsics.fee` (which excludes the tip) — but what leaves the
 // account is that figure converted at the block's oracle price and debited in
 // the nominated asset. Roughly a fifth of fee-paying extrinsics settle in
-// something other than HDX (USDT, DOT, MYTH, GLMR, H2O, …), so the HDX number
+// something other than BSX (KSM, USDT, DAI, …), so the BSX number
 // names an asset that never moved.
 //
 // The debited asset and amount live only in the extrinsic's own events:
@@ -15,21 +15,25 @@
 //   Tokens.Deposited  {currencyId, who: payer}     post-dispatch refund
 //   Tokens.Deposited  {currencyId, who: treasury}  the fee, INCLUDING the tip
 //
-// HDX uses the `Balances.Withdraw`/`Balances.Deposit` pair instead.
+// BSX uses the `Balances.Withdraw`/`Balances.Deposit` pair instead.
 // `Currencies.Withdrawn`/`Currencies.Deposited` are duplicate mirrors of the
 // orml-tokens events and must never be counted.
 //
 // So the fee is the treasury deposit — but an extrinsic can hold treasury
 // deposits that are not fees (dust from a killed account arrives the same way,
-// and an Omnipool fee leg can deposit H2O). Two conditions pin the right one:
+// and a swap leg in the same extrinsic can deposit one too). Two conditions pin
+// the right one:
 //
 //   * its currency was also DEBITED from the fee payer in the same extrinsic —
 //     which is what separates a fee from a dust sweep or a pool fee leg, and
 //   * it is the LAST such deposit, because `correct_and_deposit_fee` runs in
 //     post-dispatch, after every event the call itself produced.
 //
-// Verified against 13759746-2 (DOT), 13756091-3 (H2O), 13706669-3 (HDX fee
-// alongside 0.0001 HDX of dust) and 13443355-3 (EVM, three WETH gas deposits).
+// The two conditions were derived on the forked codebase's chain, against
+// extrinsics covering each shape: a non-native fee, a native fee arriving beside
+// unrelated dust, and several deposits in one extrinsic. They hold on any runtime
+// with this pallet, since they are properties of `correct_and_deposit_fee`'s
+// ordering rather than of one chain's asset set.
 export const FEE_BALANCE_EVENTS = [
   'Tokens.Withdrawn',
   'Balances.Withdraw',
@@ -86,10 +90,10 @@ function parseBig(raw: string | null | undefined): bigint | null {
  * `Pays::No` dispatch (`actualFee: 0`) — which is the line the derivation and its
  * readers both split on, so they share one definition of it.
  */
-export function hasSubstrateFee(feeHdx: string | null, tipHdx: string | null): boolean {
-  const fee = parseBig(feeHdx)
+export function hasSubstrateFee(feeNative: string | null, tipNative: string | null): boolean {
+  const fee = parseBig(feeNative)
   if (fee == null) return false
-  return fee + (parseBig(tipHdx) ?? 0n) > 0n
+  return fee + (parseBig(tipNative) ?? 0n) > 0n
 }
 
 /**
@@ -97,7 +101,7 @@ export function hasSubstrateFee(feeHdx: string | null, tipHdx: string | null): b
  * the extrinsic's events do not name one (no payer, no matching treasury
  * deposit, an inherent).
  *
- * `feeHdx`/`tipHdx` are `raw_extrinsics.fee`/`tip` — the HDX-equivalent base fee
+ * `feeNative`/`tipNative` are `raw_extrinsics.fee`/`tip` — the BSX-equivalent base fee
  * and tip.
  *
  * When they say the substrate charged NOTHING, the cost is EVM gas and every
@@ -117,8 +121,8 @@ export function hasSubstrateFee(feeHdx: string | null, tipHdx: string | null): b
 export function deriveFeePayment(
   events: readonly FeePaymentEvent[],
   payer: string | null,
-  feeHdx: string | null,
-  tipHdx: string | null,
+  feeNative: string | null,
+  tipNative: string | null,
 ): DerivedFeePayment | null {
   if (!payer) return null
   const who = payer.toLowerCase()
@@ -142,12 +146,12 @@ export function deriveFeePayment(
   const last = candidates[candidates.length - 1]
   if (!last) return null
 
-  const paid = hasSubstrateFee(feeHdx, tipHdx)
+  const paid = hasSubstrateFee(feeNative, tipNative)
     ? last.amount
     : candidates.filter(c => c.assetId === last.assetId).reduce((sum, c) => sum + c.amount, 0n)
 
-  const fee = parseBig(feeHdx)
-  const tip = parseBig(tipHdx)
+  const fee = parseBig(feeNative)
+  const tip = parseBig(tipNative)
   if (fee != null && tip != null && tip > 0n) {
     const actual = fee + tip
     const tipPart = (paid * tip) / actual

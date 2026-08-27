@@ -2,29 +2,29 @@ import type { ClickHouseClient } from '../db/client.ts'
 import { cached } from './cache.ts'
 import { runtimeParaBlockMs } from './runtimeConstants.ts'
 
-// One home for "how long is a Hydration block".
+// One home for "how long is a Basilisk block".
 //
 // Three different numbers hide behind that question and they are NOT
 // interchangeable:
 //
-//  1. The RELAY block time — a solid 6s. Polkadot is not part of Hydration's
-//     block-time migration, so anything anchored on relay heights (vesting
-//     schedules, `ParachainSystem.LastRelayChainBlockNumber` extrapolation)
-//     keeps the hard 6000 in `NOMINAL_RELAY_BLOCK_MS` and must never be routed
-//     through the parachain pace.
+//  1. The RELAY block time — Kusama's solid 6s. The relay is not part of
+//     Basilisk's block-time migration, so anything anchored on relay heights
+//     (vesting schedules, `ParachainSystem.LastRelayChainBlockNumber`
+//     extrapolation) keeps the hard 6000 in `NOMINAL_RELAY_BLOCK_MS` and must
+//     never be routed through the parachain pace.
 //  2. The parachain's NOMINAL block interval, `MILLISECS_PER_BLOCK` in the
-//     runtime (6000 today, 2000 after the planned upgrade). Every runtime
-//     block-count constant is DERIVED from it — `DAYS`, the GIGAHDX cooldown,
-//     conviction lock periods — so it is the right slope for turning one of
-//     those block counts into a duration. It is NOT `aura.slotDuration`:
-//     runtime 440 decouples the author slot (which stays 6000) from the block
-//     interval, so that constant reads 6000 on both sides of the switch. See
-//     `runtimeParaBlockMs` for the two wall-clock-premised constants that do
-//     track it.
-//  3. The parachain's MEASURED pace. Elastic scaling means real production runs
-//     ahead of the nominal slot: ~5.4–5.8s per block against a 6000ms nominal
-//     as of Aug 2026. It is the right number for "how many blocks did the chain
-//     actually produce in the last N hours".
+//     runtime — 12000 until spec ~123, 6000 until spec 134, 2000 since. Every
+//     runtime block-count constant is DERIVED from it — `DAYS`, the treasury
+//     spend period, conviction lock periods — so it is the right slope for
+//     turning one of those block counts into a duration. It is NOT
+//     `aura.slotDuration`: spec 134 decoupled the author slot (which stays 6000)
+//     from the block interval, so that constant reads 6000 on both sides of the
+//     switch. See `runtimeParaBlockMs` for the two wall-clock-premised constants
+//     that do track it.
+//  3. The parachain's MEASURED pace, which runs a little behind the nominal
+//     slot: ~2.1–2.3s per block against a 2000ms nominal as of Aug 2026. It is
+//     the right number for "how many blocks did the chain actually produce in
+//     the last N hours".
 //
 // (2) is read from runtime metadata when the node is reachable
 // (runtimeConstants.ts — an in-memory property read on the pending layer's
@@ -36,24 +36,25 @@ import { runtimeParaBlockMs } from './runtimeConstants.ts'
 // safe — a two-rung ladder, a wall-clock-anchored sample, and a refusal to MOVE
 // on an out-of-band measurement.
 
-// The relay chain's slot time. Not affected by Hydration's 2s migration.
+// Kusama's slot time. Not affected by Basilisk's block-time migrations.
 export const NOMINAL_RELAY_BLOCK_MS = 6_000
-// `MILLISECS_PER_BLOCK` in the Hydration runtime today, and the starting value
-// for the resolution below before anything has been read or measured.
-export const NOMINAL_PARA_BLOCK_MS = 6_000
+// `MILLISECS_PER_BLOCK` in the Basilisk runtime today (spec 134), and the
+// starting value for the resolution below before anything has been read or
+// measured.
+export const NOMINAL_PARA_BLOCK_MS = 2_000
 // Blocks per hour at the nominal slot time — the pre-measurement constant the
 // window helpers degrade to.
 export const NOMINAL_BLOCKS_PER_HOUR = 3_600_000 / NOMINAL_PARA_BLOCK_MS
 
-// Slot times Hydration's runtime can be on: 6s today, 2s planned. A measured
-// pace is snapped to the nearest of these, so an inferred nominal is a step
-// function that changes exactly once, at the runtime upgrade, instead of
+// Slot times Basilisk's runtime can be on: 2s today, 6s before spec 134. A
+// measured pace is snapped to the nearest of these, so an inferred nominal is a
+// step function that changes exactly once, at a runtime upgrade, instead of
 // tracking throughput noise.
 //
-// The retired 12s era is deliberately NOT a rung. The chain cannot go back to
-// it, and keeping it turned a stall into a date error: measured over 600k
-// blocks, ~1% of 100-block windows ran slow enough (>8 485ms, the 6s/12s
-// geometric boundary) to resolve to 12 000 and double every projected date.
+// The retired 12s era (pre-spec-123) is deliberately NOT a rung. The chain
+// cannot go back to it, and keeping it turns a stall into a date error: a
+// 100-block window can sit inside a stall slow enough to cross the 6s/12s
+// geometric boundary and double every projected date.
 export const RUNTIME_SLOT_MS_LADDER = [6_000, 2_000] as const
 
 // Sanity band for a measured average. Outside it the read is garbage (empty
@@ -165,8 +166,8 @@ export const blocksPerHour = (msPerBlock: number): number => 3_600_000 / clampBl
 // The nominal a failed or implausible MEASUREMENT degrades to: the runtime's
 // own answer while the node is reachable, else the last nominal this process
 // established, else the pre-measurement constant. Degrading to the bare
-// constant instead would make one bad 100-block read report 6s throughput on a
-// 2s chain for a whole cache window even while metadata says 2000ms.
+// constant instead would make one bad 100-block read report the wrong rung's
+// throughput for a whole cache window even while metadata says otherwise.
 function degradedNominalMs(): number {
   return runtimeParaBlockMs() ?? heldNominalMs ?? NOMINAL_PARA_BLOCK_MS
 }
@@ -290,8 +291,8 @@ export async function resolveParaBlockTime(client: ClickHouseClient): Promise<Re
   })
 }
 
-// The parachain's NOMINAL slot time: 6000 today, 2000 after the planned
-// upgrade. Unlike a raw measurement it does not wobble between refreshes, which
+// The parachain's NOMINAL slot time: 2000 since spec 134, 6000 before it.
+// Unlike a raw measurement it does not wobble between refreshes, which
 // is what dated snapshot rows need — see lockBreakdownService's projector.
 export async function paraBlockMs(client: ClickHouseClient): Promise<number> {
   return (await resolveParaBlockTime(client)).nominalMs

@@ -9,27 +9,33 @@ import { convictionLabel, voteSubjectLabel } from '../utils/voteRows'
 import type { ActivityRow } from '../types'
 
 // Chain badge for cross-chain (XCM) destinations — full network names, brand
-// gradients for the frequent chains, neutral gray for the rest.
+// gradients for the frequent chains, neutral gray for the rest. The keys are the
+// names PARACHAIN_META and RELAY_XCM_NETWORK emit in api/src/services/
+// explorerService.ts; a name this map does not carry still renders, in gray.
+// Basilisk sits on Kusama, so these are Kusama's chains — a Polkadot para id names
+// something else entirely at the same number.
 //
-// Polkadot and its AssetHub take the near-black of Polkadot's own brand, cast
-// faintly violet and blue to tell the relay from its system chain. Black also keeps
-// them clear of the accent the local badge owns, which every counterparty here has
-// to stay off: two chips a few degrees of hue apart read as one at 9px.
+// Kusama and its AssetHub take the near-black of Kusama's own brand, the system
+// chain cast faintly blue to tell it from the relay. Black also keeps them clear of
+// the accent the local badge owns, which every counterparty here has to stay off:
+// two chips a few degrees of hue apart read as one at 9px.
 const CHAIN_COLORS: Record<string, [string, string]> = {
-  Polkadot: ['#3d3540', '#141014'],
+  Kusama: ['#3a3a3a', '#0f0f0f'],
   AssetHub: ['#333f4e', '#121820'],
-  Mythos: ['#e0332b', '#9d1a14'],
-  Moonbeam: ['#53cbc9', '#0fb6b0'],
-  Astar: ['#1b6dff', '#0a45c9'],
+  Karura: ['#ff4c3b', '#c2261a'],
   Bifrost: ['#5a25f0', '#3a10b0'],
-  Interlay: ['#f19135', '#d4731a'],
-  Ethereum: ['#627EEA', '#3c54b8'],
-  Acala: ['#e40c5b', '#a80943'],
-  Solana: ['#9945FF', '#5c1fd1'],
-  Centrifuge: ['#1253fa', '#0b36ad'],
-  Phala: ['#c4f142', '#96c214'],
-  Unique: ['#00bfff', '#0087b4'],
-  KILT: ['#8c145a', '#5e0d3c'],
+  Khala: ['#c4f142', '#96c214'],
+  Shiden: ['#7b3fe4', '#4f1fa8'],
+  Integritee: ['#1f9dd6', '#116b96'],
+  Moonriver: ['#f2a007', '#b06e05'],
+  Robonomics: ['#2b6cb0', '#16406e'],
+  Calamari: ['#29b6af', '#177a75'],
+  Picasso: ['#c90e7c', '#8a0a55'],
+  Kintsugi: ['#d4a017', '#96700d'],
+  Quartz: ['#ff4d6a', '#c22343'],
+  Crab: ['#ff0083', '#b5005d'],
+  Mangata: ['#ff7a00', '#c25400'],
+  Turing: ['#00b9a3', '#008072'],
 }
 export function ChainBadge({ chain }: { chain: string }) {
   const c = CHAIN_COLORS[chain] ?? ['#666', '#444']

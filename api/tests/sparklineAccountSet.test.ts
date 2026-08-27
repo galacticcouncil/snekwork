@@ -40,10 +40,10 @@ describe('sparkline account sets', () => {
     expect(body).toContain('members.filter(isModuleAccount)')
   })
 
-  it('still contributes each member s EVM-side twin', () => {
-    const body = fn('enrichAccountSparklines')
-
-    expect(body).toContain('evmAccountForm(m)')
+  // Basilisk has no EVM, so there is no truncated twin of a member to contribute —
+  // an id no row here can hold, which only doubled the account list it was added to.
+  it('adds no EVM-side twin of a member', () => {
+    expect(fn('enrichAccountSparklines')).not.toContain('evmAccountForm')
   })
 
   // A row whose members produce no usable account set must keep whatever

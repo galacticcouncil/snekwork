@@ -3,7 +3,6 @@ import { nonPlumbingTransferLegSql } from '../src/services/explorerService.ts'
 
 // Well-known `modl` pallet pots (stable chain constants).
 const ROUTER = '0x6d6f646c726f7574657265780000000000000000000000000000000000000000'
-const OMNIPOOL = '0x6d6f646c6f6d6e69706f6f6c0000000000000000000000000000000000000000'
 const FEEPROC = '0x6d6f646c66656570726f632f0000000000000000000000000000000000000000'
 const TREASURY = '0x6d6f646c70792f74727372790000000000000000000000000000000000000000'
 
@@ -15,7 +14,7 @@ describe('nonPlumbingTransferLegSql', () => {
   )
 
   it('excludes the noisy swap/fee pots on both legs', () => {
-    for (const pot of [ROUTER, OMNIPOOL, FEEPROC]) {
+    for (const pot of [ROUTER, FEEPROC]) {
       // once per leg (from + to)
       expect(sql.split(pot).length - 1).toBe(2)
     }

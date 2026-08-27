@@ -1,7 +1,7 @@
 import type { ClickHouseClient } from '../db/client.ts'
 
 // Republish decision shared by the three account-value snapshot generations
-// (per-account locks, money-market account values, Omnipool claims).
+// (per-account locks, account values, LP claims).
 //
 // Each of them publishes the same way: insert an immutable generation under a
 // fresh `snapshot_id` partition, verify it round-trips, flip the `…_state`
@@ -21,7 +21,7 @@ import type { ClickHouseClient } from '../db/client.ts'
 //    hashes exactly the fields it inserts, in a deterministic row order, so
 //    "equal checksum" means "identical published rows". A checksum over the
 //    SOURCES of a generation would not do: it can miss state that changes the
-//    published values (see the Omnipool claim builder, whose output depends on
+//    published values (see the LP claim builder, whose output depends on
 //    pool state that no position row carries).
 //  - The partition the pointer names must still exist with the row count the
 //    pointer claims. That is read from part metadata, so it costs nothing, and
@@ -38,7 +38,7 @@ import type { ClickHouseClient } from '../db/client.ts'
 // a skipped generation can never outlive the tolerance its main consumer
 // already accepts. Against the 60s lock refresh that is a floor of one forced
 // republish every 10 cycles (144/day instead of 1440); against the 300s
-// money-market and Omnipool refreshes, one every 2 cycles.
+// value refreshes, one every 2 cycles.
 export const REPUBLISH_FLOOR_MS = 10 * 60_000
 
 export interface PublishedGeneration {

@@ -10,7 +10,7 @@ test('trade detail renders asset chips for route, fees, price, and execution val
   // The first hop has no amounts of its own — the chips still name both legs.
   const firstHop = routeTable.locator('tbody tr').first()
   await expect(firstHop.locator('[data-label="In"] .asset-chip')).toContainText('USDT')
-  await expect(firstHop.locator('[data-label="Out"] .asset-chip')).toContainText('aUSDT')
+  await expect(firstHop.locator('[data-label="Out"] .asset-chip')).toContainText('DAI')
 
   const poolFee = routeTable.locator('tbody tr').nth(1).locator('[data-label="Pool fee"]')
   await expect(poolFee.locator('.asset-chip')).toContainText('DOT')

@@ -1,26 +1,29 @@
 import { describe, it, expect } from 'vitest'
-import { modlAccountId, stableswapPoolAccount, economicModuleAccounts, truncatedH160Index, initTagService, loadTags, retireUnknownTagMemberships, SYSTEM_TAG_IDS, DEFAULT_TAGS, SOVEREIGN_PREFIXES } from '../src/services/tagService.ts'
+import { modlAccountId, parentSovereignAccountId, economicModuleAccounts, initTagService, loadTags, retireUnknownTagMemberships, SYSTEM_TAG_IDS, DEFAULT_TAGS, SOVEREIGN_PREFIXES } from '../src/services/tagService.ts'
 import type { Tag } from '../src/services/tagService.ts'
 import type { ClickHouseClient } from '../src/db/client.ts'
 
 describe('system-account derivations', () => {
   it('builds modl pallet account ids ("modl" + 8-byte pallet id, zero-padded)', () => {
-    expect(modlAccountId('omnipool')).toBe('0x6d6f646c6f6d6e69706f6f6c0000000000000000000000000000000000000000')
     expect(modlAccountId('py/trsry')).toBe('0x6d6f646c70792f74727372790000000000000000000000000000000000000000')
-    expect(modlAccountId('staking#')).toBe('0x6d6f646c7374616b696e67230000000000000000000000000000000000000000')
+    expect(modlAccountId('xykLMpID')).toBe('0x6d6f646c78796b4c4d7049440000000000000000000000000000000000000000')
+    // The optional sub-account suffix lands between the pallet id and the padding.
+    expect(modlAccountId('py/trsry', '08627411')).toBe('0x6d6f646c70792f74727372790862741100000000000000000000000000000000')
   })
 
-  it('derives stableswap pool accounts (blake2-256 of "sts" + poolId LE) — verified on-chain', () => {
-    // pool 100 (4-Pool) — account confirmed present in account_asset_latest_balances
-    expect(stableswapPoolAccount(100)).toMatch(/^0x[0-9a-f]{64}$/)
-    expect(stableswapPoolAccount(100)).not.toBe(stableswapPoolAccount(101))
+  // The relay's own account here is NOT a 'sibl'/'para' sovereign: XCM's
+  // ParentIsPreset converter maps the Parent origin to the ASCII bytes "Parent",
+  // right-padded — the same marker the activity decoders recognise as an XCM origin.
+  it('derives the relay sovereign from the Parent origin marker', () => {
+    expect(parentSovereignAccountId()).toBe('0x506172656e740000000000000000000000000000000000000000000000000000')
+    expect(SOVEREIGN_PREFIXES.some(p => parentSovereignAccountId().startsWith(p))).toBe(false)
   })
 
-  it('ships reproducible pallet-account membership in DEFAULT_TAGS', () => {
+  it('ships reproducible, derived membership in DEFAULT_TAGS', () => {
     const ids = DEFAULT_TAGS.map(t => t.tagId)
-    for (const t of ['omnipool', 'staking-pot', 'fee-processor', 'gigahdx-pots', 'pallet-pots']) expect(ids).toContain(t)
-    const treasury = DEFAULT_TAGS.find(t => t.tagId === 'treasury')!
-    expect(treasury.addresses.length).toBeGreaterThan(1) // main + sub-pot
+    expect(ids).toEqual(['treasury', 'kusama-sovereign'])
+    expect(DEFAULT_TAGS.flatMap(t => t.addresses))
+      .toEqual([modlAccountId('py/trsry'), parentSovereignAccountId()])
   })
 
   // A sovereign account is 20 meaningful bytes under one of two markers. Matching
@@ -38,49 +41,28 @@ describe('economicModuleAccounts — movers exception list', () => {
   it('admits tagged module accounts except system-tag members', () => {
     const tags = [
       tag('treasury', ['0x6d6f646c70792f74727372790000000000000000000000000000000000000000']),
-      tag('omnipool', ['0x6d6f646c6f6d6e69706f6f6c0000000000000000000000000000000000000000']),
-      tag('kraken', ['0x1111111111111111111111111111111111111111111111111111111111111111']),
+      tag('liquidity-mining', ['0x6d6f646c78796b4c4d7049440000000000000000000000000000000000000000']),
+      tag('xyk-pools', ['0x1111111111111111111111111111111111111111111111111111111111111111']),
     ]
     const out = economicModuleAccounts(tags)
     expect(out).toContain('0x6d6f646c70792f74727372790000000000000000000000000000000000000000')
-    expect(out).not.toContain('0x6d6f646c6f6d6e69706f6f6c0000000000000000000000000000000000000000') // system tag
+    expect(out).not.toContain('0x6d6f646c78796b4c4d7049440000000000000000000000000000000000000000') // system tag
     expect(out).not.toContain('0x1111111111111111111111111111111111111111111111111111111111111111') // not modl
-    expect(SYSTEM_TAG_IDS.has('omnipool')).toBe(true)
+    expect(SYSTEM_TAG_IDS.has('liquidity-mining')).toBe(true)
     expect(SYSTEM_TAG_IDS.has('treasury')).toBe(false)
   })
 })
 
-// ERC-20 balances of NATIVE accounts live EVM-side under H160 = first 20 bytes
-// of the AccountId32 (e.g. the GIGADOT stableswap pool's aDOT reserve). The tag
-// registry is the reverse-lookup source: every structural account is tagged.
-describe('truncatedH160Index — resolve EVM-side aliases of tagged native accounts', () => {
-  const tag = (tagId: string, members: string[]): Tag => ({ tagId, name: tagId, color: '', note: '', icon: '', members })
-  const pool690 = '0xe21da918e4176b72ef1930ffaa17edcb03b9b739c2843fb0cf096283a7d9c261'
-
-  it('maps a tagged native account by its first 20 bytes', () => {
-    const idx = truncatedH160Index([tag('stableswap-pools', [pool690])])
-    expect(idx.get('0xe21da918e4176b72ef1930ffaa17edcb03b9b739')).toBe(pool690)
-  })
-
-  it('skips ETH-prefixed members (their truncation IS the EVM address) and malformed ids', () => {
-    const idx = truncatedH160Index([
-      tag('exchange', ['0x45544800e21da918e4176b72ef1930ffaa17edcb03b9b7390000000000000000']),
-      tag('broken', ['not-an-account']),
-    ])
-    expect(idx.size).toBe(0)
-  })
-})
-
-// Contracts have no tag of their own: the `</>` pill glyph marks them wherever
-// an account appears, and /contracts is their directory. A membership row is
-// only ever inserted, so dropping the tag from code has to actively tombstone
-// what an earlier deployment seeded — that is what the retire pass is for.
+// A membership row is only ever inserted, so dropping a tag from code has to
+// actively tombstone what an earlier deployment seeded — otherwise loadTags keeps
+// serving it and a retired tag goes on labelling its account. That is what the
+// retire pass is for, and it is how a deployment sheds the tags this fork removed.
 describe('retireUnknownTagMemberships', () => {
-  it('tombstones a tag no code definition claims, such as the retired contracts tag', async () => {
+  it('tombstones a tag no code definition claims', async () => {
     const commands: { query: string; query_params?: Record<string, unknown> }[] = []
     let tagRows: Record<string, unknown>[] = [{
       label_id: 'contracts', label_name: 'Contract', color: '', note: '', icon: '📜',
-      account_id: '0x45544800531a654d1696ed52e7275a8cede955e82620f99a0000000000000000',
+      account_id: '0x531a654d1696ed52e7275a8cede955e82620f99a0000000000000000000000ff',
     }]
     const client = {
       query: async () => ({ json: async () => tagRows }),

@@ -1,22 +1,31 @@
 import { describe, it, expect } from 'vitest'
 import { swapEventAmounts, parseTradeLimit, parseRouteHops, limitMarginPct } from '../src/services/explorerService.ts'
 
-// Trade-detail parsing: swap-event amount extraction (XYK uses amount/salePrice/
-// buyPrice instead of amountIn/amountOut), slippage-limit extraction per call
-// shape, router route hops, and the executed-vs-limit margin.
+// Trade-detail parsing: swap-event amount extraction (the AMM pallets use
+// amount/salePrice/buyPrice instead of amountIn/amountOut), slippage-limit
+// extraction per call shape, router route hops, and the executed-vs-limit margin.
 
 describe('swapEventAmounts', () => {
-  it('reads amountIn/amountOut for Omnipool/Stableswap/Router events', () => {
-    const a = swapEventAmounts('Omnipool.SellExecuted', { assetIn: 222, assetOut: 5, amountIn: '10', amountOut: '20' })
+  it('reads amountIn/amountOut for Router events', () => {
+    const a = swapEventAmounts('Router.Executed', { assetIn: 222, assetOut: 5, amountIn: '10', amountOut: '20' })
     expect(a).toEqual({ assetIn: 222, assetOut: 5, amountIn: '10', amountOut: '20' })
   })
-  it('maps XYK sell amount/salePrice onto in/out', () => {
-    const a = swapEventAmounts('XYK.SellExecuted', { assetIn: 5, assetOut: 30, amount: '111', salePrice: '999' })
-    expect(a).toEqual({ assetIn: 5, assetOut: 30, amountIn: '111', amountOut: '999' })
+  it('maps a sell of either pallet onto amount paid / salePrice received', () => {
+    for (const name of ['XYK.SellExecuted', 'LBP.SellExecuted']) {
+      const a = swapEventAmounts(name, { assetIn: 5, assetOut: 30, amount: '111', salePrice: '999' })
+      expect(a, name).toEqual({ assetIn: 5, assetOut: 30, amountIn: '111', amountOut: '999' })
+    }
   })
-  it('maps XYK buy amount/buyPrice onto out/in', () => {
+  // The two buy events share field names and mean the opposite by them, so folding
+  // them together swaps a trade's sides. Verified against the Router.RouteExecuted
+  // of the same extrinsic across the legacy era (see accountTradeVolume.test.ts).
+  it('maps an XYK buy onto buyPrice paid / amount received', () => {
     const a = swapEventAmounts('XYK.BuyExecuted', { assetIn: 5, assetOut: 16, amount: '222', buyPrice: '444' })
     expect(a).toEqual({ assetIn: 5, assetOut: 16, amountIn: '444', amountOut: '222' })
+  })
+  it('maps an LBP buy onto the opposite order: amount paid / buyPrice received', () => {
+    const a = swapEventAmounts('LBP.BuyExecuted', { assetIn: 5, assetOut: 16, amount: '222', buyPrice: '444' })
+    expect(a).toEqual({ assetIn: 5, assetOut: 16, amountIn: '222', amountOut: '444' })
   })
 })
 

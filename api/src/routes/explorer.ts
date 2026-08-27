@@ -318,7 +318,7 @@ export async function explorerRoutes(fastify: FastifyInstance) {
     return getRecentExtrinsics(limit, signedOnly, dateParam(q, 'from'), dateParam(q, 'to'), offset, extrinsicFilters(q))
   })
 
-  // Referendum detail. Hydration has voted through two pallets that both index from
+  // Referendum detail. This chain has voted through two pallets that both index from
   // 0 (Democracy 0-206, OpenGov 0-369), so the pallet is part of the identity — an
   // index alone would show two different referenda under one URL.
   fastify.get('/explorer/referendum/:pallet/:index', async (req, reply) => {

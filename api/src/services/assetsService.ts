@@ -13,23 +13,18 @@ interface AssetRow {
 }
 
 // Stablecoin symbols — all variants of these symbols are treated as stablecoins.
-const STABLECOIN_SYMBOLS = new Set(['USDT', 'USDC', 'HOLLAR', 'DAI', 'HUSDT', 'HUSDC', 'EURC', 'HEURC'])
-// Being a stablecoin is not the same as being worth a dollar: EURC tracks the euro.
-// Only these can stand in for USD when a pair is denominated, since indexed prices
-// are USD — a EURC-quoted series has to be computed as a ratio of the two.
+const STABLECOIN_SYMBOLS = new Set(['USDT', 'USDC', 'USDCet', 'DAI', 'aUSD', 'kUSD'])
+// Being a stablecoin is not the same as being worth a dollar. Only these can stand
+// in for USD when a pair is denominated, since indexed prices are USD — anything
+// pegged to another unit has to be computed as a ratio of the two.
 //
-// The `Hydrated *` money-market wrappers (HUSDT/HUSDC/HUSDS/HUSDe) are stablecoins
-// but not dollars: they accrue interest, so their price leaves par and keeps going.
-// Measured against their own USD candles, HUSDT went 0.9993 → 1.0195 and HUSDC
-// 0.9992 → 1.0159 between 2025-09-22 and 2026-08-12, roughly 2 %/yr and unbounded.
-// While HUSDT/HUSDC were listed here a pair quoted in one of them published the
-// base asset's raw USD price, understating the rate by exactly that accrued
-// interest (1.9 %/1.6 % as of 2026-08-12, worsening daily) — and their siblings
-// HUSDS/HUSDe, same family and same drift, were never listed, so two of four got
-// real cross rates and two did not. All four now take the cross path, where the
-// quote's own price divides the base's. They trade against everything they quote,
-// so the ratio is a real market rate, not an approximation.
-const USD_PEGGED_SYMBOLS = new Set(['USDT', 'USDC', 'HOLLAR', 'DAI'])
+// An interest-BEARING stable belongs in the set above and NOT here: it is a
+// stablecoin, but its price leaves par and keeps going, so publishing the base
+// asset's raw USD price for a pair quoted in it understates the rate by exactly the
+// accrued interest, and the error worsens daily. Such a quote takes the cross path,
+// where the quote's own price divides the base's — a real market rate, since it
+// trades against everything it quotes.
+const USD_PEGGED_SYMBOLS = new Set(['USDT', 'USDC', 'USDCet', 'DAI', 'aUSD', 'kUSD'])
 
 const assetCache = new Map<number, Asset>()
 let refreshTimer: ReturnType<typeof setInterval> | null = null

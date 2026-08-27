@@ -13,7 +13,7 @@ test('asset Liquidity tab lists sources by value and links to the pool page', as
   await expect(cards).toHaveCount(2)
   await expect(cards.first()).toContainText('vDOT / DOT')
   // Former pools render with their last-active moment.
-  await expect(page.locator('table.tbl tr', { hasText: 'DOT / GLMR' })).toBeVisible()
+  await expect(page.locator('table.tbl tr', { hasText: 'DOT / MOVR' })).toBeVisible()
   // History chart present with its unit toggle.
   await expect(page.locator('.liq-toggle')).toBeVisible()
 
@@ -80,7 +80,9 @@ test('a pool page shows the swaps that happened in the pool', async ({ page }) =
   // through this pool looks like — a share-token trade never is.
   const memberPairs = await rows.evaluateAll(trs => trs.filter(tr => {
     const t = tr.querySelector('td[data-label="Activity"]')?.textContent ?? ''
-    return /vDOT/.test(t) && /DOT/.test(t) && !/GDOT/.test(t)
+    // Whole-symbol matches only: a longer symbol that merely ENDS in DOT is a
+    // different asset, and counting one would call a share-token trade a pool swap.
+    return (t.match(/\b(?:vDOT|DOT)\b/g) ?? []).length >= 2
   }).length)
   expect(memberPairs).toBeGreaterThan(0)
 })

@@ -7,8 +7,9 @@ import {
 import { blocksPerHour } from '../src/services/blockTime.ts'
 
 // Timestamp-derived cutoff heights back the "24h"/"7d" windows so they track
-// wall-clock time as block production drifts (blocks now run ~5.6s, not the 6s
-// the old fixed offsets assumed). These cover the two pure pieces of the helper.
+// wall-clock time as block production drifts (blocks now run ~2.3s against a 2s
+// nominal, and ran at 6s and 12s in earlier eras). These cover the two pure
+// pieces of the helper.
 describe('cutoffWindowSql', () => {
   it('queries the blocks table for the wall-clock interval', () => {
     const sql = cutoffWindowSql(24)
@@ -29,23 +30,23 @@ describe('cutoffWindowSql', () => {
 })
 
 describe('fallbackCutoffHeight', () => {
-  it('reproduces the pre-fix 6s-block constants', () => {
-    // 24h → 14400 blocks, 7d → 100800, 72h → 43200 (600 blocks/hour) — the
+  it('falls back to the nominal 2s-block constants', () => {
+    // 24h → 43200 blocks, 7d → 302400, 72h → 129600 (1800 blocks/hour) — the
     // final fallback when the chain cannot be measured either.
-    expect(fallbackCutoffHeight(1_000_000, 24)).toBe(1_000_000 - 14_400)
-    expect(fallbackCutoffHeight(1_000_000, 168)).toBe(1_000_000 - 100_800)
-    expect(fallbackCutoffHeight(1_000_000, 72)).toBe(1_000_000 - 43_200)
+    expect(fallbackCutoffHeight(1_000_000, 24)).toBe(1_000_000 - 43_200)
+    expect(fallbackCutoffHeight(1_000_000, 168)).toBe(1_000_000 - 302_400)
+    expect(fallbackCutoffHeight(1_000_000, 72)).toBe(1_000_000 - 129_600)
   })
 
   // The estimate is only reached when the blocks table itself failed, so it has
   // to carry the migration on its own: a measured pace makes it track real
   // production instead of a slot time it has no way to notice changing.
   it('uses the measured pace when one is available', () => {
-    // ~5.59s/block, the live Aug 2026 pace: 24h is ~15 460 blocks, not 14 400.
-    expect(fallbackCutoffHeight(1_000_000, 24, blocksPerHour(5_588))).toBe(1_000_000 - 15_462)
-    // 2s blocks: 24h is 43 200.
-    expect(fallbackCutoffHeight(1_000_000, 24, blocksPerHour(2_000))).toBe(1_000_000 - 43_200)
-    expect(fallbackCutoffHeight(1_000_000, 168, blocksPerHour(2_000))).toBe(1_000_000 - 302_400)
+    // ~2.3s/block, the live Aug 2026 pace: 24h is ~37 600 blocks, not 43 200.
+    expect(fallbackCutoffHeight(1_000_000, 24, blocksPerHour(2_298))).toBe(1_000_000 - 37_598)
+    // 6s blocks, the pre-spec-134 era: 24h is 14 400.
+    expect(fallbackCutoffHeight(1_000_000, 24, blocksPerHour(6_000))).toBe(1_000_000 - 14_400)
+    expect(fallbackCutoffHeight(1_000_000, 168, blocksPerHour(6_000))).toBe(1_000_000 - 100_800)
   })
 
   it('never returns a negative height', () => {
@@ -58,15 +59,15 @@ describe('fallbackCutoffHeight', () => {
   // nominal is used instead — the same answer as passing no rate at all.
   it('falls back to the nominal rate rather than collapsing the window', () => {
     for (const bad of [0, -1, NaN, Infinity]) {
-      expect(fallbackCutoffHeight(1_000_000, 24, bad)).toBe(1_000_000 - 14_400)
+      expect(fallbackCutoffHeight(1_000_000, 24, bad)).toBe(1_000_000 - 43_200)
     }
     expect(fallbackCutoffHeight(1_000_000, 168, 0)).toBe(fallbackCutoffHeight(1_000_000, 168))
   })
 })
 
-// The unfiltered feeds' recency window used to be `head − 100 800`, i.e. "7
-// days" only while a block is 6s. It is now the same wall-clock resolution the
-// cutoff helpers use, so it stays 7 days through the 2s upgrade.
+// The unfiltered feeds' recency window used to be a fixed block offset, i.e. "7
+// days" only at one particular block time. It is now the same wall-clock
+// resolution the cutoff helpers use, so it stays 7 days across a block-time change.
 describe('feedWindowBoundSql', () => {
   it('bounds the scan by a seven-day wall-clock window', () => {
     const sql = feedWindowBoundSql()

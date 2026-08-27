@@ -69,16 +69,16 @@ describe('progressFrom', () => {
 
   it('phase boundary blocks come from the track periods', () => {
     const progress = progressFrom(opengovPhase(REF_382_CONFIRMING)!, treasurer, 13680000, null, direct)
-    expect(progress.decisionEndBlock).toBe(13658523 + 100_800)
-    expect(progress.confirmEndBlock).toBe(13678964 + 7_200)
+    expect(progress.decisionEndBlock).toBe(13658523 + 302_400)
+    expect(progress.confirmEndBlock).toBe(13678964 + 21_600)
     expect(progress.earliestDecisionBlock).toBeNull()
     expect(progress.timeoutBlock).toBeNull()
   })
 
   it('preparing without a deposit carries the undeciding timeout; with one it does not', () => {
     const noDeposit = progressFrom(opengovPhase([row('Referenda.Submitted', 1000)])!, treasurer, 1500, null, direct)
-    expect(noDeposit.earliestDecisionBlock).toBe(1000 + 600)
-    expect(noDeposit.timeoutBlock).toBe(1000 + 28_800)
+    expect(noDeposit.earliestDecisionBlock).toBe(1000 + 1_800)
+    expect(noDeposit.timeoutBlock).toBe(1000 + 604_800)
     expect(noDeposit.approval).toBeNull()
     expect(noDeposit.support).toBeNull()
     const deposited = progressFrom(
@@ -90,9 +90,8 @@ describe('progressFrom', () => {
 
   it('gauges read the live tally against the curves at the elapsed decision fraction', () => {
     // One day into a 7-day decision period: approval bar sits at the curve's
-    // constructed 80% anchor. 90% approval passes it; 10% support clears the
-    // linear support bar (which has decayed below 18%·6/7 ≈ 15.43%... it is
-    // 18%·(1 − 1/7) = 15.43%, so 10% FAILS).
+    // constructed 80% anchor. 90% approval passes it; the linear support bar has
+    // decayed to 50%·(1 − 1/7) = 42.86%, so 10% support FAILS.
     const phase = opengovPhase([
       row('Referenda.Submitted', 0),
       row('Referenda.DecisionDepositPlaced', 0),
@@ -104,7 +103,7 @@ describe('progressFrom', () => {
     expect(progress.approval).toMatchObject({ currentPerbill: 0.9 * PERBILL, passing: true, source: 'chain' })
     expect(Math.abs(progress.approval!.thresholdPerbill - 0.8 * PERBILL)).toBeLessThan(10)
     expect(progress.support).toMatchObject({ currentPerbill: 0.1 * PERBILL, passing: false, source: 'chain' })
-    expect(Math.abs(progress.support!.thresholdPerbill - (6 / 7) * 0.18 * PERBILL)).toBeLessThan(5)
+    expect(Math.abs(progress.support!.thresholdPerbill - (6 / 7) * 0.5 * PERBILL)).toBeLessThan(5)
   })
 
   it('falls back to attributed approval without a live tally, and leaves support blank', () => {

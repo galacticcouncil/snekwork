@@ -28,8 +28,9 @@ const SENT = {
 
 // The pre-MessageQueue-migration event name, XTokens.TransferredMultiAssets, carries
 // the same sender/assets/fee/dest payload in the era's own MultiLocation encoding.
-// This is the verbatim args_json of Hydration's oldest such event (block 1,675,796):
-// DOT (parents:1, Here) to Acala (2000), with the V1 junction's nested network field.
+// This is the verbatim args_json of the oldest such event (block 1,675,796): the
+// relay token (parents:1, Here) to Karura (2000), with the V1 junction's nested
+// network field.
 const XTOKENS_MULTI_V1 = {
   sender: `0x${'f4'.repeat(32)}`,
   assets: [{ id: { __kind: 'Concrete', value: { parents: 1, interior: { __kind: 'Here' } } }, fun: { __kind: 'Fungible', value: '200000000' } }],
@@ -63,7 +64,7 @@ describe('parseOutboundXcm', () => {
 
   it('resolves a relay (parents:1, Here) destination for Sent', () => {
     const p = parseOutboundXcm({ ...SENT, destination: { parents: 1, interior: { __kind: 'Here' } } })!
-    expect(p.dest.destChain).toBe('Polkadot')
+    expect(p.dest.destChain).toBe('Kusama')
     expect(p.dest.destParachainId).toBeNull()
   })
 

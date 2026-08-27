@@ -1,32 +1,19 @@
 import { basiliskAddress, kusamaAddress, accountIdHex } from './omniwatchIdentity.ts'
 
-// Basilisk has no EVM accounts, so no address here is ever a real H160 wallet.
-// The "truncated" AccountId32 form — marker bytes "ETH\0" (0x45544800), a
-// 20-byte H160, then 8 zero bytes — is kept only as an INPUT shape: an H160
-// carrying a reserved substrate prefix ('modl'/'sibl'/'para', see below) is the
-// runtime's truncation of a pallet or sovereign account, and recovering the real
-// AccountId32 from it is generic XCM plumbing. Nothing derived here is exposed
-// in an API response.
-const EVM_MARKER = '45544800'
-const ZERO16 = '0000000000000000'
-
-export type AddressKind = 'substrate' | 'evm' | 'unknown'
+// Basilisk has no EVM, so no address here is ever an H160 wallet and there is no
+// truncated ETH-marker account form to normalise. The one 20-byte shape that still
+// means something is a RESERVED substrate account ('modl'/'sibl'/'para', see below)
+// seen through the runtime's 20-byte truncation — generic XCM plumbing, since an
+// AccountKey20 junction can name one. Anything else 20 bytes wide is not an address
+// on this chain and normalises to null rather than to an account that cannot exist.
+export type AddressKind = 'substrate' | 'unknown'
 
 export interface NormalizedAddress {
   input: string
   kind: AddressKind
   accountId: string           // canonical 0x + 64 hex AccountId32 (join key)
-  // INTERNAL ONLY — never returned in an API response. 0x + 40 hex H160 when the
-  // input/accountId is in the ETH-marker truncated form; used to re-anchor a
-  // truncated pallet/sovereign account and to scope reads, not to display.
-  evmAddress: string | null
   ss58: string | null         // Basilisk SS58 (prefix 10041) — the canonical display form
   ss58Kusama: string | null   // Kusama SS58 (prefix 2) — secondary display form
-  isEvmTruncated: boolean      // accountId is the ETH-marker truncated form
-}
-
-function evmTruncatedAccountId(h160NoPrefix: string): string {
-  return '0x' + EVM_MARKER + h160NoPrefix.toLowerCase() + ZERO16
 }
 
 // Reserved substrate account prefixes: pallet ('modl'), sibling parachain
@@ -41,21 +28,12 @@ export function reservedH160AccountId(h160NoPrefix: string): string | null {
 }
 
 function fromAccountId(input: string, acc: string): NormalizedAddress {
-  const isTrunc = acc.slice(2, 10) === EVM_MARKER && acc.slice(50) === ZERO16
-  // ETH-prefixed form of a module/sovereign account → resolve to the real one.
-  if (isTrunc) {
-    const reserved = reservedH160AccountId(acc.slice(10, 50))
-    if (reserved) return fromAccountId(input, reserved)
-  }
-  const evm = isTrunc ? '0x' + acc.slice(10, 50) : null
   return {
     input,
-    kind: isTrunc ? 'evm' : 'substrate',
+    kind: 'substrate',
     accountId: acc,
-    evmAddress: evm,
     ss58: basiliskAddress(acc),
     ss58Kusama: kusamaAddress(acc),
-    isEvmTruncated: isTrunc,
   }
 }
 
@@ -63,22 +41,11 @@ export function normalizeAddress(raw: string): NormalizedAddress | null {
   const input = raw.trim()
   if (!input) return null
 
-  // Bare EVM H160 -> truncated AccountId32 form (module/sovereign truncations
-  // resolve to their real substrate account instead).
+  // A bare 20-byte input is an address here only when it is the truncation of a
+  // reserved account; otherwise it names nothing on this chain.
   if (/^0x[0-9a-fA-F]{40}$/.test(input)) {
-    const evm = input.toLowerCase()
-    const reserved = reservedH160AccountId(evm.slice(2))
-    if (reserved) return fromAccountId(input, reserved)
-    const accountId = evmTruncatedAccountId(evm.slice(2))
-    return {
-      input,
-      kind: 'evm',
-      accountId,
-      evmAddress: evm,
-      ss58: basiliskAddress(accountId),
-      ss58Kusama: kusamaAddress(accountId),
-      isEvmTruncated: true,
-    }
+    const reserved = reservedH160AccountId(input.toLowerCase().slice(2))
+    return reserved ? fromAccountId(input, reserved) : null
   }
 
   // Raw 0x AccountId32.

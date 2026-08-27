@@ -1,9 +1,9 @@
 import type { ClickHouseClient } from '../db/client.ts'
 
-// Full asset registry (all 113 assets), independent of the trading-filtered
-// cache in assetsService.ts. The Explorer must resolve symbol/decimals for every
-// asset_id that can appear in balances/transfers, including foreign and aToken
-// assets that the price UI hides.
+// Full asset registry, independent of the trading-filtered cache in
+// assetsService.ts. The Explorer must resolve symbol/decimals for every asset_id
+// that can appear in balances/transfers, including the XYK share tokens and
+// unnamed foreign assets the price UI hides.
 interface AssetOrigin {
   ecosystem: string
   chainId: string
@@ -34,7 +34,15 @@ interface AssetRow {
 const cache = new Map<number, ExplorerAsset>()
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let loadInflight: Promise<void> | null = null
-const H2O_ASSET_ID = 1
+
+// The XYK share (LP) tokens, by asset id. price_data.assets carries no asset-type
+// column, so PoolShare membership is not readable from the registry rows — but every
+// share token is named by its own XYK.PoolCreated event, which the xyk_pool_registry
+// MV keeps. Nor is it identifiable by symbol: Basilisk share tokens are registered
+// unnamed (`Asset<id>`), with no marker in the name for a match to key on. Held in
+// memory beside the registry and refreshed on the same timer, so the classifiers
+// that ask "is this a share token" can stay synchronous.
+const xykShareTokenIds = new Set<number>()
 
 async function loadExplorerAssetsUncached(client: ClickHouseClient): Promise<void> {
   const res = await client.query({
@@ -44,13 +52,11 @@ async function loadExplorerAssetsUncached(client: ClickHouseClient): Promise<voi
   const rows = await res.json<AssetRow>()
   cache.clear()
   for (const r of rows) {
-    const symbol = r.asset_id === H2O_ASSET_ID ? 'H2O' : r.symbol
-    const name = NAME_OVERRIDES[r.asset_id] ?? (r.asset_id === H2O_ASSET_ID ? 'H2O' : r.name)
     cache.set(r.asset_id, {
       assetId: r.asset_id,
       iconAssetId: r.asset_id,
-      symbol,
-      name: name === symbol ? null : name,
+      symbol: r.symbol,
+      name: r.name === r.symbol ? null : r.name,
       decimals: r.decimals,
       parachainId: r.parachain_id ?? null,
       origin: r.origin_ecosystem && r.origin_chain_id
@@ -58,7 +64,7 @@ async function loadExplorerAssetsUncached(client: ClickHouseClient): Promise<voi
         : null,
     })
   }
-  await injectBonds(client)
+  await loadXykShareTokens(client)
   if (!refreshTimer) {
     refreshTimer = setInterval(() => {
       loadExplorerAssets(client).catch(err => console.error('[ExplorerAssets] refresh failed:', err))
@@ -100,80 +106,47 @@ export function assetDescriptor(assetId: number): ExplorerAsset {
   }
 }
 
-// Curated display names for registry entries whose on-chain name is empty or
-// unhelpful. Applied at registry load; extend as new unnamed assets surface.
-export const NAME_OVERRIDES: Record<number, string> = {}
-
-// Bond tokens (Bonds pallet) aren't published to the asset registry the way ordinary
-// assets are, so they otherwise reach the explorer as a bare `#id` with no name,
-// icon or price. Each bond maps 1:1 to an underlying asset + a maturity via
-// Bonds.TokenCreated, so we synthesise a registry entry that borrows the underlying's
-// icon / decimals / origin and prices through it (a bond redeems 1:1 for the
-// underlying at maturity). Runs on every registry refresh, so new bonds appear
-// automatically. Best-effort: a failed lookup leaves bonds as bare ids, never the
-// rest of the registry.
-async function injectBonds(client: ClickHouseClient): Promise<void> {
-  let rows: { bond_id: number; underlying: number; maturity: string }[]
+// The XYK share tokens, from the pool registry the XYK.PoolCreated MV maintains.
+// Best-effort: a failed lookup leaves the previous set in place rather than
+// declaring every share token an ordinary asset for the next five minutes.
+async function loadXykShareTokens(client: ClickHouseClient): Promise<void> {
+  let rows: { lp_asset_id: number }[]
   try {
     const res = await client.query({
-      query: `SELECT JSONExtractInt(args_json,'bondId') AS bond_id,
-                     JSONExtractInt(args_json,'assetId') AS underlying,
-                     toString(JSONExtractUInt(args_json,'maturity')) AS maturity
-              FROM price_data.raw_events
-              WHERE event_name = 'Bonds.TokenCreated'`,
+      query: `SELECT DISTINCT lp_asset_id FROM price_data.xyk_pool_registry FINAL WHERE lp_asset_id > 0`,
       format: 'JSONEachRow',
     })
-    rows = await res.json<{ bond_id: number; underlying: number; maturity: string }>()
+    rows = await res.json<{ lp_asset_id: number }>()
   } catch (err) {
-    console.error('[ExplorerAssets] bond registry load failed:', err instanceof Error ? err.message : err)
+    console.error('[ExplorerAssets] xyk share token load failed:', err instanceof Error ? err.message : err)
     return
   }
-  for (const r of rows) {
-    const bondId = Number(r.bond_id)
-    if (!Number.isInteger(bondId) || bondId <= 0) continue
-    const base = cache.get(Number(r.underlying)) ?? assetDescriptor(Number(r.underlying))
-    const maturityMs = Number(r.maturity)
-    const matures = Number.isFinite(maturityMs) && maturityMs > 0 ? new Date(maturityMs).toISOString().slice(0, 10) : null
-    cache.set(bondId, {
-      assetId: bondId,
-      iconAssetId: base.iconAssetId,
-      symbol: `${base.symbol}b`,
-      name: `${base.name ?? base.symbol} Bond${matures ? ` · matures ${matures}` : ''}`,
-      decimals: base.decimals,
-      parachainId: base.parachainId,
-      origin: base.origin,
-    })
-    // Price/value through the underlying (feeds priceAssetId + the SQL alias).
-    PRICE_ALIAS_ID[bondId] = Number(r.underlying)
-  }
+  xykShareTokenIds.clear()
+  for (const r of rows) if (Number.isInteger(Number(r.lp_asset_id))) xykShareTokenIds.add(Number(r.lp_asset_id))
 }
 
-// Stableswap/pool SHARE tokens (2-Pool-GDOT, 2-Pool-HUSDC, …) carry no price feed
-// of their own, so they inherit their main underlying's display price. Per-share value
-// is approximately the underlying value for these near-peg two-asset pools; this is a
-// unit-price proxy, not exact NAV.
-export const SHARE_TOKEN_UNDERLYING_ID: Record<number, number> = {
-  104: 34,     // 2-Pool-WETH   → ETH
-  110: 1110,   // 2-Pool-HUSDC  → HUSDC
-  111: 1111,   // 2-Pool-HUSDT  → HUSDT
-  112: 1112,   // 2-Pool-HUSDS  → HUSDS
-  113: 1113,   // 2-Pool-HUSDe  → HUSDe
-  143: 43,     // 2-Pool-PRIME  → PRIME
-  146: 46,     // 2-Pool-apyUSD → apyUSD
-  690: 69,     // 2-Pool-GDOT   → GDOT
-  4200: 420,   // 2-Pool-GETH   → GETH
-  10044: 4444, // 2-Pool-HEURC  → HEURC
-  90001: 9001, // 2-Pool-GSOL   → GSOL
+// Is this asset a pool's LP share token? A share token is pool mechanics, not a
+// tradeable asset: it is kept off the asset list, and a trade leg into or out of one
+// inside an add/remove is routing rather than a trade of the user's own.
+export function isXykShareToken(assetId: number): boolean {
+  return xykShareTokenIds.has(assetId)
 }
-// Duplicate/wrapped registry entries whose economic price should follow the
-// canonical listed asset. They keep their own balances/holders; only price and
-// price history are aliased.
-const DUPLICATE_PRICE_ALIAS_ID: Record<number, number> = {}
-// Every asset that should be priced via another asset (pool shares, bonds).
-export const PRICE_ALIAS_ID: Record<number, number> = { ...SHARE_TOKEN_UNDERLYING_ID, ...DUPLICATE_PRICE_ALIAS_ID }
+
+// Assets whose economic price should follow ANOTHER asset's — a receipt or wrapper
+// token with no feed of its own. Basilisk has none: its only derived asset is the
+// XYK share token, and an LP share is a claim on TWO reserves, so no single asset's
+// price stands in for it (LP value comes from pool NAV, in poolService). The table
+// is the mechanism, empty; every path below is a documented no-op while it is, and a
+// future wrapper joins here rather than at each call site.
+//
+// A folded asset also DISPLAYS as the asset it stands for, so its holders and
+// balances merge into that asset's.
+export const SHARE_TOKEN_UNDERLYING_ID: Record<number, number> = {}
+// Every asset that should be priced via another asset.
+export const PRICE_ALIAS_ID: Record<number, number> = { ...SHARE_TOKEN_UNDERLYING_ID }
 
 // The asset id whose price/value should be used for `assetId`: itself, unless it
-// is a pool-share token, in which case its priced underlying.
+// is a folded asset, in which case the asset it is priced through.
 export function priceAssetId(assetId: number): number {
   // Aliases can chain, so resolve transitively with a small bound so a
   // (mis)configured cycle can't loop forever.
@@ -186,22 +159,18 @@ export function priceAssetId(assetId: number): number {
   return id
 }
 
-// The asset id under which `assetId` should be DISPLAYED in per-account holdings:
-// a held pool-share token is shown as its underlying main asset, mirroring the
-// wallet UIs that hide "-Pool" tokens. Aggregate holder/supply views may fold
-// these only when the hidden share id is removed from presentation, never added
-// alongside it; otherwise the pool would be double-counted.
+// The asset id under which `assetId` should be DISPLAYED in per-account holdings: a
+// held receipt token would be shown as the asset it stands for. Aggregate
+// holder/supply views may fold these only when the hidden id is removed from
+// presentation, never added alongside it; otherwise the asset would be
+// double-counted. Identity here while SHARE_TOKEN_UNDERLYING_ID is empty.
 export function displayAssetId(assetId: number): number {
   return SHARE_TOKEN_UNDERLYING_ID[assetId] ?? assetId
 }
 
-// Reverse of SHARE_TOKEN_UNDERLYING_ID: main asset id → the pool-share token ids
-// that display as it. The share token can be what a protocol actually holds while
-// the page a reader visits is the main asset — the money market's GDOT reserve is
-// 2-Pool-GDOT (690), not GDOT (69) — so a reserve lookup has to be able to reach the
-// share token from the main id. A list, since nothing stops two pools folding into
-// one main asset. Decimals are NOT shared across the pair (2-Pool-PRIME carries 18
-// where PRIME carries 6), so callers must read each id's own descriptor.
+// Reverse of SHARE_TOKEN_UNDERLYING_ID: main asset id → the ids that display as it.
+// A list, since nothing stops two folded assets landing on one main asset. Decimals
+// are NOT shared across a folded pair, so callers must read each id's own descriptor.
 export const UNDERLYING_TO_SHARE_IDS: Record<number, number[]> = (() => {
   const out: Record<number, number[]> = {}
   for (const [share, underlying] of Object.entries(SHARE_TOKEN_UNDERLYING_ID)) {

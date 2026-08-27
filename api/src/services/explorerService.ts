@@ -7,12 +7,12 @@ import { referendumTitleFor, referendumTitleKey } from './referendumTitleService
 // through a dynamic import instead, same as the tag branch does for tagService.
 import type { ReferendumListRow, ReferendumPallet } from './governanceService.ts'
 import { weightedFromLabels } from './convictionWeight.ts'
-import { assetDescriptor, allExplorerAssets, PRICE_ALIAS_ID, SHARE_TOKEN_UNDERLYING_ID, priceAssetId, displayAssetId, type ExplorerAsset } from './explorerAssets.ts'
+import { assetDescriptor, allExplorerAssets, isXykShareToken, PRICE_ALIAS_ID, SHARE_TOKEN_UNDERLYING_ID, priceAssetId, displayAssetId, type ExplorerAsset } from './explorerAssets.ts'
 import { accountVolumeSource } from './accountTradeVolume.ts'
-import { tagForAccount, taggedAccountByH160, ammPoolAccounts, getTag as getTagRecord, allTags } from './tagService.ts'
+import { tagForAccount, ammPoolAccounts, getTag as getTagRecord, allTags } from './tagService.ts'
 import { identityForAccount, searchIdentitiesByDisplay, type AccountIdentity } from './identityService.ts'
 import { normalizeAddress, basiliskAddress, reservedH160AccountId } from './addressIdentity.ts'
-import { accountIcon, emojisMatchingName, emojiNameFor, parseSuffixEmojiQuery } from './omniwatchIdentity.ts'
+import { accountIcon, emojisMatchingName, emojiNameFor, parseSuffixEmojiQuery, KUSAMA_SS58_PREFIX } from './omniwatchIdentity.ts'
 import { encodeAddress } from '@polkadot/util-crypto'
 import { hexToU8a } from '@polkadot/util'
 import { proxyInfoFor, multisigCompositionFor, multisigMembershipsFor, pendingMultisigOps, threshold1OpsFor, type ProxyRelation, type PendingMultisigOp } from './proxyMultisigService.ts'
@@ -54,16 +54,6 @@ function asset(assetIdStr: string | number): AssetRef {
   return assetDescriptor(Number.isFinite(id) ? id : 0)
 }
 
-// EVM-truncated AccountId32 → H160 (else null).
-function evmFromAccountId(acc: string): string | null {
-  return acc.slice(2, 10) === '45544800' && acc.slice(50) === '0000000000000000' ? '0x' + acc.slice(10, 50) : null
-}
-// An account's truncated-H160 form (where its EVM-side activity is indexed): the
-// account itself if already truncated, else 0x45544800 + first-20-bytes + zeros.
-function evmAccountForm(acc: string): string | null {
-  if (evmFromAccountId(acc)) return acc
-  return /^0x[0-9a-f]{64}$/i.test(acc) ? '0x45544800' + acc.slice(2, 42) + '0000000000000000' : null
-}
 // Resolve a tag's display icon for aggregate (SQL-grouped) rows: prefer the
 // explicit icon from the DB row, else the icon the tagService derived (from the
 // tag's first member's omniwatch emoji). Keeps grouped rows consistent with
@@ -73,18 +63,8 @@ function tagIcon(tagId: string, dbIcon: string): string {
   return getTagRecord(tagId)?.icon || '🏷️'
 }
 
-// Canonical display identity for an account id: ETH-prefixed forms resolve to
-// the real account they stand for — module/sovereign truncations to the padded
-// substrate account, and truncations of tagged derived accounts to the account
-// they belong to.
-export function resolveDisplayAccountId(accountId: string): string {
-  const evm = evmFromAccountId(accountId)
-  if (!evm) return accountId
-  return reservedH160AccountId(evm.slice(2)) ?? taggedAccountByH160(evm) ?? accountId
-}
-
 export function accountRef(accountId: string): AccountRef {
-  const resolved = resolveDisplayAccountId(accountId)
+  const resolved = accountId
   const t = tagForAccount(resolved)
   // Basilisk SS58 (prefix 10041) is the canonical display form for every account;
   // there are no EVM accounts to show an H160 for.
@@ -258,9 +238,8 @@ const FEED_WINDOW_HOURS = 168
 export function feedWindowBoundSql(): string {
   return `block_height > (${cutoffWindowSql(FEED_WINDOW_HOURS)})`
 }
-// A Hydration block targets roughly six seconds today (2s is planned). Keep hot
-// feed results for most of that interval so staggered clients share one
-// ClickHouse read per block.
+// A Basilisk block targets two seconds today. Keep hot feed results for a couple
+// of blocks so staggered clients share one ClickHouse read.
 const LIVE_CACHE_MS = 5_000
 // The API client's own result-row guard (`max_result_rows` in db/client.ts). A read
 // that would return more rows than this fails the whole request with a ClickHouse
@@ -572,7 +551,6 @@ function currencyIdSql(args = 'args_json'): string {
 // visible. The GLOBAL transfer feed keeps its blanket module exclusion.
 const NOISY_TRANSFER_POTS = [
   '0x6d6f646c726f7574657265780000000000000000000000000000000000000000', // routerex (swap hops)
-  '0x6d6f646c6f6d6e69706f6f6c0000000000000000000000000000000000000000', // omnipool (pool legs)
   '0x6d6f646c66656570726f632f0000000000000000000000000000000000000000', // feeproc/ (fee sweeps)
 ]
 const noisyPotList = () => NOISY_TRANSFER_POTS.map(a => `'${a}'`).join(',')
@@ -654,9 +632,8 @@ export const LIQUIDITY_AMOUNT_ARG: Record<string, string> = {
   // exactly like XYK.LiquidityAdded, so both stay empty for the same reason —
   // amountA is assetA's leg, not the row's displayed denomination. Basilisk's LBPs
   // are real history (first pool block 1,972,469), and neither this map nor
-  // liquidity_activity_mv carried them before: the Hydration codebase this forked
-  // from never plumbed LBP liquidity at all, so this is new admission, not a
-  // restored trim.
+  // liquidity_activity_mv carried them before: the codebase this forked from never
+  // plumbed LBP liquidity at all, so this is new admission, not a restored trim.
   'LBP.LiquidityAdded': '',                                // amountA/amountB vs assetA
   'LBP.LiquidityRemoved': '',                              // amountA/amountB vs assetA
   'XYKLiquidityMining.RewardClaimed': 'claimed',           // claimed + rewardCurrency
@@ -716,7 +693,7 @@ export function liquidityCandidateArgs(eventName: string, args: Record<string, u
 // extrinsic page — not just the first asset. Rows whose legs can't be found
 // keep their single-leg display.
 async function enrichPoolCreations(cands: { row: ActivityRow; pool: string; assetB: number }[]): Promise<void> {
-  const usable = cands.filter(c => c.row.extrinsicIndex != null && c.pool && c.assetB >= 0)   // assetB 0 = HDX
+  const usable = cands.filter(c => c.row.extrinsicIndex != null && c.pool && c.assetB >= 0)   // assetB 0 = BSX
   if (!usable.length) return
   const tuples = [...new Set(usable.map(c => `(${c.row.blockHeight},${c.row.extrinsicIndex})`))].join(',')
   const res = await client.query({
@@ -889,7 +866,7 @@ export function exactHistoricalValuePredicateSql(
 function historicalClosesRelationSql(): string {
   const priceIds = [...new Set(allExplorerAssets().flatMap(a => [a.assetId, historicalPriceAssetId(a.assetId)]))].join(',')
   // Hash ASOF requires a left/right equi-key even when the valued asset is a
-  // constant (HDX votes and referral claims). The timestamp-derived key below
+  // constant (BSX votes and referral claims). The timestamp-derived key below
   // is 1 for every non-null event timestamp and leaves the price match unchanged.
   return `(SELECT asset_id, interval_start + INTERVAL 1 HOUR AS price_time, argMaxMerge(close_state) AS close,
                   toUInt8(1) AS asof_join_key
@@ -927,6 +904,15 @@ export function eventValueFilterSql(
 // USD price map
 // Latest + 24h-ago USD price per asset from the bounded recent window (avoids a
 // full scan of the 485M-row prices table). Cached 30s in memory.
+
+// The assets that carry a USD price at all. Mirrors the indexer's write
+// whitelist (`config.PRICED_ASSET_IDS` in src/config.ts): KSM (1) is anchored to
+// the off-chain KSM/USD reference and BSX (0) is derived from it through the
+// BSX/KSM XYK pool, and nothing else is priced anywhere. `price_data.prices`
+// therefore holds rows for these two ids only — the list exists so the read path
+// stops asking about a coverage that does not exist, not as a second filter.
+const PRICED_ASSET_IDS = [0, 1]
+
 export interface PriceInfo { price: number; change24h: number; priceRaw?: string }
 let priceMap = new Map<number, PriceInfo>()
 let priceLoadedAt = 0
@@ -998,9 +984,9 @@ async function liveHeadTag(timeWindowed = false, closed = false): Promise<string
 }
 // "24h"/"7d"-style windows were historically fixed block-count offsets that
 // assumed a constant block time (12s, later 6s), so `head - 7200` was taken to
-// mean "24h ago". A Hydration block is ~6s today (elastic scaling runs it a
-// little faster) and 2s is planned, so those offsets cover far LESS wall-clock
-// than their names imply and would shrink again at the upgrade. These helpers
+// mean "24h ago". A Basilisk block is 2s today and has been each of those other
+// two, so those offsets cover far LESS wall-clock than their names imply and
+// would shift again at the next change. These helpers
 // resolve a cutoff HEIGHT from a wall-clock window via the blocks table,
 // keeping the reading queries height-predicated — so the
 // (asset_id, block_height) / block_height sort keys still prune the scan —
@@ -1098,11 +1084,16 @@ async function refreshPrices(): Promise<Map<number, PriceInfo>> {
       const change = priceThen > 0 ? (price - priceThen) / priceThen : 0
       if (Number.isFinite(price) && price > 0) m.set(r.asset_id, { price, priceRaw: r.price_raw, change24h: change })
     }
-    // Some low-activity assets (e.g. PEN) have a valid recent price history, but
-    // their latest tick can sit outside the narrow live-price window above. Fill
-    // only missing registry assets from a bounded 7d window, computing the change
-    // against roughly 24h before that asset's own latest tick.
-    const missing = allExplorerAssets().map(a => a.assetId).filter(id => !m.has(id))
+    // A priced asset's latest tick can sit outside the narrow live-price window
+    // above — BSX only ticks when the BSX/KSM pool moves or the daily KSM anchor
+    // steps, so a quiet stretch leaves the 24h window empty. Fill those from a
+    // bounded 7d window, computing the change against roughly 24h before that
+    // asset's own latest tick.
+    //
+    // Bounded by the priced ids rather than the whole registry: every other asset
+    // is unpriced by design, so asking for its price feed would query for rows
+    // that cannot exist on every refresh.
+    const missing = PRICED_ASSET_IDS.filter(id => !m.has(id))
     if (missing.length) {
       // Both scan legs are bounded by (asset_id IN …, block_height > head − 7d),
       // allowing the (asset_id, block_height) primary key to prune the scan.
@@ -1434,7 +1425,6 @@ export interface ExplorerStats {
   transfers24h: number
   extrinsics24h: number
   activeAccounts24h: number
-  hdxPrice: number | null
 }
 
 interface ExplorerStatsCounts {
@@ -1488,7 +1478,7 @@ export async function getStats(): Promise<ExplorerStats> {
     // ReplacingMergeTree raw tables, so they dedup by row identity: a replay
     // before the next merge would otherwise double-count events/extrinsics.
     const cutoff24h = await cutoffHeightForWindow(24, await latestPriceBlock())
-    const [mainRes, prices, nominalBlockMs, counts] = await Promise.all([
+    const [mainRes, nominalBlockMs, counts] = await Promise.all([
       client.query({
         query: `
           WITH (SELECT max(block_height) FROM price_data.raw_blocks) AS head
@@ -1504,7 +1494,6 @@ export async function getStats(): Promise<ExplorerStats> {
         `,
         format: 'JSONEachRow',
       }),
-      ensurePrices(),
       // The runtime's slot time beside the measured pace. A UI turning a
       // runtime block-count constant (a fuse period, a lock duration — all
       // derived from MILLISECS_PER_BLOCK) into a duration needs THIS number,
@@ -1525,7 +1514,6 @@ export async function getStats(): Promise<ExplorerStats> {
       transfers24h: counts.transfers24h,
       extrinsics24h: counts.extrinsics24h,
       activeAccounts24h: counts.activeAccounts24h,
-      hdxPrice: prices.get(0)?.price ?? null,
     }
   })
 }
@@ -1820,10 +1808,10 @@ export async function getRecentExtrinsics(limit: number, signedOnly: boolean, fr
 }
 
 // single extrinsic
-// What the fee actually cost the payer, when that is not the HDX figure `fee`
+// What the fee actually cost the payer, when that is not the native figure `fee`
 // states. Present only when the extrinsic settled its fee in a non-native asset,
-// or when there is no HDX figure to state at all (the EVM shape — see
-// extrinsicFeePayment.ts). Absent for an ordinary HDX-paying extrinsic, so a
+// or when there is no native figure to state at all (see extrinsicFeePayment.ts).
+// Absent for an ordinary BSX-paying extrinsic, so a
 // reader that has it should show it INSTEAD of `fee`/`tip`.
 export interface FeePayment {
   asset: AssetRef
@@ -1858,11 +1846,11 @@ interface ExtrinsicDetailRow {
 }
 
 // Resolve the fee's real asset for a surface that already holds the extrinsic's
-// events. Withheld only for a plain HDX substrate fee: `fee`/`tip` already state
+// events. Withheld only for a plain BSX substrate fee: `fee`/`tip` already state
 // that exactly, down to the tip split the runtime performed itself, so
 // re-deriving it from the treasury deposit could only lose precision. A zero
 // substrate fee is NOT that case — an `EVM.call` dispatched `Pays::No` reports
-// `actualFee: 0` and charges real gas, so an HDX-paying one still needs this.
+// `actualFee: 0` and charges real gas, so a BSX-paying one still needs this.
 function feePaymentOf(
   events: readonly FeePaymentEvent[],
   payer: string | null,
@@ -2328,13 +2316,12 @@ function rescaleRaw(raw: string, fromDec: number, toDec: number): string {
   return (neg ? '-' : '') + (s || '0')
 }
 
-// Fold held Stableswap pool-share tokens (2-Pool-GDOT, …) into their underlying
-// main asset (GDOT) for per-account display, mirroring preis-ui which hides
-// "-Pool" tokens. The share token is already priced via its underlying, so value
-// is preserved and the portfolio total is unchanged; rows for the same underlying
-// merge. The share token and its underlying can carry different decimals (e.g.
-// 2-Pool-PRIME has 18, PRIME has 6), so raw amounts are normalised to the display
-// asset's scale before summing. No-op when the account holds no share tokens.
+// Fold a held receipt token into the asset it stands for, for per-account display.
+// The folded token is already priced through that asset, so value is preserved and
+// the portfolio total is unchanged; rows for the same display asset merge. The two
+// can carry different decimals, so raw amounts are normalised to the display asset's
+// scale before summing. No-op when nothing the account holds folds — which is every
+// account while SHARE_TOKEN_UNDERLYING_ID is empty.
 export function foldShareBalances(balances: AddressBalance[]): AddressBalance[] {
   if (!balances.some(b => displayAssetId(b.asset.assetId) !== b.asset.assetId)) return balances
   const byId = new Map<number, AddressBalance>()
@@ -2476,21 +2463,13 @@ interface RelatedAccounts {
 }
 
 export async function resolveRelatedAccounts(addressInput: string): Promise<RelatedAccounts | null> {
-  const norm0 = normalizeAddress(addressInput)
-  if (!norm0 || !norm0.accountId) return null
-  // Basilisk has no EVM, so there is no cross-account alias graph to fold: an
-  // account is exactly itself. An H160-shaped input that is the runtime
-  // truncation of a TAGGED derived account still re-anchors onto that account,
-  // which is an in-memory tag lookup rather than an indexed alias.
-  let norm = norm0
-  if (norm0.kind === 'evm' && norm0.evmAddress) {
-    const bound = taggedAccountByH160(norm0.evmAddress)
-    if (bound) norm = normalizeAddress(bound) ?? norm0
-  }
-  const related = new Set<string>([norm.accountId])
-  const ownEvmForm = evmAccountForm(norm.accountId)
-  if (ownEvmForm) related.add(ownEvmForm)
-  return { norm, related: [...related] }
+  const norm = normalizeAddress(addressInput)
+  if (!norm || !norm.accountId) return null
+  // Basilisk has no EVM and no bridge aliasing, so there is no cross-account alias
+  // graph to fold: an account is exactly itself. The set stays a set because every
+  // caller scopes its reads through it, and a future alias family (a rebound
+  // identity, a migrated account) would join here rather than at each call site.
+  return { norm, related: [norm.accountId] }
 }
 
 export async function getAddress(addressInput: string, opts: { summary?: boolean } = {}): Promise<AddressDetail | null> {
@@ -2517,8 +2496,7 @@ export async function getAddress(addressInput: string, opts: { summary?: boolean
     // Attach the lock/reserve components once the display rows are final.
     balances = attachLockBreakdowns(balances, lockBreakdowns)
     const portfolioUsd = balances.reduce((s, b) => s + (b.valueUsd ?? 0), 0)
-    const volumeAccounts = [...new Set([...related, ...[...related].map(evmAccountForm).filter(Boolean) as string[]])]
-    const tradingVolumeUsd = await tradingVolumeByAccount(volumeAccounts).then(m => [...m.values()].reduce((s, v) => s + v, 0))
+    const tradingVolumeUsd = await tradingVolumeByAccount([...related]).then(m => [...m.values()].reduce((s, v) => s + v, 0))
 
     const tag = tagForAccount(norm.accountId)
     const onchainId = identityForAccount(norm.accountId)
@@ -2611,8 +2589,7 @@ interface HolderBalanceClaim { accountId: string; bal: bigint; lastBlock: number
 
 // Combine wallet and receipt-token claims by their canonical displayed account,
 // then collapse tagged members exactly once. This is the shared beneficial-owner
-// grouping used when a displayed Giga asset spans direct, pool-share, and aToken
-// storage locations.
+// grouping for a displayed asset whose supply spans several storage locations.
 export function groupHolderBalanceClaims(
   claims: HolderBalanceClaim[],
   refFor: (accountId: string) => AccountRef,
@@ -2948,7 +2925,7 @@ export interface AssetListItem extends AssetRef { price: number | null; change24
 
 function explorerAssetType(asset: AssetRef): ExplorerAssetType {
   if (asset.assetId === 0) return 'Native'
-  return SHARE_TOKEN_UNDERLYING_ID[asset.assetId] != null || asset.symbol.startsWith('v')
+  return isXykShareToken(asset.assetId) || SHARE_TOKEN_UNDERLYING_ID[asset.assetId] != null || asset.symbol.startsWith('v')
     ? 'Derivative'
     : 'Token'
 }
@@ -3115,10 +3092,9 @@ export async function getAssets(): Promise<AssetListItem[]> {
   return cached('explorer:assets-list', 30000, async () => {
     const [prices, totals, holderCounts, samples] = await Promise.all([ensurePrices(), getAssetTotals(), getAssetHolderCounts(), getWeeklyPriceSamples()])
     return allExplorerAssets()
-      .filter(a => !a.symbol.includes('-Pool') && !a.symbol.startsWith('Asset') && a.symbol.trim() !== '')
+      .filter(a => !isXykShareToken(a.assetId) && !a.symbol.startsWith('Asset') && a.symbol.trim() !== '')
       .map(a => {
-        // Derivatives (bonds, aTokens) carry no price feed of their own — fall back
-        // to the asset they're priced through (a bond redeems 1:1 for its underlying).
+          // An asset with no feed of its own falls back to the asset it prices through.
         const p = prices.get(a.assetId) ?? prices.get(priceAssetId(a.assetId))
         const type = explorerAssetType(a)
         const raw = totals.get(a.assetId) ?? 0n
@@ -3128,7 +3104,7 @@ export async function getAssets(): Promise<AssetListItem[]> {
         const change7d = spark && spark.length >= 2 && spark[0] > 0 ? (spark[spark.length - 1] - spark[0]) / spark[0] : null
         return { ...a, price: p?.price ?? null, change24h: p?.change24h ?? null, change7d, type, amountUsd, holderCount, sparkline: spark }
       })
-      // Default ordering: total value held on Hydration, descending.
+      // Default ordering: total value held on Basilisk, descending.
       .sort((x, y) => (y.amountUsd ?? 0) - (x.amountUsd ?? 0) || (y.price ?? 0) - (x.price ?? 0))
   })
 }
@@ -3586,14 +3562,22 @@ async function getRecentTrades(limit: number, from?: string, to?: string, offset
 // single *Executed event. The call args carry the route and the slippage limit.
 
 export interface SwapAmounts { assetIn: number; assetOut: number; amountIn: string; amountOut: string }
-// XYK events name their amounts amount/salePrice (sell) and amount/buyPrice
-// (buy); everything else uses amountIn/amountOut.
+// The AMM pallets name their amounts amount/salePrice (sell) and amount/buyPrice
+// (buy); everything else uses amountIn/amountOut. The two buy events share those
+// field names and mean the OPPOSITE by them: XYK.BuyExecuted is (amount =
+// received, buyPrice = paid), LBP.BuyExecuted is (amount = paid, buyPrice =
+// received). Verified against the Router.RouteExecuted of the same extrinsic
+// across the legacy era (see the note above the legacy legs in
+// accountTradeVolume.ts), so the buy branch splits by pallet. Reading an LBP buy
+// with XYK's order swaps the trade's two sides, and since the assets rarely share
+// decimals the error is unbounded rather than a rounding slip.
 export function swapEventAmounts(name: string, args: Record<string, unknown>): SwapAmounts {
   const s = (v: unknown) => typeof v === 'string' ? v : typeof v === 'number' ? String(v) : ''
   const n = (v: unknown) => Number(v ?? NaN)
   const base = { assetIn: n(args.assetIn), assetOut: n(args.assetOut) }
   if (name === 'XYK.SellExecuted' || name === 'LBP.SellExecuted') return { ...base, amountIn: s(args.amount), amountOut: s(args.salePrice) }
-  if (name === 'XYK.BuyExecuted' || name === 'LBP.BuyExecuted') return { ...base, amountIn: s(args.buyPrice), amountOut: s(args.amount) }
+  if (name === 'XYK.BuyExecuted') return { ...base, amountIn: s(args.buyPrice), amountOut: s(args.amount) }
+  if (name === 'LBP.BuyExecuted') return { ...base, amountIn: s(args.amount), amountOut: s(args.buyPrice) }
   return { ...base, amountIn: s(args.amountIn), amountOut: s(args.amountOut) }
 }
 
@@ -3662,7 +3646,7 @@ export interface TradeDetail {
   limit: { kind: 'minReceived' | 'maxPaid'; amount: string; asset: AssetRef; marginPct: number | null } | null
   extrinsicFee: string | null
   extrinsicTip: string | null
-  // Set when the fee did not settle in HDX; show this instead of `extrinsicFee`
+  // Set when the fee did not settle in BSX; show this instead of `extrinsicFee`
   // and `extrinsicTip`, whose tip slot it carries as `tipAmount`.
   feePayment?: FeePayment
   route: TradeHop[]
@@ -4002,7 +3986,7 @@ async function actorsFor(pairs: [number, number | null][]): Promise<Map<string, 
 // Map (block_height, event_index) → the account a routed HOOK swap was made for.
 //
 // Router.Executed/RouteExecuted never carry a `who`, and a swap dispatched from a
-// block hook — the Scheduler running a governance batch, an HSM arbitrage — has no
+// block hook — the Scheduler running a governance batch, say — has no
 // extrinsic and so no signer either. That left DCA as the only hook actor any feed
 // could name, and everything else rendered actorless: a $90k Treasury swap with a
 // blank account. Broadcast.Swapped* records the swapper alongside the Router
@@ -4140,17 +4124,17 @@ export interface ActivityRow {
   destChain?: string         // xcm outbound: destination chain name
   destParachainId?: number | null
   destAccount?: {
-    // The SAME canonical id resolveDisplayAccountId/accountRef use for a local
-    // account: for a genuine AccountId32 this already equals `raw`, but for an
-    // AccountKey20 bound to a substrate owner it is that substrate accountId,
-    // not the bare H160 in `raw` — the client must key any viewer-side (user
-    // tag / avatar URL) lookup on THIS field, never on `raw` or `address`.
+    // The SAME canonical id accountRef uses for a local account: for an
+    // AccountId32 this equals `raw`, and for an AccountKey20 it is the substrate
+    // account the key truncates (a module/sovereign account) where there is one,
+    // else the bare H160 — the client must key any viewer-side (user tag / avatar
+    // URL) lookup on THIS field, never on `raw` or `address`.
     kind: 'AccountId32' | 'AccountKey20'; accountId: string; address: string; raw: string; subscanUrl: string | null
     emoji?: string; emojiName?: string; emojiUrl?: string
     tag?: { id: string; name: string; color: string; icon: string; memberCount?: number } | null
     identity?: { display: string; verified: boolean } | null
   }
-  xcmDir?: 'in' | 'out'      // xcm: transfer direction relative to Hydration
+  xcmDir?: 'in' | 'out'      // xcm: transfer direction relative to Basilisk
   fromChain?: string         // xcm inbound: origin chain name
   fromParachainId?: number | null
   // Source account of an inbound transfer, resolved from the Ocelloids
@@ -4329,8 +4313,8 @@ export function matchLiquidityAmounts(missing: LiquidityAmountCandidate[], legs:
     // A payout leg always comes from the pool. The Treasury only appears in a
     // liquidity extrinsic to refund the XYK pool-creation deposit when the last
     // LP exits and the pool is destroyed — and that refund is emitted AFTER the
-    // pool's own payout, so adjacency would pick the 1 HDX deposit over the real
-    // withdrawal on every HDX-paired final removal.
+    // pool's own payout, so adjacency would pick the 1 BSX deposit over the real
+    // withdrawal on every BSX-paired final removal.
     if (t.from_account.toLowerCase() === TREASURY_POT) continue
     const entry = { event_index: t.event_index, amount: t.amount, used: false }
     const scope = scopeOf(t.extrinsic_index)
@@ -4500,32 +4484,38 @@ interface XcmNetworkMeta { name: string; subscan?: string; ss58?: number }
 export function parachainName(paraId: number): string {
   return PARACHAIN_META[paraId]?.name ?? `Parachain ${paraId}`
 }
-const RELAY_XCM_NETWORK: XcmNetworkMeta = { name: 'Polkadot', subscan: 'https://polkadot.subscan.io', ss58: 0 }
-// Destination parachain metadata for networks observed in Hydration XCM traffic.
+const RELAY_XCM_NETWORK: XcmNetworkMeta = { name: 'Kusama', subscan: 'https://kusama.subscan.io', ss58: 2 }
+// Counterparty metadata for the Kusama parachains Basilisk exchanges XCM with.
+// Basilisk is itself para 2090 on Kusama, so this table is the Kusama relay's, not
+// the Polkadot relay's — a Polkadot id read against these ids names a different
+// chain entirely (2004 is Moonbeam there and Khala here).
+//
+// `ss58` is present only where the chain's prefix is in @substrate/ss58-registry or
+// is the relay's own; a missing prefix falls back to Kusama's 2 in
+// externalAccountRef, which is what a Kusama-relay chain without a registered
+// prefix uses anyway. Moonriver is deliberately absent from it: its accounts are
+// H160, so an AccountId32 arriving from there has no meaningful Moonriver SS58.
+//
+// `subscan` is present only where Subscan still serves that chain — most Kusama
+// parachain explorers have been retired, and a link to a 404 is worse than a plain
+// name. Name-only entries render the chain and skip the deep link.
 const PARACHAIN_META: Record<number, XcmNetworkMeta> = {
-  1000: { name: 'AssetHub', subscan: 'https://assethub-polkadot.subscan.io', ss58: 0 },
-  2000: { name: 'Acala', subscan: 'https://acala.subscan.io', ss58: 10 },
-  2004: { name: 'Moonbeam', subscan: 'https://moonbeam.subscan.io' },
-  2006: { name: 'Astar', subscan: 'https://astar.subscan.io', ss58: 5 },
-  2008: { name: 'Crust' },
-  2012: { name: 'Parallel', subscan: 'https://parallel.subscan.io' },
-  2026: { name: 'Nodle', subscan: 'https://nodle.subscan.io', ss58: 37 },
-  2030: { name: 'Bifrost', subscan: 'https://bifrost.subscan.io', ss58: 6 },
-  2031: { name: 'Centrifuge', subscan: 'https://centrifuge.subscan.io', ss58: 36 },
-  2032: { name: 'Interlay', subscan: 'https://interlay.subscan.io', ss58: 2032 },
-  2034: { name: 'Hydration', subscan: 'https://hydration.subscan.io', ss58: 63 },
-  2035: { name: 'Phala', subscan: 'https://phala.subscan.io', ss58: 30 },
-  2037: { name: 'Unique', subscan: 'https://unique.subscan.io' },
-  2043: { name: 'NeuroWeb', subscan: 'https://origintrail.subscan.io' },
-  2046: { name: 'Darwinia', subscan: 'https://darwinia.subscan.io' },
-  2051: { name: 'Ajuna', subscan: 'https://ajuna.subscan.io' },
-  2086: { name: 'KILT', subscan: 'https://kilt.subscan.io', ss58: 38 },
-  2092: { name: 'Zeitgeist', subscan: 'https://zeitgeist.subscan.io', ss58: 73 },
-  2094: { name: 'Pendulum', subscan: 'https://pendulum.subscan.io', ss58: 56 },
-  2101: { name: 'Subsocial' },
-  3345: { name: 'Energy Web X', subscan: 'https://energywebx.subscan.io' },
-  3369: { name: 'Mythos', subscan: 'https://mythos.subscan.io' },
-  3370: { name: 'Laos' },
+  1000: { name: 'AssetHub', subscan: 'https://assethub-kusama.subscan.io', ss58: 2 },
+  2000: { name: 'Karura', ss58: 8 },
+  2001: { name: 'Bifrost', ss58: 6 },
+  2004: { name: 'Khala', ss58: 30 },
+  2007: { name: 'Shiden', subscan: 'https://shiden.subscan.io', ss58: 5 },
+  2015: { name: 'Integritee', ss58: 13 },
+  2023: { name: 'Moonriver', subscan: 'https://moonriver.subscan.io' },
+  2048: { name: 'Robonomics', subscan: 'https://robonomics.subscan.io', ss58: 32 },
+  2084: { name: 'Calamari', ss58: 78 },
+  2087: { name: 'Picasso', ss58: 49 },
+  2090: { name: 'Basilisk', ss58: 10041 },
+  2092: { name: 'Kintsugi', ss58: 2092 },
+  2095: { name: 'Quartz', ss58: 255 },
+  2105: { name: 'Crab' },
+  2110: { name: 'Mangata' },
+  2114: { name: 'Turing' },
 }
 function junctionValue<T = unknown>(j: unknown, key: string): T | undefined {
   const o = j as Record<string, unknown> | undefined
@@ -4537,22 +4527,22 @@ function hexString(v: unknown): string | null {
   const h = v.toLowerCase()
   return /^0x[0-9a-f]+$/.test(h) ? h : null
 }
-// Bare H160 (an AccountKey20 junction's raw key) → the canonical AccountId32
-// join key tags/identity/bindings are keyed by: reserved module/sibling/para
-// truncations resolve to their real substrate account; genuine EVM accounts
-// get the same ETH-prefixed truncated form Hydration's own EVM accounts use
-// (see evmAccountForm/evmFromAccountId), so resolveDisplayAccountId can find a
-// bound substrate owner for it exactly as it would for a local account.
+// Bare H160 (an AccountKey20 junction's raw key) → the canonical AccountId32 join
+// key tags and identity are keyed by. A reserved module/sibling/para truncation
+// resolves to its real substrate account; anything else stays the bare H160, which
+// is what the row displays anyway — it belongs to a chain whose accounts are 20
+// bytes wide, and there is no local AccountId32 it could stand for.
 function h160AccountId(h160: string): string {
-  return reservedH160AccountId(h160.slice(2)) ?? `0x45544800${h160.slice(2)}0000000000000000`
+  return reservedH160AccountId(h160.slice(2)) ?? h160
 }
 // Display ref for an account on ANOTHER chain. Displayed address is ALWAYS the
-// Polkadot form (prefix 0) for AccountId32 — one identity per pubkey across
-// chains, matching how local accounts are shown — and the bare H160 for
-// AccountKey20. The subscan deep-link still uses the chain's own SS58
-// encoding. The icon and any Hydration tag/identity are resolved exactly like
-// a local account's (same pubkey → same emoji/tag/identity), via the same
-// resolveDisplayAccountId → tagForAccount/identityForAccount pipeline accountRef uses.
+// Kusama form (prefix 2) for AccountId32 — Basilisk sits on the Kusama relay, so
+// that is the neutral form a reader of this explorer recognises, one identity per
+// pubkey across the relay's chains — and the bare H160 for AccountKey20. The
+// subscan deep-link still uses the chain's own SS58 encoding where the table knows
+// it. The icon and any local tag/identity are resolved exactly like a local
+// account's (same pubkey → same emoji/tag/identity), via the same
+// tagForAccount/identityForAccount pipeline accountRef uses.
 function externalAccountRef(raw: unknown, meta: XcmNetworkMeta | undefined): ActivityRow['destAccount'] {
   const h = hexString(raw)
   if (!h) return undefined
@@ -4560,10 +4550,10 @@ function externalAccountRef(raw: unknown, meta: XcmNetworkMeta | undefined): Act
     let address = h
     let chainAddress = h
     try {
-      address = encodeAddress(hexToU8a(h), 0)
-      chainAddress = encodeAddress(hexToU8a(h), meta?.ss58 ?? 0)
+      address = encodeAddress(hexToU8a(h), KUSAMA_SS58_PREFIX)
+      chainAddress = encodeAddress(hexToU8a(h), meta?.ss58 ?? KUSAMA_SS58_PREFIX)
     } catch { /* keep raw account id */ }
-    const resolved = resolveDisplayAccountId(h)
+    const resolved = h
     const icon = accountIcon(resolved)
     const t = tagForAccount(resolved)
     const id = identityForAccount(resolved)
@@ -4575,7 +4565,7 @@ function externalAccountRef(raw: unknown, meta: XcmNetworkMeta | undefined): Act
     }
   }
   if (h.length === 42) {
-    const resolved = resolveDisplayAccountId(h160AccountId(h))
+    const resolved = h160AccountId(h)
     const icon = accountIcon(resolved)
     const t = tagForAccount(resolved)
     const id = identityForAccount(resolved)
@@ -4636,13 +4626,10 @@ export function parseOutboundXcm(argsRaw: unknown): { sender: string; amounts: s
   if (args.origin && Array.isArray(args.message)) {
     const oj = xcmJunctions(args.origin.interior)
     const acc32 = oj.find(j => j.__kind === 'AccountId32')
-    const acc20 = oj.find(j => j.__kind === 'AccountKey20')
-    // EVM-origin senders (AccountKey20) map to their truncated-account form —
-    // the id their activity is indexed under everywhere else.
-    const senderId = typeof acc32?.id === 'string' ? acc32.id
-      : typeof acc20?.key === 'string' && /^0x[0-9a-fA-F]{40}$/.test(acc20.key)
-        ? '0x45544800' + acc20.key.slice(2).toLowerCase() + '0000000000000000'
-        : null
+    // A local send's origin is an AccountId32; Basilisk has no EVM origin to map an
+    // AccountKey20 onto, and inventing an account id for one would attribute the
+    // send to an account that cannot exist. Left unresolved instead.
+    const senderId = typeof acc32?.id === 'string' ? acc32.id : null
     if (!senderId) return null
     const amounts: string[] = []
     const feeAmounts = new Set<string>()
@@ -4863,7 +4850,7 @@ const XCM_SENT_EVENTS_SQL = [...XCM_SENT_XTOKENS_EVENTS, 'PolkadotXcm.Sent'].map
 // for why the send list above cannot see those messages at all.
 const XCM_EXECUTED_SEND_EVENT = 'XcmpQueue.XcmpMessageSent'
 const isXTokensSentEvent = (name: string): boolean => XCM_SENT_XTOKENS_EVENTS.includes(name)
-// Hydration sets `type XcmEventEmitter = ()` (runtime/hydradx/src/xcm.rs), so a message
+// The runtime sets `type XcmEventEmitter = ()`, so a message
 // the xcm-EXECUTOR dispatches (InitiateReserveWithdraw, DepositReserveAsset,
 // InitiateTransfer, ExportMessage) leaves only `XcmpQueue.XcmpMessageSent`;
 // `PolkadotXcm.Sent` is deposited solely where pallet_xcm itself delivers. The send list
@@ -4916,7 +4903,7 @@ export function admitsExecutedXcmWithdrawal(who: string, amount: string): boolea
 // so the PAYLOAD is the highest-event_index leg.
 //
 // Population check: across every multi-leg send the legs this drops are the fee assets
-// (HDX 0, DOT 5) and swap inputs, which is why it also keeps the right leg in the reverse
+// (BSX 0, KSM 1) and swap inputs, which is why it also keeps the right leg in the reverse
 // shape — Router.sell(USDC->DOT) batched with a DOT send. Ordering beats value here: it needs
 // no price (a missing price would silently elect the wrong leg) and it survives a payload
 // smaller than its own fee. Folded per (extrinsic, ACCOUNT): ~40 sends withdraw from two
@@ -5664,7 +5651,11 @@ export function ocnChainName(urnStr: string): string | null {
   const parsed = parseOcnUrn(urnStr)
   if (!parsed) return null
   const { consensus, chainId } = parsed
-  if (consensus === 'polkadot') {
+  // PARACHAIN_META is the KUSAMA relay's table, so only a kusama-consensus urn may
+  // be read through it. A Polkadot para id names a different chain at the same
+  // number, and naming it from this table would assert the wrong counterparty
+  // outright rather than leave it unresolved.
+  if (consensus === 'kusama') {
     const paraId = Number(chainId)
     if (paraId === 0) return RELAY_XCM_NETWORK.name
     return (PARACHAIN_META[paraId] ?? { name: `Parachain ${paraId}` }).name
@@ -5672,9 +5663,9 @@ export function ocnChainName(urnStr: string): string | null {
   if (consensus === 'ethereum') return EVM_CHAIN_META[chainId]?.name ?? `EVM chain ${chainId}`
   if (consensus === 'solana') return 'Solana'
   if (consensus === 'sui') return 'Sui'
-  if (consensus === 'kusama') {
+  if (consensus === 'polkadot') {
     const paraId = Number(chainId)
-    return paraId === 0 ? 'Kusama' : `Kusama ${paraId}`
+    return paraId === 0 ? 'Polkadot' : `Polkadot ${paraId}`
   }
   return null
 }
@@ -5685,7 +5676,10 @@ export function originTxExplorerUrl(urnStr: string, txHash: string | null): stri
   if (!parsed) return null
   const { consensus, chainId } = parsed
   const isHex = /^0x[0-9a-fA-F]+$/.test(txHash)
-  if (consensus === 'polkadot' || consensus === 'kusama') {
+  // Kusama only, for the same reason ocnChainName reads that arm alone: the table
+  // is the Kusama relay's, so a Polkadot para id would deep-link into the wrong
+  // chain's explorer.
+  if (consensus === 'kusama') {
     if (!isHex) return null
     const paraId = Number(chainId)
     const meta = paraId === 0 ? RELAY_XCM_NETWORK : PARACHAIN_META[paraId]
@@ -5699,21 +5693,6 @@ export function originTxExplorerUrl(urnStr: string, txHash: string | null): stri
   if (consensus === 'solana') return `https://solscan.io/tx/${encodeURIComponent(txHash)}`
   if (consensus === 'sui') return `https://suiscan.xyz/mainnet/tx/${encodeURIComponent(txHash)}`
   return null
-}
-
-// Wormhole's own chain numbering → the URN the rest of this file names chains by, so a
-// destination gets its display name, address encoding and explorer link from
-// externalChainRef rather than a second mapping that could disagree with it.
-export const WORMHOLE_CHAIN_URNS: Record<number, string> = {
-  1: 'urn:ocn:solana:101',
-  2: 'urn:ocn:ethereum:1',
-  4: 'urn:ocn:ethereum:56',       // BNB Chain
-  5: 'urn:ocn:ethereum:137',      // Polygon
-  16: 'urn:ocn:polkadot:2004',    // Moonbeam
-  21: 'urn:ocn:sui:0x35834a8a',
-  23: 'urn:ocn:ethereum:42161',   // Arbitrum
-  24: 'urn:ocn:ethereum:10',      // Optimism
-  30: 'urn:ocn:ethereum:8453',    // Base
 }
 
 function argStr(args: Record<string, unknown>, key: string): string {
@@ -5781,7 +5760,7 @@ export function voteDetails(args: Record<string, unknown>): VoteDetails {
 // SCALE-encoded ConvictionVoting.vote call in the permit's `data` payload — the
 // call tree never contains a ConvictionVoting.vote row, so the referendum index
 // must be decoded from those bytes: [pallet u8, call u8, compact pollIndex,
-// AccountVote]. Pallet/call indexes are Hydration runtime constants.
+// AccountVote]. Pallet/call indexes are runtime constants.
 const CONVICTION_VOTING_PALLET_IDX = 0x24
 const CONVICTION_VOTE_CALL_IDX = 0x00
 // Wrapper calls whose args can carry a nested ConvictionVoting.vote.
@@ -5920,7 +5899,7 @@ function voteAmountSqlExpr(): string {
   )`
 }
 // A vote row's referendum, as the explorer needs it: the pallet slug its detail
-// page and SubSquare link are keyed on, plus the off-chain title. Hydration voted
+// page and SubSquare link are keyed on, plus the off-chain title. This chain voted
 // through both pallets and both index from 0, so the slug travels with the index.
 // Council/Technical Committee votes carry a proposal hash rather than an index and
 // are not referenda, so they get neither.
@@ -6054,7 +6033,7 @@ async function getRecentVotes(limit: number, from?: string, to?: string, offset 
         }
         for (const [key, infos] of callsByExt) if (infos.length === 1) callByExt.set(key, infos[0])
       }
-      const hdx = asset(0)
+      const bsx = asset(0)
       const out: VoteRow[] = []
       for (const e of events) {
         const args = (safeJson(e.args_json) ?? {}) as Record<string, unknown>
@@ -6071,7 +6050,7 @@ async function getRecentVotes(limit: number, from?: string, to?: string, offset 
           pallet, action: 'Voted', referendum: ref, side: details.side, conviction: details.conviction, amount: details.amount,
           ...referendumRefFields(pallet, ref),
           weighted: weightedFromLabels(details.amount, details.conviction),
-          asset: hdx, valueUsd: details.amount ? usdValue(prices, hdx.assetId, details.amount, hdx.decimals) : null,
+          asset: bsx, valueUsd: details.amount ? usdValue(prices, bsx.assetId, details.amount, bsx.decimals) : null,
         }
         out.push(row)
       }
@@ -6120,7 +6099,7 @@ export interface RawCollectiveVoteEvent {
 // One collective vote event as a VoteRow. Shared by the windowed source below and
 // by the extrinsic/block detail page, so no two surfaces can describe the same
 // event differently. `voted` is the chain's own boolean (aye = true).
-export function collectiveVoteRow(e: RawCollectiveVoteEvent, hdx: AssetRef): VoteRow {
+export function collectiveVoteRow(e: RawCollectiveVoteEvent, native: AssetRef): VoteRow {
   const args = (safeJson(e.args_json) ?? {}) as Record<string, unknown>
   const account = argStr(args, 'account')
   const hash = argStr(args, 'proposalHash')
@@ -6130,7 +6109,7 @@ export function collectiveVoteRow(e: RawCollectiveVoteEvent, hdx: AssetRef): Vot
     pallet: e.event_name === 'Council.Voted' ? 'Council' : 'Technical Committee',
     action: 'Voted', referendum: hash ? shortProposalHash(hash) : null,
     side: args.voted === true ? 'Aye' : args.voted === false ? 'Nay' : 'Vote',
-    conviction: null, amount: null, asset: hdx, valueUsd: 0,
+    conviction: null, amount: null, asset: native, valueUsd: 0,
   }
 }
 
@@ -6152,7 +6131,7 @@ async function getCollectiveVotes(accounts: string[] | undefined, limit: number,
     query_params: { limit }, format: 'JSONEachRow',
   })
   const events = await res.json<RawCollectiveVoteEvent>()
-  const hdx = asset(0)
+  const bsx = asset(0)
   // raw_events is a ReplacingMergeTree read without FINAL; dedup any re-ingested
   // rows by (block, event_index) so a re-index can't emit a duplicate vote.
   const seen = new Set<string>()
@@ -6161,7 +6140,7 @@ async function getCollectiveVotes(accounts: string[] | undefined, limit: number,
     const key = `${e.block_height}:${e.event_index}`
     if (seen.has(key)) continue
     seen.add(key)
-    out.push(collectiveVoteRow(e, hdx))
+    out.push(collectiveVoteRow(e, bsx))
   }
   return out
 }
@@ -6170,7 +6149,7 @@ async function getCollectiveVotes(accounts: string[] | undefined, limit: number,
 //
 // A collective vote locks no capital: the row carries no amount and no USD value,
 // so ANY value floor — USD or token units — rejects it on the built row, and the
-// only asset a governance row is denominated in is HDX. A filtered feed therefore
+// only asset a governance row is denominated in is BSX. A filtered feed therefore
 // SKIPS the source instead of reading rows its own predicate would drop, and the
 // vote category's exact total (getGlobalActivityTotal) skips the same count under
 // the same condition, which is what keeps the total equal to the feed.
@@ -6654,7 +6633,10 @@ async function suppressTransferCandidates(transfers: TransferRow[]): Promise<Tra
 // owns share-asset trade legs (routing into/out of a pool share inside an
 // add/remove is mechanics, not a trade); module-account rows are protocol
 // internals, not user activity.
-const isShareAssetId = (id: number) => displayAssetId(id) !== id || asset(id).symbol.includes('-Pool')
+// A pool's LP share token. Basilisk registers these unnamed, so there is no symbol
+// to match on: membership comes from the XYK pool registry (see isXykShareToken).
+// The displayAssetId arm additionally catches any asset folded into another.
+const isShareAssetId = (id: number) => isXykShareToken(id) || displayAssetId(id) !== id
 function dropShareRoutedTrades<T extends { blockHeight: number; extrinsicIndex: number | null; assetIn: AssetRef | null; assetOut: AssetRef | null }>(trades: T[], liquidityExtrinsics: Set<string>): T[] {
   return trades.filter(t => !(t.extrinsicIndex != null && liquidityExtrinsics.has(`${t.blockHeight}:${t.extrinsicIndex}`)
     && ((t.assetIn && isShareAssetId(t.assetIn.assetId)) || (t.assetOut && isShareAssetId(t.assetOut.assetId)))))
@@ -7140,7 +7122,7 @@ async function buildActivityWindow(limit: number, from: string | undefined, to: 
 // counted under exactly the conditions the feed reads them under: each source's
 // own distinct (block, event) count, and the collective side omitted precisely
 // when `collectiveVotesAdmitted` kept it out of the feed (any value floor, or a
-// token filter that excludes HDX). Both sources are read newest-first with no
+// token filter that excludes BSX). Both sources are read newest-first with no
 // cross-source classification, so no row can be counted in one and dropped in the
 // other; getVoteFeedRows' rank translation only decides WHICH rows a page shows,
 // never how many the feed holds.
@@ -7188,7 +7170,7 @@ export async function getGlobalActivityTotal(
     LIST_TOTAL_FRESH_MS, LIST_TOTAL_STALE_MS, async (): Promise<ScopedListTotal> => {
       const prices = await ensurePrices()
       const tokenIds = assetIdsForToken(filters.token)
-      // Votes lock HDX only, so any other token filter selects nothing.
+      // Votes lock BSX only, so any other token filter selects nothing.
       if (tokenIds != null && !tokenIds.includes(0)) return { total: 0, complete: true }
       const amountFilter = eventValueFilterSql('0', voteAmountSqlExpr(), 'block_timestamp', filters, prices, 'vote_price')
       const [res, collective] = await Promise.all([
@@ -7297,7 +7279,7 @@ export async function getExtrinsicActivity(height: number, index: number): Promi
     const signerMap = await actorsFor([[height, index]])
     const signer = signerMap.get(`${height}:${index}`) ?? null
     const rows: ActivityRow[] = []
-    const hdx = asset(0)
+    const bsx = asset(0)
 
     const transferRows: RawTransferEventRow[] = []
     const withdrawnByAmount = new Map<string, number>()
@@ -7477,8 +7459,8 @@ export async function getExtrinsicActivity(height: number, index: number): Promi
       rows.push({
         type: 'vote', blockHeight: e.block_height, timestamp: e.ts, eventIndex: e.event_index, extrinsicIndex: e.extrinsic_index,
         who: account && ACCOUNT_RE.test(account) ? accountRef(account) : null, to: null,
-        asset: hdx, assetIn: null, assetOut: null, amount: details.amount, amountIn: null, amountOut: null,
-        valueUsd: details.amount ? usdValue(prices, hdx.assetId, details.amount, hdx.decimals) : null,
+        asset: bsx, assetIn: null, assetOut: null, amount: details.amount, amountIn: null, amountOut: null,
+        valueUsd: details.amount ? usdValue(prices, bsx.assetId, details.amount, bsx.decimals) : null,
         votePallet: e.event_name.split('.')[0], voteAction: 'Voted',
         voteRef: e.event_name === 'Democracy.Voted' ? argStr(args, 'refIndex') || null : callInfo?.ref ?? null,
         ...referendumRefFields(e.event_name.split('.')[0], e.event_name === 'Democracy.Voted' ? argStr(args, 'refIndex') || null : callInfo?.ref ?? null),
@@ -7493,7 +7475,7 @@ export async function getExtrinsicActivity(height: number, index: number): Promi
     // vote needs a member origin, so it always has an extrinsic (the same reason
     // getBlockHookActivity has no vote arm for the conviction pallets either).
     for (const e of events.filter(ev => COLLECTIVE_VOTE_EVENTS.includes(ev.event_name))) {
-      rows.push(voteActivityRow(collectiveVoteRow(e, hdx)))
+      rows.push(voteActivityRow(collectiveVoteRow(e, bsx)))
     }
 
     const semanticExtrinsic = rows.length > 0
@@ -8063,7 +8045,7 @@ async function assetActivityPage(assetId: number, type = 'all', limit = 40, offs
       )
     })() : Promise.resolve([])
 
-    // Remote-origin messages can withdraw assets from Hydration without a local
+    // Remote-origin messages can withdraw assets from Basilisk without a local
     // extrinsic. Include the same decoded rows used by global, block and account
     // activity so an economic action does not disappear on the asset surface.
     const xcmOutRemoteP: Promise<ActivityRow[]> = wantXcm
@@ -8078,9 +8060,9 @@ async function assetActivityPage(assetId: number, type = 'all', limit = 40, offs
         .then(rows => rows.filter(row => row.asset?.assetId === assetId))
       : Promise.resolve([])
 
-    // Votes reach an asset feed only for HDX (`wantVotes` requires assetId 0),
+    // Votes reach an asset feed only for BSX (`wantVotes` requires assetId 0),
     // which is what governance capital is denominated in. Both vote sources join
-    // it, through the same builder every other feed uses, so the HDX page and the
+    // it, through the same builder every other feed uses, so the BSX page and the
     // chain-wide vote tab classify a collective vote identically.
     const votesP: Promise<ActivityRow[]> = wantVotes
       ? getVoteFeedRows(fetchN, from, to, 0, queryFilters, collectiveVotesAdmitted(queryFilters)).then(rows => rows.map(voteActivityRow))
@@ -8261,9 +8243,9 @@ async function getAccountHistory(accounts: string[]): Promise<{ portfolioSeries:
         GROUP BY account_id, asset_id, b ORDER BY asset_id, account_id, b`,
     format: 'JSONEachRow',
   })
-  // Fold pool-share series into their underlying main asset (2-Pool-GDOT → GDOT),
-  // same per-account display rule as foldShareBalances, so no "-Pool" history chart
-  // appears and the underlying's series carries the combined balance.
+  // Fold a series into the asset it displays as, the same per-account rule
+  // foldShareBalances applies, so the display asset's series carries the combined
+  // balance. Identity while nothing folds (see SHARE_TOKEN_UNDERLYING_ID).
   const balRows: HistoryBalanceRow[] = (await balRes.json<{ account_id: string; asset_id: string; b: number; bal: string }>())
     .map(r => {
       const did = displayAssetId(Number(r.asset_id))
@@ -8678,7 +8660,9 @@ const MAX_EXACT_TRANSFER_CANDIDATES = 6_000_000
 function shareAssetIdsSql(): string {
   const ids = new Set<number>(Object.keys(SHARE_TOKEN_UNDERLYING_ID).map(Number))
   for (const registered of allExplorerAssets()) if (isShareAssetId(registered.assetId)) ids.add(registered.assetId)
-  return [...ids].join(',')
+  // A share token can be traded before its registry row is loaded, and an empty IN
+  // list would silently widen the arm rather than narrow it.
+  return ids.size ? [...ids].join(',') : '0'
 }
 
 // One block of the feed and how many rows it holds. Arms are UNIONed and summed per
@@ -11134,12 +11118,9 @@ export async function getAddressValueEvents(addressInput: string, from?: string,
 export async function getTagValueEvents(tagId: string, from?: string, to?: string): Promise<ValueEvent[] | null> {
   const members = tagMembers(tagId)
   if (!members) return null
-  // Jump detection reads the SAME series getTag charts: members plus their
-  // truncated-EVM twins (and the same shared cache key). Attribute jumps over
-  // that twin-inclusive set too, so money-market/aToken flows that sit under a
-  // twin are matched to their jump instead of falling back to a bogus `price`
-  // marker — mirrors the address path passing its twin-inclusive `related` set.
-  const historyAccounts = [...new Set([...members, ...members.map(evmAccountForm).filter(Boolean) as string[]])]
+  // Jump detection reads the SAME series getTag charts, under the same shared cache
+  // key, so a jump is attributed over exactly the accounts the series was built from.
+  const historyAccounts = [...new Set(members)]
   return getAccountValueEvents(historyAccounts, `tag:${tagId}`, from, to, VALUE_EVENT_DEFAULT_LIMIT, historyAccounts)
 }
 
@@ -12293,7 +12274,7 @@ async function accountsPage(offset: number, limit: number, sort: AccountSort, re
               ${memberFilter}
             ),
             -- One name per account across every identity source: lowest chain
-            -- priority wins (0 = Hydration), chain key breaks a tie so the
+            -- priority wins (0 = Basilisk), chain key breaks a tie so the
             -- directory's identity sort is stable. Blank displays are retired
             -- rows, not identities.
             -- Filtering happens in the inner query: naming the aggregate "display"
@@ -12449,21 +12430,16 @@ async function enrichAccountRows(
   raw: { label_id: string; sample: string; usd: number }[],
   rows: TopAccountRow[],
 ): Promise<void> {
-  // Account set per row: tag rows expand to their members; each substrate account
-  // also contributes its ETH-prefixed twin (its EVM-side pot, where MM/HOLLAR
-  // activity lives). Pallet/sovereign accounts (modl/sibl/para) are excluded from
-  // the raw-observation history scan: the omnipool pallet alone owns ~60M balance
-  // events. Their sparkline remains absent unless a complete historical source is
+  // Account set per row: tag rows expand to their members. Pallet/sovereign
+  // accounts (modl/sibl/para) are excluded from the raw-observation history scan,
+  // where a single busy pallet account can own tens of millions of balance events.
+  // Their sparkline remains absent unless a complete historical source is
   // available; current balances are never projected backward.
   const isModuleAccount = (a: string) => /^0x(6d6f646c|7369626c|70617261)/.test(a)
   const rowMembers: string[][] = raw.map(r => rowMemberAccounts(r).filter(m => ACCOUNT_RE.test(m)))
   const rowHistorySubstrate: string[][] = rowMembers.map(members => members.filter(m => !isModuleAccount(m)))
   const rowModuleAccounts: string[][] = rowMembers.map(members => members.filter(isModuleAccount))
-  const rowAccounts: string[][] = rowHistorySubstrate.map(members => {
-    const set = new Set<string>(members)
-    for (const m of members) { const twin = evmAccountForm(m); if (twin) set.add(twin) }
-    return [...set]
-  })
+  const rowAccounts: string[][] = rowHistorySubstrate.map(members => [...new Set(members)])
   const all = [...new Set(rowAccounts.flat())]
   const moduleAccounts = [...new Set(rowModuleAccounts.flat())]
   if (!all.length && !moduleAccounts.length) return
@@ -12497,18 +12473,12 @@ async function enrichAccountRows(
 
   let moduleBalanceRows: { account_id: string; asset_id: string; bal: string }[] = []
   if (moduleAccounts.length) {
-    const moduleLookup = [...new Set(moduleAccounts.flatMap(a => {
-      const twin = evmAccountForm(a)
-      return twin ? [a, twin] : [a]
-    }))]
-    const moduleList = sqlAccountList(moduleLookup)
+    const moduleList = sqlAccountList([...new Set(moduleAccounts)])
     const moduleRes = await client.query({
       query: `SELECT account_id, asset_id, toString(sum(bal_u256)) AS bal
               FROM (
                 SELECT
-                  if(substring(account_id, 3, 8) = '45544800' AND substring(account_id, 11, 8) IN ('6d6f646c', '7369626c', '70617261'),
-                    concat('0x', substring(account_id, 11, 40), '000000000000000000000000'),
-                    account_id) AS account_id,
+                  account_id,
                   asset_id,
                   toUInt256OrZero(argMaxMerge(total_state)) AS bal_u256
                 FROM price_data.account_asset_latest_balances
@@ -12628,8 +12598,8 @@ export function resampleValueSeriesToTrailingYear(values: number[], dates: strin
 // left here is the 180-bucket reconstruction itself, not the reads under it.
 //
 // Reuses the detail page's own getAccountHistory so the row sparkline and the
-// account/tag value-history chart are computed by the SAME code path (wallet + HOLLAR + money-market net worth +
-// Omnipool/XYK LP principal, historical closes) and therefore cannot diverge — the
+// account/tag value-history chart are computed by the SAME code path (wallet
+// balances + XYK LP principal, historical closes) and therefore cannot diverge — the
 // earlier wallet-only weekly approximation understated LP/MM-heavy accounts by ~2-3×.
 // Overwrites the wallet-only series enrichAccountRows produced, which stays as the
 // fallback when the history reconstruction yields nothing (a row never regresses to
@@ -12645,20 +12615,18 @@ async function enrichAccountSparklines(
   // relatedAccountIds the detail page feeds getAccountHistory.
   //
   // Pallet/sovereign members (modl/sibl/para) are kept. enrichAccountRows drops them
-  // from its raw-observation scan because the omnipool pallet alone owns ~60M balance
+  // from its raw-observation scan because a busy pallet account alone can own tens
+  // of millions of balance
   // events, but this path is the detail page's own reconstruction, which already charts
   // those accounts: /explorer/address/<pallet>/history returns a full 180-bucket series
   // for the treasury and omnipool pallets in 2.1 s each, and account_balance_weekly
   // covers them back to 2022 (6,954 and 3,727 weeks). Dropping them here only made the
   // sparkline disagree with the Value column beside it, which sums every member — so
-  // Treasury, Omnipool, HOLLAR Stability Module, Liquidity Mining, Parachain Sovereign,
+  // Treasury, Liquidity Mining, Parachain Sovereign,
   // Staking Pot and Pallet Pots showed a value with no series at all.
   const rowAccounts: string[][] = raw.map(r => {
     const members = rowMemberAccounts(r)
-    const base = members.filter(m => ACCOUNT_RE.test(m))
-    const set = new Set<string>(base)
-    for (const m of base) { const twin = evmAccountForm(m); if (twin) set.add(twin) }
-    return [...set]
+    return [...new Set(members.filter(m => ACCOUNT_RE.test(m)))]
   })
   // Each row is an independent multi-query getAccountHistory; bound the fan-out the
   // same way enrichTopAssets does so one page can't stampede ClickHouse.
@@ -12876,10 +12844,7 @@ async function buildTagDetailForMembers(
     ])
     let balances: AddressBalance[] = foldShareBalances(valueAccountBalances(balanceRows, prices))
 
-    const tagHistoryAccounts = [...new Set([
-      ...members,
-      ...members.map(evmAccountForm).filter(Boolean) as string[],
-    ])]
+    const tagHistoryAccounts = [...new Set(members)]
     // LP stays (it feeds the displayed value); only the heavy portfolio-history
     // walk — which the card does not show — is skipped in summary.
     const [history, xykLp] = await Promise.all([
@@ -12897,8 +12862,7 @@ async function buildTagDetailForMembers(
     // chart ends at the displayed figure.
     const portfolioSeries = history.portfolioSeries.slice()
     if (portfolioSeries.length) portfolioSeries[portfolioSeries.length - 1] = +portfolioUsd.toFixed(2)
-    const volumeAccounts = [...new Set([...members, ...members.map(evmAccountForm).filter(Boolean) as string[]])]
-    const tradingVolumeUsd = await tradingVolumeByAccount(volumeAccounts).then(m => [...m.values()].reduce((s, v) => s + v, 0))
+    const tradingVolumeUsd = await tradingVolumeByAccount([...new Set(members)]).then(m => [...m.values()].reduce((s, v) => s + v, 0))
     const detail: TagDetail = {
       tagId: presentation.tagId, name: presentation.name, color: presentation.color, note: presentation.note, icon: presentation.icon,
       members: members.map(accountRef), balances, topAssets: topHeldTokens(balances), portfolioUsd,
@@ -13047,7 +13011,7 @@ export async function getListTagValueEvents(listId: string, tagId: string, membe
   const valid = listTagMembers(members)
   if (!valid.length) return []
   const scope = listTagScope(listId, tagId, valid)
-  const historyAccounts = [...new Set([...valid, ...valid.map(evmAccountForm).filter(Boolean) as string[]])]
+  const historyAccounts = [...new Set(valid)]
   return getAccountValueEvents(historyAccounts, scope, from, to, VALUE_EVENT_DEFAULT_LIMIT, historyAccounts)
 }
 
@@ -13066,9 +13030,9 @@ const LIQUIDITY_EVENTS = ['XYK.LiquidityAdded', 'XYK.LiquidityRemoved', 'XYK.Poo
 // votes plus the collective (Council / Technical Committee) ones the feed merges
 // in. Used for the daily histogram's name set and for transfer subordination (a
 // collective vote's extrinsic owns its fee/plumbing legs like any other activity).
-// Governance rows are HDX-denominated whichever pallet cast them — a collective
-// vote locks nothing but is still an HDX-tagged row in every feed (its VoteRow
-// carries the HDX descriptor with no amount), so the HDX token predicates below
+// Governance rows are BSX-denominated whichever pallet cast them — a collective
+// vote locks nothing but is still a BSX-tagged row in every feed (its VoteRow
+// carries the BSX descriptor with no amount), so the BSX token predicates below
 // and the histogram MV's `asset_refs` treat all four names alike.
 const VOTE_EVENTS = ['ConvictionVoting.Voted', 'Democracy.Voted', ...COLLECTIVE_VOTE_EVENTS]
 const sqlNames = (names: readonly string[]) => names.map(n => `'${n}'`).join(',')
@@ -13083,8 +13047,8 @@ export async function getDailyActivity(scope: string, filters: DailyFilters = {}
     // Token filter — mirror the activity table's per-category asset-id predicates so
     // the bars adjust to the selected token on every tab. The asset id lives in a
     // different arg field per category (currencyId for transfers, assetIn/assetOut
-    // for swaps, assetId/poolId/assetA for liquidity). Voting is HDX-denominated, so
-    // a non-HDX token yields no rows. The xcm daily source has no asset id to filter
+    // for swaps, assetId/poolId/assetA for liquidity). Voting is BSX-denominated, so
+    // a non-BSX token yields no rows. The xcm daily source has no asset id to filter
     // on (raw_xcm_activity.assets_json is empty) — it stays unfiltered by token
     // (documented limitation).
     const tokenIds = assetIdsForToken(filters.token)
@@ -13219,11 +13183,10 @@ export interface SearchResult {
   // build its route (`/referendum/:pallet/:index`). `status` is the lifecycle word
   // (e.g. "deciding", "approved") so the dropdown needs no follow-up fetch.
   pallet?: ReferendumPallet
-  // Pool-type enrichment: the venue and current TVL, so the dropdown can rank
-  // and caption the hit without a follow-up fetch. `value` is the pool id
-  // ('omnipool' for the Omnipool itself), `asset` the icon to draw — the share
-  // token for a stableswap, the largest leg for an XYK pair.
-  poolKind?: 'omnipool' | 'stableswap' | 'xyk'
+  // Pool-type enrichment: the venue and current TVL, so the dropdown can rank and
+  // caption the hit without a follow-up fetch. `value` is the pool id, `asset` the
+  // icon to draw — the largest leg of the pair.
+  poolKind?: 'xyk'
   tvlUsd?: number | null
   index?: number
   status?: string
@@ -13478,8 +13441,8 @@ function referendumSearchResult(r: ReferendumListRow): SearchResult {
 // substring — so a query naming the start of a name outranks one that only
 // lands mid-word. Shared by the referendum-title matcher and the tag-name
 // matcher below: without it, tag results came back in directory/insertion
-// order, so an exact "Treasury" tag sat under "Moonbeam Treasury" and
-// "Polkadot Treasury" merely because they were inserted first.
+// order, so an exact "Treasury" tag sat under any longer tag name containing the
+// word merely because it was inserted first.
 // The pool directory as a search source. Fail-soft: pool hits are additive, so
 // a pools-index failure (or, in unit tests, an unwired poolService client) must
 // cost the pool entries alone, never the whole search response.
@@ -13591,7 +13554,7 @@ async function searchUncached(query: string): Promise<SearchResult[]> {
   // identities it happens to also match, not after — an exact address/hash/
   // block lookup above still wins outright, since this only fires on a query
   // containing letters. Without the ranking, an exact "Treasury" tag sorted
-  // below "Moonbeam Treasury"/"Polkadot Treasury" on directory order alone.
+  // below any longer tag name containing the word, on directory order alone.
   if (/[A-Za-z]/.test(query)) {
     const { allTags } = await import('./tagService.ts')
     const ql = query.toLowerCase()
@@ -13623,8 +13586,8 @@ async function searchUncached(query: string): Promise<SearchResult[]> {
   }
 
   // Asset symbol/name match — always run and surfaced high, so an account whose
-  // identity contains the query (e.g. "HDXKobi") never hides the asset itself
-  // (e.g. HDX). Ranked: exact symbol, then symbol prefix, then symbol substring,
+  // identity contains the query (e.g. "BSXKobi") never hides the asset itself
+  // (e.g. BSX). Ranked: exact symbol, then symbol prefix, then symbol substring,
   // then name substring; shortest symbol wins ties.
   if (/[A-Za-z]/.test(query)) {
     const ql = query.toLowerCase()
@@ -13640,10 +13603,10 @@ async function searchUncached(query: string): Promise<SearchResult[]> {
     for (const { a } of ranked) results.push({ type: 'asset', value: String(a.assetId), label: a.symbol, desc: a.name ?? undefined, asset: a })
   }
 
-  // Pool name — the /liquidity directory ('Omnipool', '2-Pool-GDOT',
-  // 'DOT / MYTH', …). Matching hits are ordered by TVL, not match tier: a
-  // reader typing a fragment shared by several pools ('pool', 'DOT') means the
-  // big one far more often than the best string match.
+  // Pool name — the /liquidity directory ('BSX / KSM', 'vDOT / DOT', …).
+  // Matching hits are ordered by TVL, not match tier: a reader typing a fragment
+  // shared by several pools ('pool', 'DOT') means the big one far more often than
+  // the best string match.
   if (/[A-Za-z]/.test(query)) {
     const ql = query.toLowerCase()
     const poolHits = (await poolDirectoryForSearch())

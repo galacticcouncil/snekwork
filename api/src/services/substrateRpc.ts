@@ -1,7 +1,7 @@
 // Minimal substrate JSON-RPC helpers shared by services that read chain state
-// live (money market, LP positions, proxy/multisig). One full Hydration node
+// live (LP positions, proxy/multisig). One full Basilisk node
 // serves both eth_* and state_* calls.
-export const SUBSTRATE_RPC_URL = process.env.RAW_EVM_RPC_URL?.trim() || 'https://hydration-rpc.n.dwellir.com'
+export const SUBSTRATE_RPC_URL = process.env.RAW_EVM_RPC_URL?.trim() || 'https://rpc.basilisk.cloud'
 
 // Nodes cap JSON-RPC batch size (node-full rejects >100 with -32010), so large
 // reads are split into conservative chunks.
