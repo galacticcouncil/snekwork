@@ -12,6 +12,7 @@
     "validate:raw-balances": "tsx src/scripts/validate-raw-balances.ts",
     "snapshot:balances": "tsx src/scripts/snapshot-balances.ts",
     "snapshot:identities": "tsx src/scripts/snapshot-identities.ts",
+    "backfill:ksm-reference": "tsx src/scripts/backfill-ksm-reference.ts",
     "test": "vitest run",
     "typegen:bundle": "tsx src/scripts/write-typegen-bundle.ts",
     "typegen": "npm run typegen:bundle && squid-substrate-typegen typegen.json && tsx src/scripts/patch-typegen-support.ts",

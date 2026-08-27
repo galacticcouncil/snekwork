@@ -5,6 +5,7 @@ import { rebuildOHLCForTimeRange } from '../ohlc/repair.js'
 import { ALL_SWAP_EVENT_NAMES, BROADCAST_SWAP_EVENT_NAMES, LEGACY_SWAP_EVENT_NAMES, decodeRawTrade, type DecodedRawTrade, type RawTradeEventRow, type TradeAssetAmount } from './tradeEventDecoder.js'
 import { aggregateTradeVolumeRows, decimalToScaledBigInt, formatDecimal128, sumBigIntStrings, sumDecimal128Strings, sumVolumeFields } from '../blocks/volumeMath.js'
 import { BASILISK_ERAS } from '../chainEras.js'
+import { config } from '../config.js'
 export { decimalToScaledBigInt, formatDecimal128 } from '../blocks/volumeMath.js'
 const DEFAULT_CHUNK_SIZE = 5_000
 const DEFAULT_SAFETY_LAG_BLOCKS = 100
@@ -214,9 +215,22 @@ function normalizeDateTime(value: string): string {
   return parsed.toISOString().slice(0, 19).replace('T', ' ')
 }
 
-function calculateUsdVolume(nativeAmount: bigint, price: string | undefined, decimals: number | undefined): string {
+function calculateUsdVolume(
+  nativeAmount: bigint,
+  price: string | undefined,
+  decimals: number | undefined,
+  assetId: number,
+): string {
   if (nativeAmount === 0n) return '0.000000000000'
-  if (!price) throw new Error('Cannot repair non-zero trade volume without an indexed event-time price')
+  // An asset outside the price whitelist has no USD value by design, so its leg
+  // carries a zero USD volume — the same thing the live pipeline writes for it
+  // (src/blocks/extractVolume.ts). A WHITELISTED asset with no indexed price is
+  // a different thing entirely: prices have not been indexed for this range yet,
+  // and repairing against that would silently zero real volume.
+  if (!price) {
+    if (!config.PRICED_ASSET_IDS.includes(assetId)) return '0.000000000000'
+    throw new Error(`Cannot repair non-zero trade volume for priced asset ${assetId} without an indexed event-time price`)
+  }
   if (decimals == null) throw new Error('Cannot repair non-zero trade volume without snapshot asset decimals')
   return formatDecimal128((nativeAmount * decimalToScaledBigInt(price)) / (10n ** BigInt(decimals)))
 }
@@ -234,13 +248,14 @@ function calculateLegUsdVolume(
 ): string {
   const originalPrice = positivePrice(prices, blockHeight, leg.assetId)
   if (originalPrice) {
-    return calculateUsdVolume(leg.amount, originalPrice, aliases.decimals.get(leg.assetId))
+    return calculateUsdVolume(leg.amount, originalPrice, aliases.decimals.get(leg.assetId), leg.assetId)
   }
 
   return calculateUsdVolume(
     leg.amount,
     positivePrice(prices, blockHeight, leg.canonicalAssetId),
     aliases.decimals.get(leg.canonicalAssetId),
+    leg.canonicalAssetId,
   )
 }
 

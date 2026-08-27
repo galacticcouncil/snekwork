@@ -22,6 +22,26 @@ type ExistingPriceRowFixture = PriceRow & {
 }
 
 describe('volume repair helpers', () => {
+  // The two-asset price model: a leg on an unpriced asset carries zero USD, the
+  // same value the live pipeline writes for it. A leg on a PRICED asset with no
+  // indexed price is a different failure — prices are not indexed for the range —
+  // and must still be loud rather than silently zeroing real volume.
+  it('zeroes an unpriced asset\'s USD leg and still refuses to guess a priced one', () => {
+    const aliases: AliasState = { decimals: new Map([[0, 12], [1, 12], [16, 9]]) };
+    const trade: DecodedTrade = {
+      account: 'alice',
+      inputs: [{ assetId: 0, amount: 1_000_000_000_000n }],
+      outputs: [{ assetId: 16, amount: 2_000_000_000n }],
+    };
+    const prices = new Map([['123:0', '0.000001668574']]);
+
+    const { priceRows } = rowsForTrade(trade, 123, aliases, prices);
+    expect(priceRows.find(row => row.asset_id === 0)?.usd_volume_sell).toBe('0.000001668574');
+    expect(priceRows.find(row => row.asset_id === 16)?.usd_volume_buy).toBe('0.000000000000');
+
+    expect(() => rowsForTrade(trade, 123, aliases, new Map())).toThrow(/priced asset 0/);
+  });
+
   it('clears stale price volumes when a touched priced key has no corrected volume', () => {
     const existing: ExistingPriceRowFixture[] = [{
       asset_id: 5,

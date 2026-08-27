@@ -3,6 +3,8 @@ import { Database } from './db/database.js'
 import { AssetRegistryTracker } from './registry/tracker.js'
 import { PoolCompositionCache } from './pool/compositionCache.js'
 import { resolvePrices } from './price/graph.js'
+import { KsmReferenceService } from './price/referenceService.js'
+import { createClickHouseClient } from './db/client.js'
 import { config } from './config.js'
 import { validateBlockRange } from './blockRange.js'
 import type { XYKPool } from './price/types.ts'
@@ -129,6 +131,13 @@ export async function run(options: RunOptions = {}): Promise<void> {
     finalizedOnly: requireFinalizedRaw,
   })
 
+  // The KSM/USD anchor. Only an unbounded run polls CoinGecko: a bounded
+  // historical range reads the stored daily closes and nothing else, so a
+  // backfill worker makes no external calls and cannot write live rows.
+  const referenceClient = createClickHouseClient()
+  const reference = new KsmReferenceService(referenceClient, { live: options.toBlock == null })
+  await reference.start()
+
   const { height: lastProcessedBlock } = await database.connect()
 
   let startBlock = options.fromBlock
@@ -187,6 +196,12 @@ export async function run(options: RunOptions = {}): Promise<void> {
     // Previous prices for carry-forward optimization
   let previousPrices: Map<number, string> | null = null
   let lastUnpricedKey = ''
+  // The KSM anchor last written into a price row. Carry-forward skips a block
+  // whose pools did not move, which was lossless while the anchor was a constant
+  // $1 basket — it is not now: the anchor steps every UTC day (and every live
+  // poll at the head), so a quiet chain would otherwise hold the USD series at
+  // an old day's close until the next swap happened to land.
+  let lastSeedKey = ''
   // Tracking for skip rate logging
   let blocksSkipped = 0
   let blocksProcessed = 0
@@ -214,6 +229,10 @@ export async function run(options: RunOptions = {}): Promise<void> {
       currentLogInterval = liveLogInterval
       registry.setSnapshotIntervalMinutes(config.SNAPSHOT_INTERVAL_MINUTES)
     }
+
+    // Reference rows land daily (and, at the head, per poll). Re-reading them
+    // once per batch keeps a long backfill picking up days settled while it runs.
+    await reference.refreshIfStale()
 
     let historicalSnapshotStream: AsyncGenerator<HistoricalSnapshotEntry, void, unknown> | null = null
     let nextHistoricalSnapshot: IteratorResult<HistoricalSnapshotEntry, void> | null = null
@@ -269,6 +288,9 @@ export async function run(options: RunOptions = {}): Promise<void> {
       const blockHeight = block.header.height
       const blockTimestamp = toClickHouseBlockTime(block.header.timestamp, blockHeight)
       const specVersion = block.header.specVersion ?? 0
+      const seedPrices = reference.seedFor(block.header.timestamp ?? 0)
+      const seedKey = [...seedPrices].map(([assetId, price]) => `${assetId}:${price}`).join(',')
+      const anchorChanged = seedKey !== lastSeedKey
 
       // Parent hash validation (data integrity check)
       if (previousBlockHash !== null && block.header.parentHash !== previousBlockHash) {
@@ -370,7 +392,7 @@ export async function run(options: RunOptions = {}): Promise<void> {
           if (hasPoolAffectingTransfer && hasSwapEvents) break
         }
 
-        if (!hasPoolAffectingTransfer && !hasSetStorageAffectingPools && !compositionChanged && !hasSwapEvents && previousPrices !== null) {
+        if (!hasPoolAffectingTransfer && !hasSetStorageAffectingPools && !compositionChanged && !hasSwapEvents && !anchorChanged && previousPrices !== null) {
           shouldProcess = false
         } else {
           xykPools = historicalSnapshot.xykPools
@@ -423,7 +445,7 @@ export async function run(options: RunOptions = {}): Promise<void> {
           if (hasPoolAffectingTransfer && hasSwapEvents) break
         }
 
-        if (!hasPoolAffectingTransfer && !hasSetStorageAffectingPools && !compositionChanged && !hasSwapEvents && previousPrices !== null) {
+        if (!hasPoolAffectingTransfer && !hasSetStorageAffectingPools && !compositionChanged && !hasSwapEvents && !anchorChanged && previousPrices !== null) {
           shouldProcess = false
         } else {
           try {
@@ -451,11 +473,20 @@ export async function run(options: RunOptions = {}): Promise<void> {
 
       blocksProcessed++
 
+      // Only PRICED_ASSET_IDS survive resolvePrices, so the map below is already
+      // the platform's published price set: the price rows, the USD volume legs
+      // and everything derived from them can only ever value BSX and KSM. An
+      // unpriced asset's swap still writes its native volume, with a zero USD leg
+      // — calculateUsdVolume returns 0.000000000000 for an absent price rather
+      // than reaching for a substitute.
       const { prices, hopCounts, unpricedConnected } = resolvePrices(
         xykPools,
         decimals,
-        config.USD_REFERENCE_IDS,
-        { minGraphPathLiquidityUsd: config.GRAPH_MIN_PATH_LIQUIDITY_USD },
+        reference.seedFor(block.header.timestamp ?? 0),
+        {
+          minGraphPathLiquidityUsd: config.GRAPH_MIN_PATH_LIQUIDITY_USD,
+          pricedAssetIds: config.PRICED_ASSET_IDS,
+        },
       )
 
       const unpricedKey = unpricedConnected.join(',')
@@ -471,6 +502,7 @@ export async function run(options: RunOptions = {}): Promise<void> {
       }
 
       previousPrices = prices
+      lastSeedKey = seedKey
 
       // Extract volume from swap events in this block
       const volumeRows = extractVolumeFromSwaps(
@@ -542,4 +574,6 @@ export async function run(options: RunOptions = {}): Promise<void> {
     }
   })
 
+  reference.stop()
+  await referenceClient.close()
 }

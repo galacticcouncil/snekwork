@@ -8,6 +8,11 @@ const DEFAULT_MAX_OBSERVATIONS_PER_ASSET = 64;
 export interface ResolvePriceOptions {
   minGraphPathLiquidityUsd?: number | bigint
   maxObservationsPerAsset?: number
+  // The assets allowed to carry a USD price. The graph reaches far further than
+  // this — a seed propagates across every pool within MAX_HOPS — so the list is
+  // what decides which of those derived numbers is a price the platform stands
+  // behind and which is a number it refuses to publish. Omit for no restriction.
+  pricedAssetIds?: number[]
 }
 
 interface PricePathObservation {
@@ -58,15 +63,6 @@ function usdThresholdTo18(value: number | bigint | undefined): bigint {
   if (typeof value === 'bigint') return value <= 0n ? 0n : value * USD_LIQUIDITY_SCALE;
   if (!Number.isFinite(value) || value <= 0) return 0n;
   return BigInt(Math.trunc(value)) * USD_LIQUIDITY_SCALE;
-}
-
-// The USD anchor: every reference asset is held at $1 and seeds the graph.
-function buildUsdReferencePrices(referenceIds: number[]): Map<number, string> {
-  const prices = new Map<number, string>();
-  for (const id of new Set(referenceIds)) {
-    prices.set(id, '1.000000000000');
-  }
-  return prices;
 }
 
 function weightedMedianPathObservation(observations: PricePathObservation[]): PricePathObservation | null {
@@ -275,15 +271,33 @@ export function resolveGraphPricesByWeightedMedian(
 
 export function collectUnpricedConnectedAssets(
   graph: Map<number, GraphEdge[]>,
-  prices: PriceMap
+  prices: PriceMap,
+  pricedAssetIds?: number[],
 ): number[] {
-  const unpriced: number[] = [];
-  for (const assetId of graph.keys()) {
-    if (!prices.has(assetId)) {
-      unpriced.push(assetId);
-    }
+  // With a whitelist the interesting gap is a whitelisted asset the graph could
+  // not reach — BSX before the BSX/KSM pool exists, say. Reporting every asset
+  // the platform declines to price would be a per-block list of the whole book.
+  const candidates = pricedAssetIds != null
+    ? pricedAssetIds.filter(assetId => graph.has(assetId))
+    : [...graph.keys()];
+  return candidates.filter(assetId => !prices.has(assetId)).sort((a, b) => a - b);
+}
+
+/**
+ * The write boundary: drop every price the platform does not publish.
+ *
+ * `resolvePrices` runs the full graph expansion because that is how the anchor
+ * reaches BSX, but only the whitelisted ids leave this module. Nothing
+ * downstream — price rows, USD volume legs, OHLC — can then value an asset the
+ * model does not claim to price.
+ */
+export function restrictToPricedAssets(prices: PriceMap, pricedAssetIds: number[]): PriceMap {
+  const allowed = new Set(pricedAssetIds);
+  const restricted: PriceMap = new Map();
+  for (const [assetId, price] of prices) {
+    if (allowed.has(assetId)) restricted.set(assetId, price);
   }
-  return unpriced.sort((a, b) => a - b);
+  return restricted;
 }
 
 // Convert 12-decimal price string to 24-decimal bigint for BFS intermediate math
@@ -368,22 +382,27 @@ export function buildGraph(
   return graph;
 }
 
-// Resolve all asset prices denominated in USD.
+// Resolve asset prices denominated in USD.
 //
 // Strategy:
-// 1. Anchor the USD reference assets at $1
+// 1. Anchor the seed assets at their externally referenced prices. On Basilisk
+//    that is one asset — KSM, at the day's stored KSM/USD close (see
+//    src/price/reference.ts). There is no stable-coin basket to stand on: the
+//    chain's USD-quoted venues are too quiet to price anything off.
 // 2. Expand outward across the XYK graph, taking a liquidity-weighted median
-//    over every path reaching an asset
+//    over every path reaching an asset. BSX is one hop from the anchor, through
+//    the BSX/KSM pool's reserve ratio.
+// 3. Keep only the prices this platform publishes (`options.pricedAssetIds`).
 export function resolvePrices(
   xykPools: XYKPool[],
   decimals: AssetDecimals,
-  usdReferenceIds: number[] = [10],
+  seedPrices: PriceMap,
   options: ResolvePriceOptions = {},
 ): ResolvedPrices {
   const prices = new Map<number, string>();
   const hopCounts = new Map<number, number>();
 
-  for (const [assetId, price] of buildUsdReferencePrices(usdReferenceIds)) {
+  for (const [assetId, price] of seedPrices) {
     prices.set(assetId, price);
     hopCounts.set(assetId, 0);
   }
@@ -411,7 +430,12 @@ export function resolvePrices(
   }
 
   // Collect unpriced assets that have pool connections in the graph
-  const unpricedConnected = collectUnpricedConnectedAssets(graph, prices);
+  const unpricedConnected = collectUnpricedConnectedAssets(graph, prices, options.pricedAssetIds);
 
-  return { prices, hopCounts, unpricedConnected };
+  if (options.pricedAssetIds == null) return { prices, hopCounts, unpricedConnected };
+
+  const published = restrictToPricedAssets(prices, options.pricedAssetIds);
+  const publishedHops = new Map<number, number>();
+  for (const assetId of published.keys()) publishedHops.set(assetId, hopCounts.get(assetId) ?? 0);
+  return { prices: published, hopCounts: publishedHops, unpricedConnected };
 }

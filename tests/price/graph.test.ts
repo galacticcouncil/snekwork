@@ -48,9 +48,14 @@ describe('price24ToString', () => {
   });
 });
 
+// The graph tests below exercise expansion mechanics, so they seed a synthetic
+// $1 anchor. Basilisk's real seed is a single asset — KSM at the day's stored
+// reference price — and is covered in its own describe further down.
+const usdSeed = (ids: number[]): PriceMap => new Map(ids.map(id => [id, '1.000000000000']));
+
 describe('resolvePrices', () => {
   it('seeds every USD reference at $1', () => {
-    const { prices } = resolvePrices([], new Map([[10, 6], [22, 6]]), [10, 22]);
+    const { prices } = resolvePrices([], new Map([[10, 6], [22, 6]]), usdSeed([10, 22]));
 
     expect(prices.size).toBe(2);
     expect(prices.get(10)).toBe('1.000000000000');
@@ -58,7 +63,7 @@ describe('resolvePrices', () => {
   });
 
   it('handles empty inputs gracefully while preserving the USD reference seed', () => {
-    const { prices, unpricedConnected } = resolvePrices([], new Map([[10, 6]]), [10]);
+    const { prices, unpricedConnected } = resolvePrices([], new Map([[10, 6]]), usdSeed([10]));
 
     expect(prices.size).toBe(1);
     expect(prices.get(10)).toBe('1.000000000000');
@@ -73,7 +78,7 @@ describe('resolvePrices', () => {
     ];
     const decimals = new Map<number, number>([[2, 12], [4, 12], [10, 6]]);
 
-    const { prices } = resolvePrices(xykPools, decimals, [10]);
+    const { prices } = resolvePrices(xykPools, decimals, usdSeed([10]));
 
     expect(prices.has(2)).toBe(true);
     expect(prices.has(4)).toBe(true);
@@ -98,7 +103,7 @@ describe('resolvePrices', () => {
       ...Array.from({ length: 15 }, (_, i) => [100 + i, 12] as [number, number]),
     ]);
 
-    const { prices } = resolvePrices(xykPools, decimals, [10]);
+    const { prices } = resolvePrices(xykPools, decimals, usdSeed([10]));
 
     // USDT(10) + assets 100, 101, 102
     expect(prices.size).toBe(4);
@@ -115,7 +120,7 @@ describe('resolvePrices', () => {
     ];
     const decimals = new Map<number, number>([[10, 6], [2, 12]]);
 
-    const { prices, hopCounts } = resolvePrices(xykPools, decimals, [10]);
+    const { prices, hopCounts } = resolvePrices(xykPools, decimals, usdSeed([10]));
 
     expect(prices.get(10)).toBe('1.000000000000');
     expect(hopCounts.get(10)).toBe(0);
@@ -131,7 +136,7 @@ describe('resolvePrices', () => {
     ];
     const decimals = new Map<number, number>([[10, 6], [99, 12]]);
 
-    const { prices } = resolvePrices(xykPools, decimals, [10]);
+    const { prices } = resolvePrices(xykPools, decimals, usdSeed([10]));
 
     expect(parseFloat(prices.get(99)!)).toBeCloseTo(5, 5);
   });
@@ -145,7 +150,7 @@ describe('resolvePrices', () => {
     ];
     const decimals = new Map<number, number>([[10, 6], [50, 18], [60, 18]]);
 
-    const { prices } = resolvePrices(xykPools, decimals, [10]);
+    const { prices } = resolvePrices(xykPools, decimals, usdSeed([10]));
 
     const assetAPrice = parseFloat(prices.get(50)!);
     const assetBPrice = parseFloat(prices.get(60)!);
@@ -174,7 +179,7 @@ describe('resolvePrices', () => {
       [1000081, 18],
     ]);
 
-    const { prices } = resolvePrices(xykPools, decimals, [10], { minGraphPathLiquidityUsd: 12_000 });
+    const { prices } = resolvePrices(xykPools, decimals, usdSeed([10]), { minGraphPathLiquidityUsd: 12_000 });
 
     expect(prices.get(10)).toBe('1.000000000000');
     expect(prices.has(1000081)).toBe(false);
@@ -189,7 +194,7 @@ describe('resolvePrices', () => {
     ];
     const decimals = new Map<number, number>([[10, 12], [100, 12], [101, 12], [102, 12]]);
 
-    const { hopCounts } = resolvePrices(xykPools, decimals, [10]);
+    const { hopCounts } = resolvePrices(xykPools, decimals, usdSeed([10]));
 
     expect(hopCounts.get(10)).toBe(0);
     expect(hopCounts.get(100)).toBe(1);
@@ -203,7 +208,7 @@ describe('resolvePrices', () => {
     ];
     const decimals = new Map<number, number>([[10, 6], [500, 12], [501, 12]]);
 
-    const { prices, unpricedConnected } = resolvePrices(xykPools, decimals, [10]);
+    const { prices, unpricedConnected } = resolvePrices(xykPools, decimals, usdSeed([10]));
 
     expect(prices.get(10)).toBe('1.000000000000');
     expect(unpricedConnected).toEqual([500, 501]);

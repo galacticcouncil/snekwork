@@ -78,6 +78,22 @@ CREATE TABLE IF NOT EXISTS price_data.daily_chain_identity_counts_v2 (`kind` Low
 CREATE TABLE IF NOT EXISTS price_data.event_asset_refs (`asset_id` UInt32, `event_name` LowCardinality(String), `block_height` UInt32 CODEC(T64, LZ4), `event_index` UInt32 CODEC(T64, LZ4), `extrinsic_index` Nullable(UInt32), `block_timestamp` DateTime CODEC(T64, LZ4), `ingested_at` DateTime) ENGINE = ReplacingMergeTree(ingested_at) PARTITION BY toYYYYMM(block_timestamp) ORDER BY (asset_id, event_name, block_height, event_index) SETTINGS index_granularity = 2048;
 CREATE TABLE IF NOT EXISTS price_data.governance_vote_calls (`pallet` LowCardinality(String), `ref_index` UInt32, `block_height` UInt32, `extrinsic_index` Nullable(UInt32), `call_address` String, `block_timestamp` DateTime, `call_name` LowCardinality(String), `who` String, `vote_kind` LowCardinality(String), `vote_byte` UInt16, `balance` String, `aye` String, `nay` String, `abstain` String, `success` UInt8, `ingested_at` DateTime) ENGINE = ReplacingMergeTree(ingested_at) PARTITION BY tuple() ORDER BY (pallet, ref_index, block_height, ifNull(extrinsic_index, 4294967295), call_address) SETTINGS index_granularity = 1024;
 CREATE TABLE IF NOT EXISTS price_data.indexer_state (`id` String, `last_block` UInt32, `updated_at` DateTime64(3) DEFAULT now64(3)) ENGINE = ReplacingMergeTree(updated_at) ORDER BY id SETTINGS index_granularity = 8192;
+-- The KSM/USD reference: the only external price this platform stores, and the
+-- root of both USD prices it publishes (KSM directly, BSX through the BSX/KSM
+-- XYK pool). One row per UTC day per grain:
+--   grain='close' — the settled close of a day that has ENDED. Written once by
+--     the backfill and never rewritten, so replaying an old block range values
+--     it identically forever. Source is 'coingecko' inside the free API's
+--     365-day history limit and 'binance' (KSMUSDT daily klines) before it.
+--   grain='live'  — the current day's intraday poll ('coingecko-live'), replaced
+--     in place every cycle. Provisional: consulted only for blocks inside the
+--     live window (src/price/reference.ts), never for settled history.
+-- Keeping the grains as separate rows is what makes that guarantee structural —
+-- a live poll has no key under which it could overwrite a settled close, and a
+-- settled close does not depend on a replacement having merged. `usd_price`
+-- carries the Decimal(38, 12) scale of price_data.prices, so the anchor reaches
+-- the written price without a float conversion anywhere in between.
+CREATE TABLE IF NOT EXISTS price_data.ksm_usd_reference (`day` Date, `grain` LowCardinality(String), `usd_price` Decimal(38, 12), `source` LowCardinality(String), `ingested_at` DateTime DEFAULT now()) ENGINE = ReplacingMergeTree(ingested_at) ORDER BY (day, grain) SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS price_data.liquidity_activity (`block_height` UInt32, `event_index` UInt32, `extrinsic_index` Nullable(UInt32), `block_timestamp` DateTime, `event_name` LowCardinality(String), `who` String, `asset_id` UInt32, `amount` String, `amount_a` String, `asset_b` UInt32, `pool_account` String, `asset_refs` Array(UInt32), `ingested_at` DateTime) ENGINE = ReplacingMergeTree(ingested_at) PARTITION BY toYYYYMM(block_timestamp) ORDER BY (block_height, event_index) SETTINGS index_granularity = 4096;
 CREATE TABLE IF NOT EXISTS price_data.multisig_call_activity (`block_height` UInt32, `extrinsic_index` Nullable(UInt32), `call_address` String, `block_timestamp` DateTime, `call_name` LowCardinality(String), `args_json` String, `ingested_at` DateTime) ENGINE = ReplacingMergeTree(ingested_at) PARTITION BY toYYYYMM(block_timestamp) ORDER BY (block_height, ifNull(extrinsic_index, 4294967295), call_address) SETTINGS index_granularity = 256;
 CREATE TABLE IF NOT EXISTS price_data.multisig_event_activity (`block_height` UInt32, `event_index` UInt32, `extrinsic_index` Nullable(UInt32), `block_timestamp` DateTime, `event_name` LowCardinality(String), `multisig` String, `actor` String, `call_hash` String, `timepoint_height` UInt32, `timepoint_index` UInt32, `has_timepoint` UInt8, `result_ok` Nullable(UInt8), `result_error_json` Nullable(String), `ingested_at` DateTime) ENGINE = ReplacingMergeTree(ingested_at) PARTITION BY toYYYYMM(block_timestamp) ORDER BY (multisig, event_name, block_height, event_index) SETTINGS index_granularity = 256;
