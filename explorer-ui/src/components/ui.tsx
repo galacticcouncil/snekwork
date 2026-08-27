@@ -227,7 +227,7 @@ export function Ago({ ts, now }: { ts: string; now: number }) {
 
 // When something happened, on any surface that shows a single moment: the
 // relative time, linked to what caused it — the extrinsic when there was one,
-// else the block, because a block hook (a referendum concluding, a DCA the
+// else the block, because a block hook (a referendum concluding, something the
 // scheduler ran, an XCM arrival) is not an extrinsic. Either target reaches the
 // block, so a detail page carrying a moment needs no block row of its own.
 export interface Moment {
@@ -619,27 +619,17 @@ export function tagMemberSuffix(tag: Pick<ResolvedTag, 'memberCount'>, address: 
 // `noFocus` (here and on AddrPill) takes the link out of the tab order — for
 // pills inside an aria-hidden region, where a tab stop would land keyboard focus
 // on content assistive tech cannot see.
-export function UserTagPill({ tag, address, noCopy, noMemberSuffix, noFocus, to, isContract }: { tag: ResolvedTag; address: string; noCopy?: boolean; noMemberSuffix?: boolean; noFocus?: boolean; to?: string; isContract?: boolean }) {
+export function UserTagPill({ tag, address, noCopy, noMemberSuffix, noFocus, to }: { tag: ResolvedTag; address: string; noCopy?: boolean; noMemberSuffix?: boolean; noFocus?: boolean; to?: string }) {
   return (
     <span className="addr-wrap">
       <Link to={to ?? paths.tag(tag.id)} tabIndex={noFocus ? -1 : undefined} className="addr-pill" title={to ? `${tag.name} — open account ${address}` : 'Tagged group — open combined view'}>
         <TagIcon icon={tag.icon} title={tag.name} />
         <span className="tag" style={tag.color ? { color: tag.color } : undefined}>{tag.name}</span>
         {!noMemberSuffix && tagMemberSuffix(tag, address)}
-        <ContractGlyph show={isContract} />
       </Link>
       {!noCopy && <Copy text={address} />}
     </span>
   )
-}
-
-// Subtle "this address holds code" marker inside account pills — its own child
-// so it survives every label branch (tag pill, module, identity, bare
-// address). Non-interactive by design: the global button reset would swallow a
-// nested control, and the account page's Contract card is one click away anyway.
-export function ContractGlyph({ show }: { show?: boolean }) {
-  if (!show) return null
-  return <span className="contract-glyph mono" title="Smart contract">{'</>'}</span>
 }
 
 export function AddrPill({ account, full, noCopy, noTag, noFocus, tagToAccount }: { account: AccountRef; full?: boolean; noCopy?: boolean; noTag?: boolean; noFocus?: boolean; tagToAccount?: boolean }) {
@@ -651,14 +641,13 @@ export function AddrPill({ account, full, noCopy, noTag, noFocus, tagToAccount }
   // `tagToAccount` keeps the name but points the link at the account — for a surface
   // that is about this one account rather than the company it keeps.
   const resolved = noTag ? null : resolveTag(account)
-  if (resolved) return <UserTagPill tag={resolved} address={account.address} noCopy={noCopy} noFocus={noFocus} to={tagToAccount ? accountHref(account) : undefined} isContract={account.isContract} />
+  if (resolved) return <UserTagPill tag={resolved} address={account.address} noCopy={noCopy} noFocus={noFocus} to={tagToAccount ? accountHref(account) : undefined} />
   const mod = moduleName(account.accountId)
   if (mod) {
     return (
       <span className="addr-wrap">
         <Link to={accountHref(account)} tabIndex={tabIndex} className="addr-pill" title={account.address}>
           <span className="emoji">⚙️</span><span className="a">{mod}</span>
-          <ContractGlyph show={account.isContract} />
         </Link>
       </span>
     )
@@ -673,28 +662,6 @@ export function AddrPill({ account, full, noCopy, noTag, noFocus, tagToAccount }
           <AccountEmoji account={account} title="identity" />
           <span className="tag">{identity.display}</span>
           {identity.verified && <span className="id-verified" title="Verified identity">✓</span>}
-          <ContractGlyph show={account.isContract} />
-        </Link>
-        {!noCopy && <Copy text={account.address} />}
-      </span>
-    )
-  }
-  // A verified contract's own name, in the slot the bare address would take —
-  // the reason a pill exists is to say WHAT this is, and "GhoToken" says more
-  // than 0x531a…f99a. It sits below identity deliberately: that
-  // name the actor, this names the code. Never the ✓ (registrar-verified
-  // identities only), and always with the address tail, because contract names
-  // are not unique — sixteen addresses on this chain are called ERC1967Proxy,
-  // and without the suffix every one of them would render the same pill (the
-  // same reasoning as tagMemberSuffix above).
-  if (account.contractName) {
-    return (
-      <span className="addr-wrap">
-        <Link to={accountHref(account)} tabIndex={tabIndex} className="addr-pill" title={`${account.contractName} — ${account.address}`}>
-          <AccountEmoji account={account} title="identity" />
-          <span className="tag">{account.contractName}</span>
-          <span className="tag-member-suffix mono">·{account.address.slice(-3)}</span>
-          <ContractGlyph show={account.isContract} />
         </Link>
         {!noCopy && <Copy text={account.address} />}
       </span>
@@ -705,7 +672,6 @@ export function AddrPill({ account, full, noCopy, noTag, noFocus, tagToAccount }
       <Link to={accountHref(account)} tabIndex={tabIndex} className="addr-pill" title={account.address}>
         <AccountEmoji account={account} title="identity" />
         <span className="a mono"><ShortAddr addr={account.address} full={full} /></span>
-        <ContractGlyph show={account.isContract} />
       </Link>
       {!noCopy && <Copy text={account.address} />}
     </span>
@@ -734,11 +700,10 @@ export function FailureReasonRow({ reason }: { reason: FailureReason }) {
   </>
 }
 
-// The venue one hop of a route trades through. Only Stableswap names a pool, so
-// the id is appended only where there is one. `to` links the badge to the
-// venue's pool page (nested links stay clickable inside rowNav rows, same as
-// every other pill). A named pool id (stableswap share asset / XYK LP token)
-// has /pool/:id; anything else has no pool page.
+// The venue one hop of a route trades through; the pool id is appended where
+// the hop names one. `to` links the badge to the venue's pool page (nested
+// links stay clickable inside rowNav rows, same as every other pill). A named
+// pool id (the XYK LP token) has /pool/:id; anything else has no pool page.
 export function poolHref(poolId?: number | null): string | undefined {
   return poolId != null ? paths.pool(poolId) : undefined
 }

@@ -7,13 +7,12 @@ test('trade detail renders asset chips for route, fees, price, and execution val
   await expect(page.getByText('(1:1)')).toHaveCount(0)
 
   const routeTable = page.locator('table.tbl').filter({ hasText: 'Pool fee' })
-  const aaveRow = routeTable.locator('tbody tr').filter({ hasText: 'Aave' })
-  await expect(aaveRow.locator('[data-label="In"] .asset-chip')).toContainText('USDT')
-  await expect(aaveRow.locator('[data-label="Out"] .asset-chip')).toContainText('aUSDT')
-  await expect(aaveRow.locator('[data-label="In"]')).toContainText('USDT')
-  await expect(aaveRow.locator('[data-label="Out"]')).toContainText('aUSDT')
+  // The first hop has no amounts of its own — the chips still name both legs.
+  const firstHop = routeTable.locator('tbody tr').first()
+  await expect(firstHop.locator('[data-label="In"] .asset-chip')).toContainText('USDT')
+  await expect(firstHop.locator('[data-label="Out"] .asset-chip')).toContainText('aUSDT')
 
-  const poolFee = routeTable.locator('tbody tr').filter({ hasText: 'Omnipool' }).locator('[data-label="Pool fee"]')
+  const poolFee = routeTable.locator('tbody tr').nth(1).locator('[data-label="Pool fee"]')
   await expect(poolFee.locator('.asset-chip')).toContainText('DOT')
   await expect(poolFee.locator('.mono')).not.toHaveText('—')
 
@@ -33,7 +32,7 @@ test('trade detail renders asset chips for route, fees, price, and execution val
   await expect(executionValue(/^Min received \(limit\)$/).locator('.asset-chip')).toContainText('DOT')
   await expect(executionValue(/^Received$/).locator('.asset-chip')).toContainText('DOT')
 
-  await aaveRow.locator('[data-label="In"] .asset-chip').hover()
+  await firstHop.locator('[data-label="In"] .asset-chip').hover()
   await expect(page.locator('.hovercard')).toContainText('USDT')
   await expect(page.locator('.hovercard')).toContainText('Tether USD')
 })

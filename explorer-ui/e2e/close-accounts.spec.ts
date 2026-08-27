@@ -12,8 +12,8 @@ function detailFor(address: string) {
   return {
     input: address, kind: evm ? 'evm' : 'ss58', accountId, emoji: '🦊', evmAddress: evm ? address : null,
     ss58: evm ? ACCOUNT : address, ss58Polkadot: evm ? ACCOUNT : address,
-    tag: null, identity: null, relatedAccountIds: [accountId], aliases: [], balances: [], portfolioUsd: 0,
-    moneyMarket: [], liquidityPositions: [], activeDcas: [], proxy: null, multisig: null,
+    tag: null, identity: null, relatedAccountIds: [accountId], balances: [], topAssets: [], portfolioUsd: 0,
+    liquidityPositions: [], proxy: null, multisig: null,
     multisigMemberships: [], portfolioSeries: [], portfolioDates: [], balanceHistory: [],
   }
 }

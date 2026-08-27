@@ -25,7 +25,7 @@ describe('the name filters', () => {
     expect(call.placeholder).toBe('Call name')
     expect(event.placeholder).toBe('Event name')
     expect(call.options).toEqual(nameFilterOptions(names.calls))
-    expect(call.options!.map(o => o.value)).toContain('Omnipool.sell')
+    expect(call.options!.map(o => o.value)).toContain('XYK.sell')
     expect(event.options!.map(o => o.value)).toContain('Referenda.Submitted')
     // Both accept a typed value that is not in the list.
     expect(call.freeText).toBe(true)
@@ -42,19 +42,19 @@ describe('the name filters', () => {
   })
 
   it('shows a value the option list does not contain, so a partial filter reads back', () => {
-    const html = renderToStaticMarkup(<Combo value="omnipool" options={nameFilterOptions(names.calls)} freeText onChange={() => {}} placeholder="Call name" />)
-    expect(html).toContain('value="omnipool"')
+    const html = renderToStaticMarkup(<Combo value="xyk" options={nameFilterOptions(names.calls)} freeText onChange={() => {}} placeholder="Call name" />)
+    expect(html).toContain('value="xyk"')
     // A picked full name reads back the same way.
-    const picked = renderToStaticMarkup(<Combo value="Omnipool.sell" options={nameFilterOptions(names.calls)} freeText onChange={() => {}} placeholder="Call name" />)
-    expect(picked).toContain('value="Omnipool.sell"')
+    const picked = renderToStaticMarkup(<Combo value="XYK.sell" options={nameFilterOptions(names.calls)} freeText onChange={() => {}} placeholder="Call name" />)
+    expect(picked).toContain('value="XYK.sell"')
   })
 
   it('renders inside the filter zone with its value and a way to clear it', () => {
     const html = renderToStaticMarkup(
-      <FilterZone fields={extrinsicFilterFields(false, names.calls)} values={{ call: 'Omnipool.sell' }} onChange={() => {}} onClear={() => {}} />,
+      <FilterZone fields={extrinsicFilterFields(false, names.calls)} values={{ call: 'XYK.sell' }} onChange={() => {}} onClear={() => {}} />,
     )
     expect(html).toContain('class="combo"')
-    expect(html).toContain('value="Omnipool.sell"')
+    expect(html).toContain('value="XYK.sell"')
     // The filter count and the Clear button are the zone's own, and both still
     // see the field: nothing about the control changed except how it is filled.
     expect(html).toContain('class="fb"')

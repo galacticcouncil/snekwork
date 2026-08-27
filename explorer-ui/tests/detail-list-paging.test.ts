@@ -4,10 +4,8 @@ import {
 } from '../src/utils/activityPaging'
 
 // Every list on an account/tag detail page pages against an exact row total for the
-// filters it is showing. The predecessor of this behaviour sized the activity pager
-// from a sum of overlapping per-category counts — a DCA execution IS a swap, so
-// trades 588 + dca 584 both counted the same 613 trade rows and the pager offered 49
-// pages of a 26-page feed, pages 26-48 all empty.
+// filters it is showing — never a sum of per-category counts, which double-counts
+// any row two categories both claim and offers pages the feed cannot fill.
 describe('page count', () => {
   it('is the total divided into pages, remainder included', () => {
     expect(pageCount(647)).toBe(26)

@@ -93,26 +93,10 @@
 
   /* Category layer — see the block below the light theme. */
   --cat-trade: #FF8A45;
-  --cat-trade-dca: #FFC26B;
-  --cat-trade-fill: #D2551A;
-  --cat-trade-place: #C9855F;
-
-  --cat-borrow: #F7BF06;
-  --cat-borrow-withdraw: #FFE066;
-  --cat-borrow-lend: #C9A227;
-  --cat-borrow-repay: #9DA83A;
-  --cat-borrow-claim: #C8B98A;
-
   --cat-liquidity: #6FB4FF;
   --cat-liquidity-remove: #3F80C4;
   --cat-liquidity-create: #A9D3F5;
   --cat-liquidity-claim: #4FB2DE;
-
-  --cat-stake: #CB79F8;
-  --cat-stake-exit: #7E5BB0;
-  --cat-stake-reward: #9D8FE0;
-  --cat-stake-migrate: #C44DD8;
-  --cat-stake-cancel: #9C7BB8;
 
   --cat-transfer: var(--neutral);
   --cat-xcm: var(--neutral-cool);
@@ -179,26 +163,10 @@
   /* Category layer — its own values here; the shared --sky/--amber/--lavender/--red
      the valence layer uses sit around 2.5-3.7:1 as badge text on white. */
   --cat-trade: #A04508;
-  --cat-trade-dca: #BC6E22;
-  --cat-trade-fill: #5A2401;
-  --cat-trade-place: #96694A;
-
-  --cat-borrow: #7A5D00;
-  --cat-borrow-withdraw: #9C7D14;
-  --cat-borrow-lend: #4F4A12;
-  --cat-borrow-repay: #6E7A2A;
-  --cat-borrow-claim: #8F8460;
-
   --cat-liquidity: #1F60A4;
   --cat-liquidity-remove: #123E6B;
   --cat-liquidity-create: #4E86BE;
   --cat-liquidity-claim: #2E7C9E;
-
-  --cat-stake: #6B3FAE;
-  --cat-stake-exit: #3E2A63;
-  --cat-stake-reward: #7B6FC4;
-  --cat-stake-migrate: #A02BB5;
-  --cat-stake-cancel: #7A5C90;
 
   --cat-transfer: var(--neutral);
   --cat-xcm: var(--neutral-cool);
@@ -256,7 +224,7 @@ a { color: inherit; text-decoration: none; }
    gets its own equivalent reset below instead. The :where() wrapper matters:
    a bare `:not(.row-handle)` would raise this selector's specificity from
    (0,0,1) to (0,1,1) — enough to start beating every OTHER button's own
-   single-class override of this same reset (e.g. .acct-picker-row), since
+   single-class override of this same reset, since
    :where()'s zero-specificity contribution is exactly what keeps `:not()`'s
    specificity at the plain type selector's (0,0,1) it had before. */
 button:not(:where(.row-handle)) { all: unset; box-sizing: border-box; cursor: pointer; font-family: inherit; }
@@ -344,31 +312,19 @@ svg { display: block; }
 .drawer-sec { padding: 10px 10px; border-bottom: 1px solid var(--separator); }
 .drawer-sec:last-child { border-bottom: 0; }
 .drawer-sec .sec-lbl { font-family: 'GeistMono'; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-low); padding: 6px 12px 8px; }
-/* .drawer-row is the button equivalent of a plain nav `a` above (Log out has
-   no route to link to), reset to the same look. */
-.drawer-sec > a, .drawer-sec > button.drawer-row {
+.drawer-sec > a {
   display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; text-align: left;
   padding: 11px 12px; border-radius: 10px; font-size: 15px; font-weight: 500; color: var(--text-medium);
   background: transparent; border: none; font-family: inherit; cursor: pointer;
   transition: color 130ms, background 130ms;
 }
-.drawer-sec > a:hover, .drawer-sec > button.drawer-row:hover { color: var(--text-high); background: var(--panel-hover); }
+.drawer-sec > a:hover { color: var(--text-high); background: var(--panel-hover); }
 .drawer-sec > a.active { color: var(--accent); background: var(--accent-soft); }
-.drawer-connect-btn { width: 100%; justify-content: center; height: 40px; }
 /* bottom drawer section: the live + theme controls (moved out of the topbar
    on mobile) sit side by side as regular pills */
 .drawer-sec.drawer-controls { display: flex; align-items: center; gap: 10px; padding: 14px 12px; }
 
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-.net-chip {
-  display: inline-flex; align-items: center; gap: 7px;
-  height: 34px; padding: 0 12px; border-radius: 9999px;
-  background: var(--panel); border: 1px solid var(--border);
-  font-family: 'GeistMono'; font-size: 11px; color: var(--text-medium);
-  letter-spacing: 0.02em;
-}
-.net-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1.8s ease-in-out infinite; }
-@keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.4;} }
 .theme-toggle {
   width: 34px; height: 34px; padding: 0; justify-content: center;
   display: inline-flex; align-items: center;
@@ -380,48 +336,11 @@ svg { display: block; }
 .theme-toggle .ic-moon { display: none; }
 .theme-toggle svg { width: 16px; height: 16px; }
 
-/* wallet-login: Connect button / logged-in account control */
-.connect-btn { color: var(--sky); border-color: color-mix(in srgb, var(--sky) 45%, var(--border)); }
-.connect-btn:hover { color: var(--text-high); border-color: var(--sky); background: var(--panel-hover); }
-.account-control { position: relative; }
-.account-btn {
-  display: inline-flex; align-items: center; gap: 8px; height: 34px;
-  padding: 0 12px 0 4px; border-radius: 9999px;
-  background: var(--panel); border: 1px solid var(--border); color: var(--text-medium);
-  font-size: 12.5px; transition: color 150ms, background 150ms;
-}
-.account-btn:hover { color: var(--text-high); background: var(--panel-hover); }
-/* Topbar's compact avatar: its own class, NOT .acct-avatar — that name belongs
-   to the account page's 60px header avatar later in this file, and sharing it
-   let the larger rule win the cascade (the button ballooned to 60px). */
-.topbar-avatar {
-  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; overflow: hidden;
-  display: inline-flex; align-items: center; justify-content: center; font-size: 12px;
-  background: var(--bg-elev); border: 1px solid var(--border);
-}
-/* The account button's label is chrome, not a pill: plain upright text (the
-   italic self-authored voice applies only inside .addr-pill / hover titles). */
-.account-label { color: var(--text-high); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.profile-name { color: var(--text-high); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .invite-badge {
   display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px;
   padding: 0 4px; border-radius: 9999px; background: var(--accent); color: var(--accent-on);
   font-family: 'GeistMono'; font-size: 10px; line-height: 1; font-style: normal;
 }
-.account-menu {
-  position: absolute; top: calc(100% + 8px); right: 0; z-index: 120;
-  min-width: 190px; padding: 6px; display: flex; flex-direction: column; gap: 2px;
-  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 14px;
-  box-shadow: 0 16px 40px rgba(0,0,0,0.45);
-}
-.account-menu a, .account-menu button.menu-row {
-  display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; text-align: left;
-  padding: 9px 12px; border-radius: 9px; font-size: 13px; color: var(--text-medium);
-  background: transparent; border: none; font-family: inherit; cursor: pointer;
-  transition: color 130ms, background 130ms;
-}
-.account-menu a:hover, .account-menu button.menu-row:hover { color: var(--text-high); background: var(--panel-hover); }
-
 /* live-refresh toggle */
 
 /* collapsible filter zone */
@@ -472,7 +391,7 @@ svg { display: block; }
   .topbar-right { margin-left: auto; }
   /* The bell stays: it is the only route to notifications (no drawer/menu
      row), so on mobile it sits directly left of the burger. */
-  .topbar-right .theme-toggle, .topbar-right .account-control, .topbar-right .connect-btn { display: none; }
+  .topbar-right .theme-toggle { display: none; }
   .topbar-search { flex: 1 1 auto; margin-left: 0; }
   .topbar-search.hidden { display: none; }
   /* Full-bleed dropdown: unposition the wrap so the absolute dropdown anchors
@@ -630,7 +549,6 @@ svg { display: block; }
    sibling's (all `auto`, i.e. 0) makes THIS panel — the one actually hosting
    the open dropdown — win that paint order instead, for exactly as long as
    the dropdown is open.  */
-.panel:has(.acct-picker-results) { overflow: visible; position: relative; z-index: 2; }
 
 /* ============ TABLE ============ */
 .panel:has(> .tbl) { overflow-x: auto; }
@@ -651,13 +569,6 @@ svg { display: block; }
 .tbl tbody tr { transition: background 120ms; }
 .tbl tbody tr.clickable { cursor: pointer; }
 .tbl tbody tr.clickable:hover { background: var(--panel-hover); }
-/* Drag-reorderable rows (Lists.tsx's "Your lists"): the dedicated .row-handle
-   button below is the drag source, not the row — dragging it dims the whole
-   row so the thing actually moving reads clearly, and a hovered drop target
-   outlines. No transition on either state, so both read correctly under
-   prefers-reduced-motion without a separate override. */
-.tbl tbody tr.row-dragging { opacity: 0.5; }
-.tbl tbody tr.row-drag-over { outline: 2px solid var(--sky); outline-offset: -2px; }
 /* The handle itself: muted like other secondary affordances (.muted), a grab
    cursor its only decoration — same static, transition-free recipe as
    .tag-member-chip-draggable's cursor swap, so it also reads correctly under
@@ -719,7 +630,6 @@ svg { display: block; }
    check. Sized and padded to fit a 1440px window without the panel scrolling
    sideways — a column hidden off the right edge with no visible scrollbar reads
    as missing, not as scrollable. */
-.contracts-tbl { min-width: 1180px; }
 /* The Contract cell gets the width, because the name is what the row is for:
    at 200px "ERC1967Proxy" truncated to "ERC1967Pro…" and the verification check
    wrapped onto a second line, doubling the row height. Laid out as a clipped flex
@@ -730,33 +640,25 @@ svg { display: block; }
    need ~222px, and a deployer's short-address pill ~113px. Splitting the same
    388px this way keeps the deployer's highlighted last-three visible, which is
    the part that identifies it. */
-.contracts-tbl td[data-label="Contract"] { max-width: 240px; }
-.contracts-tbl td[data-label="Deployer"] { max-width: 148px; }
 /* The one-line layout lives on an inner span, NEVER on the `td`: `display: flex`
    on a table cell takes it out of table layout, so the browser wraps it in an
    anonymous cell and the whole row grew from 47px to 95px. */
 @media (min-width: 721px) {
-  .contracts-tbl .cell-inline { display: flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; overflow: hidden; }
   .contracts-tbl .cell-inline .addr-wrap { min-width: 0; }
 }
 /* Destroyed contracts stay listed (history is addressable) but read as gone. */
-.contracts-tbl tr.contract-destroyed td { opacity: 0.55; }
 /* Verification as a bare check: the match kind is in the cell's title, so the
    column costs one glyph instead of a chip. Sized like the id-verified tick. */
-.ok-check { color: var(--green); font-weight: 600; cursor: help; }
 /* Last active is always one relative duration, so it never needs to wrap. Created
    carries "first seen" for the 16 factory-attributed contracts, which is the
    honest label and is allowed its second line — bounded here, so one factory
    child adds a line instead of tripling the row. */
-.contracts-tbl td[data-label="Last active"] { white-space: nowrap; }
-.contracts-tbl td[data-label="Created"] { max-width: 118px; }
 /* Below 720px each cell is a card line with a floated ::before label, so the
    inner row must not become a flex container there (see the media query above);
    it collapses back to plain inline content. */
 @media (max-width: 720px) { .contracts-tbl .cell-inline { display: inline; } }
 /* The check sits with the name inside the Contract cell rather than owning a
    column, and never shrinks away with the pill. */
-.contracts-tbl td[data-label="Contract"] .ok-check { flex-shrink: 0; }
 
 /* compact dashboard list rows */
 .mini-row { display: flex; align-items: center; gap: 12px; padding: 11px 18px; border-bottom: 1px solid var(--separator); cursor: pointer; transition: background 120ms; }
@@ -1025,7 +927,6 @@ svg { display: block; }
 .hovercard .hc-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
 .hovercard .hc-emoji { width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; background: var(--panel); border: 1px solid var(--border); }
 .hovercard .hc-title { font-family: 'Gazpacho', serif; font-weight: 500; font-size: 16px; }
-.hovercard .hc-title .profile-name { color: var(--amber); font-style: italic; }
 .hovercard .hc-sub { font-size: 11px; color: var(--text-medium); }
 /* Every tag association (not just the priority winner) as a row of compact
    chips, so the card doubles as a "which of my lists is this in" lookup.
@@ -1034,7 +935,6 @@ svg { display: block; }
 .hovercard .hc-tags .addr-pill { font-size: 11px; gap: 5px; }
 .hovercard .hc-tags .emoji { width: 16px; height: 16px; font-size: 10px; }
 .hovercard .hc-tags-more { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 9999px; font-family: 'GeistMono'; font-size: 10.5px; color: var(--text-low); background: var(--panel); border: 1px solid var(--border); }
-.hovercard .hc-identity { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; color: var(--green); margin-bottom: 10px; }
 .hovercard .hc-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-medium); padding: 4px 0; }
 .hovercard .hc-row .mono { font-family: 'GeistMono'; color: var(--text-high); }
 .hovercard .hc-route { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--separator); display: flex; flex-direction: column; gap: 7px; }
@@ -1044,11 +944,6 @@ svg { display: block; }
 .hovercard .hc-hop .badge { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hovercard .hc-hop-assets { display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; }
 .hovercard .hc-hop-assets .trade-leg { gap: 5px; min-width: 0; }
-.hovercard .hc-bals { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--separator); display: flex; flex-direction: column; gap: 6px; }
-.hovercard .hc-bal { display: flex; align-items: center; gap: 7px; font-size: 12px; }
-.hovercard .hc-bal .muted { margin-left: auto; }
-.hovercard .hc-go { display: inline-flex; align-items: center; gap: 4px; margin-top: 12px; font-family: 'GeistMono'; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--sky); }
-.hovercard .hc-go:hover { color: var(--text-high); }
 .addr-pill, .asset-chip { cursor: pointer; }
 
 /* address pill */
@@ -1080,24 +975,7 @@ svg { display: block; }
 /* Which member of a multi-account tag this particular pill means — muted so
    the tag name stays the primary read, mono like ShortAddr's highlighted tail. */
 .tag-member-suffix { color: var(--text-low); font-family: 'GeistMono'; font-size: 0.9em; }
-/* Self-set wallet-login display name: a real, distinct hue from a curated tag's
-   lavender (amber reads as "the owner's own claim", unverified — same idea as
-   the ✓ mark staying exclusive to a registrar-checked identity), plus italics
-   so it never reads as a system/list tag at a glance. */
-.addr-pill .tag.profile-name { color: var(--amber); font-weight: 500; font-style: italic; }
-/* A list's own name (Lists.tsx's Your-lists table, and the shared
-   PublicListsPanel): plain white text, not a curated tag's lavender —
-   user-confirmed a list's name shouldn't read as if it WERE a tag. Same
-   size/weight as any other pill label; only the color changes. Specificity
-   (.addr-pill .tag.list-name, three classes) beats the plain .addr-pill .tag
-   rule above without needing !important or a reorder. */
-.addr-pill .tag.list-name { color: var(--text-high); }
 /* Underline-on-hover — the same static cue `.addr-pill:hover .a` and
-   `.tag-panel-link:hover .tag` already use elsewhere — but scoped to THIS
-   link wrapper specifically, not the shared `.addr-pill`, so a non-owned
-   public list's plain (non-clickable) `<span class="addr-pill">` wrapper
-   never shows a hover cue it can't back up with an actual navigation. */
-.list-name-link:hover .tag.list-name { text-decoration: underline; text-underline-offset: 2px; }
 .ext-site {
   padding: 1px 5px;
   border: 1px solid var(--border);
@@ -1116,10 +994,6 @@ svg { display: block; }
   border: 1px solid currentColor; background: color-mix(in srgb, currentColor 12%, transparent);
 }
 .addr-pill .id-verified { color: var(--green); font-weight: 700; font-size: 11px; }
-/* Smart-contract marker inside account pills — muted, non-interactive, same
-   weight class as the ✓ so a pill row keeps one rhythm. */
-.addr-pill .contract-glyph { color: var(--text-medium); font-size: 11px; font-weight: 500; letter-spacing: -0.5px; }
-
 /* status badge */
 .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 9999px; font-family: 'GeistMono'; font-size: 10.5px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
 .badge svg { width: 11px; height: 11px; }
@@ -1136,15 +1010,12 @@ svg { display: block; }
 .call .pallet { font-weight: 600; }
 .call .dot { color: var(--text-lowest); margin: 0 1px; }
 .call .method { color: var(--text-medium); }
-.call.omnipool .pallet { color: var(--accent); }
+.call.xyk .pallet { color: var(--accent); }
 .call.tokens .pallet, .call.balances .pallet, .call.currencies .pallet { color: var(--sky); }
 .call.xtokens .pallet, .call.polkadotxcm .pallet, .call.xcmpqueue .pallet { color: var(--lavender); }
 .call.staking .pallet { color: var(--green); }
 .call.router .pallet { color: var(--amber); }
-.call.stableswap .pallet { color: var(--lavender-deep); }
-.call.dca .pallet { color: var(--amber); }
-.call.evm .pallet { color: var(--lavender-deep); }
-.call.moneymarket .pallet { color: var(--lavender-deep); }
+.call.lbp .pallet { color: var(--lavender-deep); }
 .call.system .pallet, .call.timestamp .pallet, .call.utility .pallet { color: var(--text-medium); }
 .call.multitransactionpayment .pallet { color: var(--sky); }
 
@@ -1184,10 +1055,6 @@ svg { display: block; }
 .dl .dt { padding: 14px 18px; font-family: 'GeistMono'; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-low); border-bottom: 1px solid var(--separator); display: flex; align-items: center; }
 .dl .dd { padding: 14px 18px; border-bottom: 1px solid var(--separator); font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .dl .dd.mono { font-family: 'GeistMono'; }
-/* The per-stream breakdown under a revenue figure. `.dd` is a wrapping flex row,
-   so the basis is what puts the breakdown on its own line under the total
-   instead of trailing it as another inline item. */
-.dl .dd .revenue-streams { flex-basis: 100%; font-size: 11px; }
 .dl .dt:nth-last-child(2), .dl .dd:last-child { border-bottom: 0; }
 @media (max-width: 720px){ .dl .dt { border-bottom: 0; padding-bottom: 2px; } }
 
@@ -1218,11 +1085,7 @@ svg { display: block; }
   left: var(--ink-left, 0); width: var(--ink-width, 0);
   background: var(--accent); border-radius: 1px; pointer-events: none; }
 .tabs.ink-live::before { transition: left 260ms var(--ease-standard), width 260ms var(--ease-standard); }
-/* The security nav's anchor tabs need their own suppression: its
-   .sec-nav-link.active rule sets the accent at higher specificity than the
-   plain button selector, and without this both underline and ink render. */
-.tabs.has-ink button.active,
-.sec-section-nav .tabs.has-ink .sec-nav-link.active { border-bottom-color: transparent; }
+.tabs.has-ink button.active { border-bottom-color: transparent; }
 .tabs::-webkit-scrollbar { display: none; }
 .tabs button { padding: 10px 16px; font-size: 13px; font-weight: 500; color: var(--text-medium); border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 140ms, border-color 140ms, transform 90ms ease; }
 .tabs button { flex: 0 0 auto; }
@@ -1243,12 +1106,6 @@ svg { display: block; }
 .kv-row .kk { padding: 11px 16px; font-family: 'GeistMono'; font-size: 12px; color: var(--text-medium); display: flex; gap: 8px; align-items: center; }
 .kv-row .kk .ty { font-size: 9px; padding: 1px 5px; border-radius: 4px; background: var(--panel); color: var(--text-low); text-transform: uppercase; letter-spacing: 0.06em; }
 .kv-row .vv { padding: 11px 16px; font-family: 'GeistMono'; font-size: 12px; color: var(--text-high); word-break: break-all; }
-
-/* Verified-ABI decode blocks (extrinsic params tab, event detail, expanded
-   event rows): a chip line above a ParamsTable; spaced so a following raw
-   params table reads as a separate section. */
-.evm-decoded { margin: 0 0 14px; }
-.evm-decoded:last-child { margin-bottom: 0; }
 
 .json { font-family: 'GeistMono'; font-size: 12px; line-height: 1.7; background: var(--bg); border: 1px solid var(--separator); border-radius: 12px; padding: 16px 18px; overflow-x: auto; white-space: pre; color: var(--text-medium); }
 .json .key { color: var(--sky); }
@@ -1295,23 +1152,12 @@ svg { display: block; }
 .acct-stats .acct-bal { display: contents; }
 .acct-stats .acct-bal .lab { grid-row: 1; align-self: end; }
 .acct-stats .acct-bal .amt { grid-row: 2; align-self: start; }
-/* The value's money-market breakdown: a full-width flex row of its own below
-   the stats, right-aligned — free to run left under trading/liquidation
-   rather than wrapping inside the value's one narrow column. */
-.acct-stats-hint { flex-basis: 100%; text-align: right; margin-top: -10px; }
 .acct-bal { text-align: right; }
 .acct-bal .lab { font-family: 'GeistMono'; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-low); }
 .acct-bal .amt { font-family: 'GeistMono'; font-size: 26px; font-weight: 600; }
-.acct-bal .hint, .acct-stats-hint .hint { font-family: 'GeistMono'; font-size: 11px; color: var(--text-low); }
+.acct-bal .hint { font-family: 'GeistMono'; font-size: 11px; color: var(--text-low); }
 .acct-bal.subtle .amt { font-size: 14px; font-weight: 500; color: var(--text-medium); }
 .acct-bal.subtle .lab { font-size: 9px; color: var(--text-lowest); }
-/* A label with a roomier and a compact spelling ("Protocol revenue" / "Revenue"):
-   the wide form yields below the width where the stat row starts wrapping. */
-.acct-bal .lab-narrow { display: none; }
-@media (max-width: 720px) {
-  .acct-bal .lab-wide { display: none; }
-  .acct-bal .lab-narrow { display: inline; }
-}
 /* On phones the header stacks into two full-width rows: the identity row
    (compact inline avatar + name + address/tags, using the whole width) and,
    below it, ONE shared stats line — volumes on the left, the value on the
@@ -1358,7 +1204,6 @@ svg { display: block; }
   /* order 4: the hint row follows the stats line (default order 0 would sort
      it ahead of the ::before break above). The tighter phone row gap needs no
      extra pull-up. */
-  .acct-stats-hint { order: 4; margin-top: 0; }
 }
 
 /* progress bar (sync etc) */
@@ -1412,7 +1257,6 @@ svg { display: block; }
 .acct-meta .full .id-kind { margin-right: 4px; }
 
 /* balance source chip */
-.src-chip { font-family: 'GeistMono'; font-size: 10px; color: var(--text-medium); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 2px 7px; white-space: nowrap; }
 
 /* proxy & multisig relations (Overview cards) */
 .dl .dd.proxy-dd, .dl .dd .proxy-rel { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -1461,33 +1305,13 @@ svg { display: block; }
   .close-account-skeleton span:last-child { width: 45%; }
 }
 
-/* money market card */
-.mm-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.mm-title { font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; }
-/* inline-flex + centered items: a market-logo icon inside the note (GIGAHDX)
-   would otherwise sit on the text baseline and push the whole note upward
-   relative to the primary market's plain-text note. */
-.mm-title-note { display: inline-flex; align-items: center; gap: 4px; color: var(--text-low); font-family: 'GeistMono'; font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; }
-/* Compound selector on purpose: the generic `.ext-link` rule is declared later with
-   equal specificity, so a bare `.mm-defisim-link { margin-left: auto }` lost to its
-   `margin-left: 4px` and the link sat mid-row instead of right-aligned. */
-.ext-link.mm-defisim-link { margin-left: auto; text-transform: none; letter-spacing: 0; }
-/* Stays right-aligned once the title row wraps, so it lines up with the other
-   "Open in …" links instead of sliding under the heading on narrow screens. */
 .ext-link-row { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 /* Inside a stacked definition cell the row is the last thing in the cell, whose
    own padding already ends it — the trailing margin only made those cells read
    bottom-heavy (the verify panel's forge/hardhat blocks). */
 .dl .dd .ext-link-row { margin-bottom: 0; }
-.mm-card { background: var(--bg-elev); border: 1px solid var(--separator); border-radius: 16px; padding: 18px 20px; margin-bottom: 8px; }
-.mm-summary { display: flex; flex-wrap: wrap; gap: 28px; padding-bottom: 16px; border-bottom: 1px solid var(--separator); }
-.mm-stat { display: flex; flex-direction: column; gap: 4px; }
 .mm-stat .k { font-family: 'GeistMono'; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-low); }
 .mm-stat .v { font-family: 'GeistMono'; font-size: 18px; font-weight: 600; }
-.hf { font-family: 'GeistMono'; font-weight: 600; padding: 1px 8px; border-radius: 6px; }
-.hf.hf-ok { background: var(--green-soft); color: var(--green); }
-.hf.hf-warn { background: var(--amber-soft); color: var(--amber); }
-.hf.hf-bad { background: var(--red-soft); color: var(--red); }
 /* trade detail — route flow */
 .trade-route { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .trade-hop { display: inline-flex; align-items: center; gap: 10px; }
@@ -1495,57 +1319,6 @@ svg { display: block; }
 .hop-arrow svg { width: 26px; height: 12px; }
 .hop-pool { font-family: 'GeistMono'; font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-medium); white-space: nowrap; }
 
-/* two-sided health badge: color-coded factor | DefiSim, the whole thing one link */
-.mm-bar { padding: 16px 0; border-bottom: 1px solid var(--separator); }
-.mm-bar-track { position: relative; height: 8px; background: var(--panel); border-radius: 9999px; overflow: hidden; }
-.mm-bar-fill { height: 100%; background: linear-gradient(90deg, var(--green), var(--amber)); border-radius: 9999px; }
-.mm-bar-liq { position: absolute; top: -2px; bottom: -2px; left: 100%; width: 2px; background: var(--red); transform: translateX(-1px); }
-.mm-bar-lab { display: flex; justify-content: space-between; margin-top: 8px; font-family: 'GeistMono'; font-size: 11px; color: var(--text-medium); }
-.mm-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding-top: 16px; }
-@media (max-width: 720px){ .mm-cols { grid-template-columns: 1fr; } }
-.mm-col-head { font-family: 'GeistMono'; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-low); margin-bottom: 10px; }
-.mm-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--separator); font-size: 12px; }
-.mm-row:last-child { border-bottom: 0; }
-.mm-row .mono { font-family: 'GeistMono'; }
-.mm-row .asset-chip { min-width: 86px; }
-.mm-row > .mono:nth-child(2) { margin-left: auto; }
-.mm-collateral-badge { font-size: 9px; }
-.mm-empty { color: var(--text-low); font-family: 'GeistMono'; font-size: 12px; padding: 8px 0; }
-
-/* Supplemental GIGAHDX credit line: compact until the user asks for detail. */
-.mm-secondary { margin-bottom: 8px; border: 1px solid var(--separator); border-radius: 14px; background: color-mix(in srgb, var(--bg-elev) 72%, var(--lavender-soft)); overflow: hidden; }
-.mm-secondary > summary { display: grid; grid-template-columns: minmax(190px, 1fr) auto 18px; gap: 18px; align-items: center; padding: 15px 18px; cursor: pointer; list-style: none; }
-.mm-secondary > summary::-webkit-details-marker { display: none; }
-.mm-secondary > summary:hover { background: var(--panel-hover); }
-.mm-secondary > summary:focus-visible { outline: 2px solid var(--sky); outline-offset: -2px; border-radius: 14px; }
-.mm-secondary-identity { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
-.mm-secondary-title { font-family: 'GeistMono'; font-size: 12px; font-weight: 600; color: var(--text-high); }
-.mm-secondary-subtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-low); }
-.mm-secondary-stats { display: flex; align-items: center; gap: 22px; }
-.mm-secondary-stat { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
-.mm-secondary-stat > span { font-family: 'GeistMono'; font-size: 9px; color: var(--text-low); text-transform: uppercase; letter-spacing: 0.06em; }
-.mm-secondary-stat > strong { font-family: 'GeistMono'; font-size: 12px; font-weight: 500; white-space: nowrap; }
-.mm-secondary-stat > .hf { font-size: 11px; }
-.mm-secondary-toggle { color: var(--text-low); font-size: 18px; transition: transform 150ms var(--ease-standard); }
-.mm-secondary[open] .mm-secondary-toggle { transform: rotate(180deg); }
-.mm-secondary-body { padding: 16px 18px 18px; border-top: 1px solid var(--separator); }
-.mm-secondary-explainer { max-width: 760px; color: var(--text-medium); font-size: 12px; }
-.mm-secondary-available { display: flex; justify-content: space-between; gap: 12px; max-width: 320px; margin-top: 14px; font-family: 'GeistMono'; font-size: 11px; color: var(--text-low); }
-.mm-secondary-available strong { color: var(--text-high); font-weight: 500; }
-.mm-secondary-debt { color: var(--cat-borrow); }
-/* Marks which money market a row belongs to, so it wears that family's yellow. */
-.mm-activity-market { display: inline-flex; align-items: center; border: 1px solid color-mix(in srgb, var(--cat-borrow) 30%, transparent); border-radius: 9999px; background: color-mix(in srgb, var(--cat-borrow) 13%, transparent); color: var(--cat-borrow); font-family: 'GeistMono'; font-size: 9px; font-weight: 600; line-height: 1; letter-spacing: 0.04em; white-space: nowrap; }
-/* GIGAHDX is brand black (same #000 the HDX lock charts and balance breakdown
-   already give it), so its market marker is the one filled black chip in the
-   app. A black fill would disappear into the dark theme's background, so there
-   it keeps a hairline edge rather than being lightened off-brand. */
-.mm-activity-market.mm-market-gigahdx { background: #000; border-color: #000; color: #fff; }
-:root[data-theme="dark"] .mm-activity-market.mm-market-gigahdx { border-color: rgba(255,255,255,0.3); }
-/* BIL is Brazilian invoice receivables, so its chip wears the flag: bandeira
-   green fill with a yellow edge. Text stays white — flag yellow on flag green
-   is far below AA contrast at this 9px size, so the yellow is the trim, not
-   the type. The same pairing reads on both themes; no dark override needed. */
-.mm-activity-market.mm-market-bil { background: #009739; border-color: #fedd00; color: #fff; }
 /* Top-holding token icons in the Holdings column (accounts list) and hover cards. */
 .holdings-cell { vertical-align: middle; white-space: nowrap; }
 /* An asset stack: overlapped icons that read as ONE holding rather than a list
@@ -1574,13 +1347,7 @@ tr:hover .icon-stack > *:nth-child(n+4), .icon-stack:hover > *:nth-child(n+4) { 
 .stack-more { margin-left: 11px; font-family: 'GeistMono'; font-size: 11px; color: var(--text-low); }
 .holdings-cell .stack-more { margin-left: 9px; }
 .activity-badge-group { display: inline-flex; align-items: center; gap: 5px; }
-.mm-activity-market { padding: 4px 6px; }
 @media (max-width: 720px) {
-  .mm-secondary > summary { grid-template-columns: 1fr 18px; gap: 10px; }
-  .mm-secondary-stats { grid-column: 1 / -1; grid-row: 2; justify-content: space-between; gap: 12px; }
-  .mm-secondary-stat { align-items: flex-start; }
-  .mm-secondary-toggle { grid-column: 2; grid-row: 1; }
-  .mm-secondary-subtitle { white-space: normal; }
 }
 
 /* cross-chain chips */
@@ -1592,7 +1359,6 @@ tr:hover .icon-stack > *:nth-child(n+4), .icon-stack:hover > *:nth-child(n+4) { 
 /* A route is one chain, not a list of separate facts, so its links sit closer than
    a normal asset flow's. Pool badges and asset chips alternate, which is what keeps
    the order readable once a long route wraps onto a second and third line. */
-.dca-route { gap: 6px; row-gap: 7px; }
 .dest { display: inline-flex; align-items: center; gap: 7px; }
 .trade-leg { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .trade-leg .mono { color: var(--text-high); }
@@ -1600,15 +1366,6 @@ tr:hover .icon-stack > *:nth-child(n+4), .icon-stack:hover > *:nth-child(n+4) { 
 .ext-link:hover { color: var(--text-high); }
 .ref-link { display: inline-flex; align-items: center; gap: 7px; font-family: 'GeistMono'; font-size: 12px; color: var(--sky); white-space: nowrap; }
 .ref-link:hover .mono { text-decoration: underline; text-underline-offset: 2px; }
-
-/* operation trace */
-.trace { display: flex; flex-direction: column; gap: 0; }
-.trace-step { display: grid; grid-template-columns: 40px 1fr; gap: 12px; position: relative; }
-.trace-step .tnode { display: flex; justify-content: center; position: relative; }
-.trace-step .tnode .tn { width: 24px; height: 24px; border-radius: 50%; background: var(--lavender-soft); color: var(--lavender); border: 1px solid var(--lavender-deep); display: inline-flex; align-items: center; justify-content: center; font-family: 'GeistMono'; font-size: 11px; z-index: 1; }
-.trace-step:not(:last-child) .tnode::after { content: ''; position: absolute; top: 24px; bottom: -12px; left: 50%; width: 1px; background: var(--separator); transform: translateX(-50%); }
-.trace-step .tbody { display: flex; align-items: center; gap: 10px; padding: 4px 0 20px; }
-.trace-step .tdetail { font-family: 'GeistMono'; font-size: 12px; color: var(--text-medium); }
 
 /* start page (search only) — centered */
 .hero-search.start { border-bottom: 0; padding: 14vh 0 0; margin-bottom: 0; min-height: 70vh; }
@@ -1689,15 +1446,6 @@ tr:hover .icon-stack > *:nth-child(n+4), .icon-stack:hover > *:nth-child(n+4) { 
 .apx-tip .t-d { color: var(--text-low); }
 .apx-tip .t-p { color: var(--text-high); font-weight: 600; }
 .apx-tip .t-e { color: var(--lavender); }
-/* One crosshair reads price AND the day's liquidation. The tip is a single nowrap
-   row, so the liquidation takes a line of its own (`flex-basis: 100%` needs the
-   wrap) — keeping all four values on one line would push the tip past the card
-   edge on a 390px phone. */
-.apx-tip:has(.t-liq) { flex-wrap: wrap; row-gap: 3px; }
-/* The same red the bars themselves take (see BAR_COLOR in PriceChart), so the line
-   and the bar it describes are recognisably one thing. */
-.apx-tip .t-liq { flex-basis: 100%; color: var(--cat-bad); }
-.apx-tip .t-liq-n { color: var(--text-low); }
 /* value-history event markers: per-marker --mk carries the kind color. The
    dashed drop-line stays faint so the value line keeps reading first; the cap
    is the interactive bit (hover → clamped tooltip, click → activity detail). */
@@ -1778,198 +1526,11 @@ a.apx-mark-go:hover, a.apx-mark-go:active { text-decoration: underline; }
 .bal-legend { display: flex; gap: 16px; align-items: center; margin-top: 14px; font-family: 'GeistMono'; font-size: 11px; color: var(--text-medium); flex-wrap: wrap; }
 .bal-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
 
-.dca-tag { font-family: 'GeistMono'; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; padding: 1px 6px; border-radius: 5px; background: var(--amber-soft); color: var(--amber); margin-left: 2px; }
-
 .perf .pk { font-family: 'GeistMono'; font-size: 10px; letter-spacing: 0.1em; color: var(--text-low); text-transform: uppercase; }
 .perf .pv { font-family: 'GeistMono'; font-size: 15px; font-weight: 600; }
-.identity-badge { display: inline-flex; align-items: center; gap: 5px; font-family: 'Geist'; font-size: 13px; font-weight: 500; color: var(--green); }
-.identity-badge svg { width: 12px; height: 12px; }
 
 /* portfolio sparkline */
 .spark { display: inline-block; vertical-align: middle; }
-
-/* ============ contract tab (code / read / write) ============
-   .id-card carries no padding of its own — it exists for `.dl` grids, whose
-   cells bring their own 14px/18px. Everything on this tab is free-form content
-   instead, so it goes inside one of these three regions and inherits the same
-   inset; a bare child of .id-card sits flush against the border. */
-.id-card-body { padding: 15px 18px; }
-.id-card-body.stack { display: flex; flex-direction: column; gap: 14px; }
-.id-card-note { padding: 15px 18px; color: var(--text-medium); font-size: 13px; }
-/* Primary action right-aligned behind a separator, like a dialog's footer —
-   a submit button loose at the bottom-left of a form reads as unrelated to it. */
-.id-card-foot { display: flex; justify-content: flex-end; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 18px; border-top: 1px solid var(--separator); }
-.id-card-foot .muted { margin-right: auto; }
-
-/* Source browser: file tree beside the file, both scrolling in their own
-   column so a 31-file contract costs no vertical space before the code. Under
-   860px the tree folds into a <details> the selected path summarises. */
-/* The bottom inset belongs to the grid, not to the scrolling columns: padding
-   inside a scroll box only appears once it is scrolled to the end, so the tree and
-   the code were clipped flush against the card's bottom border. */
-/* ONE explicit row height, which both columns then fill exactly: the tree and the
-   code end on the same line, the divider and the tint reach the bottom, and each
-   column scrolls inside its own share. Sizing them separately (a max-height on
-   each) made the row as tall as whichever content was longer — a 31-file tree grew
-   the card to 1,300px with the code stranded at the top. The bottom inset is the
-   grid's, because padding inside a scroll box only shows at the end of its scroll. */
-.src-split { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr); grid-template-rows: 564px; align-items: stretch; padding-bottom: 12px; }
-.src-split + .src-split { border-top: 1px solid var(--separator); }
-/* No height of its own — the grid row gives it one (see .src-split). */
-.src-tree { border-right: 1px solid var(--separator); min-height: 0; overflow: auto; padding: 8px 6px; background: var(--panel); }
-.src-tree-dir { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 5px; width: 100%; cursor: pointer; padding: 4px 6px; border-radius: 7px; font-family: 'GeistMono'; font-size: 11px; color: var(--text-low); text-align: left; overflow-wrap: anywhere; }
-.src-tree-dir:hover { color: var(--text-medium); background: var(--panel-hover); }
-.src-tree-dir .tw { flex-shrink: 0; width: 9px; color: var(--text-lowest); }
-.src-tree-file { all: unset; box-sizing: border-box; display: block; width: 100%; cursor: pointer; padding: 4px 6px 4px 8px; border-radius: 7px; font-family: 'GeistMono'; font-size: 11.5px; color: var(--text-medium); text-align: left; overflow-wrap: anywhere; }
-.src-tree-file:hover { color: var(--text-high); background: var(--panel-hover); }
-.src-tree-file.on { color: var(--accent-on); background: var(--accent); }
-.src-tree-file:focus-visible, .src-tree-dir:focus-visible { outline: 2px solid var(--sky); outline-offset: -2px; }
-.src-tree-kids { border-left: 1px solid var(--separator); margin-left: 8px; padding-left: 4px; }
-.src-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.src-pane-head { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--separator); font-family: 'GeistMono'; font-size: 11px; color: var(--text-medium); min-width: 0; }
-.src-pane-head .p { display: flex; min-width: 0; }
-.src-pane-head .p .dir { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-low); }
-.src-pane-head .p .file { flex-shrink: 0; }
-.src-pane-head .btn { margin-left: auto; flex-shrink: 0; }
-/* Fills what the path header leaves of the row, rather than carrying a height of
-   its own — see .src-split. The scroll box holds the gutter and the code side by
-   side, and owns the shared typography so their lines cannot drift apart. */
-.src-viewer {
-  flex: 1; min-height: 0; overflow: auto; display: flex; align-items: flex-start;
-  font-family: 'GeistMono'; font-size: 12px; line-height: 1.7; color: var(--text-medium);
-}
-.src-viewer .src-gutter, .src-viewer .src-code { margin: 0; white-space: pre; font: inherit; line-height: inherit; }
-/* Sticky, so the numbers stay beside their lines while the code scrolls sideways. */
-.src-gutter {
-  position: sticky; left: 0; z-index: 1; flex-shrink: 0; text-align: right;
-  padding: 16px 12px 34px 18px; color: var(--text-lowest); user-select: none;
-  background: var(--bg-elev); border-right: 1px solid var(--separator);
-}
-.src-code { flex: 1; min-width: 0; padding: 16px 18px 34px; color: var(--text-high); }
-/* Both columns scroll, and a scroll box cuts its last line in half at the edge —
-   which reads as content clipped by the card, not as more to scroll. Same
-   bottom-edge fade the horizontally-scrolling tab bars use for the same reason,
-   on the other axis. The mask sits on the scrollport, so the fade stays at the
-   bottom edge while scrolling, and each column's own bottom padding keeps the
-   final line crisp once it is scrolled to the end. */
-.src-tree, .src-viewer {
-  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 22px), transparent);
-  mask-image: linear-gradient(180deg, #000 calc(100% - 22px), transparent);
-}
-/* Enough trailing space that the real last line clears the fade once scrolled to
-   the end (both panes carry it in their own padding, above). */
-.src-tree { padding-bottom: 26px; }
-/* Solidity highlighting reuses the JSON viewer's palette so code reads as one
-   system across the site: strings green, numbers lavender, keywords sky —
-   exactly .json's .str/.numb/.key. Types get the one extra hue. Comments use
-   --text-low rather than the JSON viewer's --text-lowest: punctuation may recede
-   to the edge of legibility, but a natspec block is prose someone reads. */
-.src-viewer .s-comment { color: var(--text-low); }
-.src-viewer .s-string { color: var(--green); }
-.src-viewer .s-number { color: var(--lavender); }
-.src-viewer .s-keyword { color: var(--sky); }
-.src-viewer .s-type { color: var(--amber); }
-/* The tree's mobile form: closed by default, so the code stays one scroll away. */
-.src-picker { display: none; }
-@media (max-width: 860px) {
-  .src-split { grid-template-columns: minmax(0, 1fr); }
-  .src-tree { display: none; }
-  .src-picker { display: block; border-bottom: 1px solid var(--separator); background: var(--panel); }
-  .src-picker > summary { display: flex; align-items: center; gap: 8px; padding: 11px 14px; cursor: pointer; list-style: none; font-family: 'GeistMono'; font-size: 11px; color: var(--text-medium); }
-  .src-picker > summary::-webkit-details-marker { display: none; }
-  .src-picker > summary .cnt { margin-left: auto; color: var(--text-low); }
-  .src-picker[open] > summary { border-bottom: 1px solid var(--separator); }
-  .src-picker .src-tree { display: block; border-right: 0; max-height: 320px; }
-  /* The code wraps at this width (a 120-column Solidity line is unreadable
-     otherwise), and a wrapped line occupies one number but several visual lines —
-     so the gutter would stop lining up. Drop it rather than mislabel the code. */
-  .src-gutter { display: none; }
-  /* Same specificity as the shared `.src-viewer .src-code` typography rule above,
-     or that one keeps `pre` and the code scrolls sideways instead of wrapping. */
-  .src-viewer .src-code { white-space: pre-wrap; overflow-wrap: anywhere; }
-}
-
-.cli-block { padding: 10px 12px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.abi-details > summary { cursor: pointer; padding: 13px 18px; font-family: 'GeistMono'; font-size: 11px; color: var(--text-medium); }
-.abi-details > summary:hover { color: var(--text-high); }
-.abi-details[open] > summary { border-bottom: 1px solid var(--separator); }
-.abi-details .json { margin: 0; border: 0; border-radius: 0; max-height: 520px; overflow: auto; }
-/* Combo carries a fixed pixel width for filter bars. Inside a stacked card form
-   its neighbours are full-width inputs, so that fixed width becomes the form's
-   ragged right edge — and on a 390px phone it is nearly the whole width anyway.
-   Treat the width as a maximum here instead. */
-.id-card-body .combo, .id-card-body .combo-input { width: 100%; }
-.id-card-body .combo-input { max-width: 260px; }
-.upload-zone { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px; border: 1px dashed var(--border); border-radius: 10px; background: var(--panel); }
-.upload-zone.drag { border-color: var(--sky); background: var(--panel-hover); }
-/* the global button reset leaves fn-head unstyled — lay the row out explicitly */
-.fn-row { margin-bottom: 8px; }
-.fn-head { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 10px; width: 100%; cursor: pointer; padding: 12px 18px; }
-.fn-head:hover { background: var(--panel-hover); }
-.fn-head:focus-visible { outline: 2px solid var(--sky); outline-offset: -2px; border-radius: 16px; }
-.fn-head .fn-sig { overflow-wrap: anywhere; min-width: 0; }
-.fn-head .fn-caret { margin-left: auto; flex-shrink: 0; }
-.fn-body { border-top: 1px solid var(--separator); padding: 15px 18px; display: flex; flex-direction: column; gap: 13px; }
-.fn-hint { color: var(--text-medium); font-size: 13px; }
-/* The Write gate must LOOK gated: a reverting estimate disables the button,
-   and the same dimming covers a busy Query on the Read tab. Same values as
-   the pager's disabled buttons. */
-.fn-body .btn:disabled { opacity: 0.35; cursor: not-allowed; }
-.fn-nested { display: flex; flex-direction: column; gap: 2px; }
-.fn-nested-row { overflow-wrap: anywhere; }
-/* Write sub-tab: the wallet summary bar ("you are writing to X as Y") wraps
-   pills and buttons on one line, folding gracefully at 390px. */
-.write-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 18px; }
-.write-bar .btn { margin-left: auto; }
-@media (max-width: 560px) { .write-bar .btn { margin-left: 0; } }
-.write-as { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-
-/* ============ DCA schedules ============
-   A DCA is scheduled in blocks but read in time, so every surface here leads
-   with the duration and keeps the block count in .dca-blocks behind it. */
-/* Most cells in an active order are two lines (a value over its dollar figure,
-   its block, its trade count). Top-aligning the row puts every first line on one
-   line — including the selling → buying pair, which otherwise floated in the
-   middle of the tallest cell.
-   Those first lines hold different things: a 20px asset chip, an 18px ring, plain
-   text. Left alone each sets its own height and every second line in the row
-   starts somewhere else, so they all get the same 22px line to sit in. */
-.dca-tbl tbody td { vertical-align: top; line-height: 22px; }
-.dca-tbl tbody td .trade-leg, .dca-tbl tbody td .asset-chip { height: 22px; vertical-align: middle; }
-.dca-tbl tbody td .asset-flow { align-items: center; }
-/* Block-level, not inline-flex: an inline box would be baseline-aligned inside the
-   cell's line box and gain a couple of pixels the other cells do not have, which
-   is exactly what pushed the ring's row below its neighbours. */
-/* Column gap only: `gap` also spaces WRAPPED rows, and that gap fell between the
-   ring's line and the trade count below it — the 7px that pushed this cell's
-   second line below every other one in the row. */
-.dca-filled { display: flex; align-items: center; justify-content: flex-end; column-gap: 7px; row-gap: 0; flex-wrap: wrap; }
-.dca-filled .dca-sub { flex-basis: 100%; }
-/* The section's aggregate rides as the first row, set apart by a wash rather
-   than a box so the columns keep reading straight down into the orders it sums. */
-.dca-tbl tr.dca-total td { background: color-mix(in srgb, var(--sky) 6%, transparent); }
-/* The asset page stacks a Buys and a Sells table; auto layout would size each
-   to its own content and the pair's columns would drift apart. Fixed shared
-   widths put both tables' columns on the same vertical lines so the eye runs
-   straight down from one into the other. Desktop only — the ≤720px stacked-card
-   view has no column tracks to align. */
-@media (min-width: 721px) {
-  .dca-tbl-aligned { table-layout: fixed; }
-  .dca-tbl-aligned th:nth-child(1) { width: 15%; }
-  .dca-tbl-aligned th:nth-child(2) { width: 17%; }
-  .dca-tbl-aligned th:nth-child(3) { width: 13%; }
-  .dca-tbl-aligned th:nth-child(4) { width: 13%; }
-  .dca-tbl-aligned th:nth-child(5) { width: 12%; }
-  .dca-tbl-aligned th:nth-child(6) { width: 10%; }
-  .dca-tbl-aligned th:nth-child(7) { width: 11%; }
-  .dca-tbl-aligned th:nth-child(8) { width: 9%; }
-}
-@media (max-width: 720px) {
-  /* In a phone card each cell is one right-aligned row, so the second line sits
-     under the first rather than beside the ring. */
-  .dca-hero { gap: 14px; }
-  .dca-tbl .dca-filled { justify-content: flex-end; }
-}
 
 /* searchable token combobox */
 .combo { position: relative; }
@@ -1985,21 +1546,6 @@ a.apx-mark-go:hover, a.apx-mark-go:active { text-decoration: underline; }
 .combo-opt-sub::before { content: '— '; }
 .combo-empty { color: var(--text-low); cursor: default; }
 .combo-empty:hover { background: transparent; }
-
-/* Recently used write-argument values: the combo popover, widened for long
-   addresses and with room for the per-row forget button. */
-/* The wrapper the suggestion popover anchors to must not shrink the field: the
-   shared `.input` reset drops `width`, so an input that used to stretch as a
-   `.field` flex child needs it back once it sits inside this wrapper. */
-.recent-field { width: 100%; }
-.recent-field > .input { width: 100%; }
-.recent-pop { min-width: 100%; max-width: min(520px, 90vw); }
-/* Upward when the list would otherwise cover the controls below it — the Write
-   button sits directly under the last argument. */
-.recent-pop.up { top: auto; bottom: calc(100% + 6px); }
-.recent-opt { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
-.recent-val { overflow: hidden; text-overflow: ellipsis; }
-.recent-forget { flex: none; }
 
 /* utility */
 .row { display: flex; align-items: center; gap: 10px; }
@@ -2109,13 +1655,8 @@ a.apx-mark-go:hover, a.apx-mark-go:active { text-decoration: underline; }
 .btn.primary { background: var(--accent); color: var(--accent-on); border-color: transparent; }
 .btn.primary:hover { filter: brightness(1.06); }
 .btn.danger { color: var(--red); }
-.dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); animation: ov 0.18s ease; z-index: 100; }
 @keyframes ov { from { opacity: 0; } to { opacity: 1; } }
 .dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(560px, 94vw); max-height: 88vh; overflow-y: auto; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 18px; z-index: 101; box-shadow: 0 24px 60px rgba(0,0,0,0.45); }
-.dialog-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid var(--separator); }
-.dialog-head h2 { font-family: 'Gazpacho', serif; font-weight: 500; font-size: 19px; }
-.dialog-body { padding: 18px 20px; display: flex; flex-direction: column; gap: 16px; }
-.dialog-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 20px; border-top: 1px solid var(--separator); }
 .field { display: flex; flex-direction: column; gap: 7px; }
 .field label, .field .field-label { font-family: 'GeistMono'; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-low); }
 /* Shared input skin: border/background/radius/focus ring defined once here.
@@ -2140,363 +1681,9 @@ a.apx-mark-go:hover, a.apx-mark-go:active { text-decoration: underline; }
 .field .combo, .field .combo-input { width: 100%; }
 .field .combo-pop { left: 0; right: 0; min-width: 0; }
 /* Compact variant for an .input sitting inline among small controls (a
-   panel-head row's .btn.sm / 20px swatches) rather than stacked under its
+   panel-head row's .btn.sm) rather than stacked under its
    own label — same skin, shorter so it doesn't blow out the row's height. */
 .input.sm { padding: 5px 10px; font-size: 12.5px; }
-.member-check { font-family: 'GeistMono'; font-size: 11px; margin-top: 6px; }
-.swatches { display: flex; gap: 8px; flex-wrap: wrap; }
-.swatch { width: 26px; height: 26px; border-radius: 8px; border: 2px solid transparent; }
-.swatch.on { border-color: var(--text-high); }
-
-/* ConnectDialog: wallet list, account picker, signing screens (built on the
-   .dialog* skin above). */
-.dialog-hint { color: var(--text-low); font-size: 12.5px; }
-.dialog-error { padding: 10px 12px; border-radius: 10px; background: var(--red-soft); color: var(--red); font-size: 12.5px; }
-/* Same box as the error, in the informational sky rather than a warm tone:
-   "you already have this alert" after an idempotent create is worth reading and
-   is not a refusal, so it must not be mistaken for one. */
-.dialog-note { padding: 10px 12px; border-radius: 10px; background: var(--sky-soft); color: var(--sky); font-size: 12.5px; }
-.wallet-group { display: flex; flex-direction: column; gap: 4px; }
-.wallet-group-label { font-family: 'GeistMono'; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-low); padding: 0 2px 2px; }
-.wallet-row {
-  display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box;
-  padding: 11px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border);
-  color: var(--text-medium); font-size: 13px; text-align: left; text-decoration: none;
-  transition: color 130ms, background 130ms, border-color 130ms;
-}
-.wallet-row:hover { color: var(--text-high); background: var(--panel-hover); border-color: var(--sky); }
-.wallet-row:disabled { opacity: 0.6; pointer-events: none; }
-.wallet-row .wallet-name { color: var(--text-high); font-weight: 500; }
-.wallet-row .wallet-status { margin-left: auto; color: var(--text-low); font-family: 'GeistMono'; font-size: 11px; }
-.wallet-row.account-row .wallet-status { font-size: 12.5px; }
-/* An account row's name reads the same as an AddrPill's would (profile → amber
-   italic, on-chain identity → plain) — the account-picker rows and the signing
-   screen are both, in effect, one account shown "like a pill in a list", just
-   without the .addr-pill wrapper (its own gap/font-family would fight
-   .wallet-row's). */
-.wallet-row .tag { color: var(--lavender); font-weight: 500; }
-.wallet-row .tag.profile-name { color: var(--amber); font-style: italic; }
-/* The signing screen's row is a status display, not a clickable choice — drop
-   the hover highlight .wallet-row otherwise carries. */
-.wallet-row.static { cursor: default; }
-.wallet-row.static:hover { color: var(--text-medium); background: var(--panel); border-color: var(--border); }
-/* Wallet picker: an icon grid (app.hydration.net's connect modal) rather than a
-   list of rows — a wallet is recognized by its logo faster than read as text.
-   Fixed column counts (not auto-fill) so the row count is a deliberate,
-   verifiable 4 desktop / 3 tablet-and-down rather than whatever a minmax()
-   guess happens to wrap to at a given dialog width — the dialog itself scales
-   down to `94vw` on narrow viewports (see .dialog), so 390px and 320px both
-   hit the same breakpoint below. Keyboard focus is the shared native-button
-   ring further up this file (:where(a, button, …):focus-visible) — every tile
-   is a real <button> or <a>, never a div with a click handler. */
-.wallet-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-@media (max-width: 480px) {
-  .wallet-grid { grid-template-columns: repeat(3, 1fr); }
-}
-/* "Other wallets" toggle: a small row under the shortlist grid, not another
-   tile — expanding it grows the dialog in place rather than replacing the
-   shortlist, so the wallets a visitor is most likely to have stay put. */
-.wallet-toggle { align-self: center; margin-top: 2px; }
-.wallet-tile {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
-  box-sizing: border-box; padding: 16px 8px 12px; border-radius: 14px; background: var(--panel); border: 1px solid var(--border);
-  color: var(--text-medium); font-size: 11.5px; text-align: center; text-decoration: none;
-  transition: color 130ms, background 130ms, border-color 130ms, opacity 130ms;
-}
-.wallet-tile:hover { background: var(--panel-hover); border-color: var(--sky); }
-.wallet-tile:disabled { opacity: 0.6; pointer-events: none; }
-/* Forces every logo to the same box regardless of the source SVG's own
-   width/height (most are ~32-34px square; talisman.svg hardcodes 128) — the
-   CSS box wins over the intrinsic size either way, but sized explicitly here
-   so that's true by design, not by accident. */
-.wallet-tile-icon { width: 40px; height: 40px; border-radius: 10px; object-fit: contain; }
-.wallet-tile-name { color: var(--text-high); font-weight: 500; line-height: 1.25; }
-.wallet-tile-status { font-family: 'GeistMono'; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
-/* Installed reads as the "real" choice — full strength plus an accent border;
-   not-installed is a dimmed, honest "you'd need to leave to get this" link. */
-.wallet-tile.installed { border-color: color-mix(in srgb, var(--sky) 40%, var(--border)); }
-.wallet-tile.installed .wallet-tile-status { color: var(--sky); }
-.wallet-tile.not-installed { opacity: 0.55; }
-.wallet-tile.not-installed:hover { opacity: 0.85; }
-.wallet-tile.not-installed .wallet-tile-status { color: var(--text-low); }
-/* QR device-link: the login dialog's scan stage, the devices list, and the
-   "Link a device" QR view. The QR keeps uqr's own white background in both
-   themes — a scanner needs the contrast, not the theme. */
-.qr-tile-icon { padding: 6px; color: var(--text-high); }
-.qr-scan-video { width: 100%; max-height: 320px; border-radius: 12px; background: #000; object-fit: cover; }
-.qr-scan-fallback { padding: 24px 16px; border: 1px dashed var(--border); border-radius: 12px; color: var(--text-medium); font-size: 13px; text-align: center; }
-.qr-box { display: flex; justify-content: center; }
-.qr-box svg { width: 224px; height: 224px; border-radius: 12px; }
-.qr-box-loading { height: 224px; border-radius: 12px; background: var(--panel); }
-.qr-expiry { text-align: center; font-size: 12px; color: var(--text-medium); min-height: 1.2em; }
-.qr-linked { padding: 24px 16px; border-radius: 12px; background: var(--green-soft); color: var(--green); text-align: center; font-weight: 500; }
-.device-list { display: flex; flex-direction: column; gap: 8px; }
-.device-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
-.device-info { flex: 1; min-width: 0; }
-.device-name { color: var(--text-high); font-weight: 500; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.device-tag { font-size: 10px; }
-.device-meta { color: var(--text-low); font-size: 12px; margin-top: 2px; }
-/* ── Notifications ───────────────────────────────────────────────────────
-   The topbar bell, the /notifications page, and the "Get notified" button
-   every other surface carries. No new tokens or motion: the badge is the
-   invite pill, rows borrow the device-row box, and the only transitions are
-   the same colour fades every control uses (killed by the global
-   prefers-reduced-motion block above). */
-
-/* Bell: sized and hovered exactly like .theme-toggle beside it, plus a corner
-   anchor for the unread pill. Hidden ≤860px with the rest of the desktop
-   right-hand chrome — the drawer carries the same link there. */
-.topbar-bell {
-  position: relative; width: 34px; height: 34px; padding: 0;
-  display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 9999px; color: var(--text-medium);
-  transition: color 150ms, background 150ms;
-}
-.topbar-bell:hover { color: var(--text-high); background: var(--panel-hover); }
-.topbar-bell svg { width: 16px; height: 16px; }
-.topbar-bell .invite-badge { position: absolute; top: -1px; right: -1px; border: 1px solid var(--bg-elev); }
-
-/* A section title with a control on its right (Security's safety ledger, the
-   alerts list). The title keeps its own vertical rhythm; the control rides the
-   same baseline instead of pushing a row of its own. */
-.sec-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.sec-title-row .sec-title { margin-right: auto; }
-/* The Security page head carries the one subscribe button, beside the title. */
-.sec-page-title-row { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
-.sec-page-title-row .page-title { margin-right: auto; }
-
-/* Per-surface subscribe affordance. Two shapes: the small pill (.notify-btn,
-   plain .btn.sm) and the quiet `ext-link` variant for a detail page's existing
-   link row. The bell glyph is what makes them recognisable as one action. */
-.notify-wrap { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.notify-bell { width: 12px; height: 12px; flex-shrink: 0; }
-.notify-link { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
-.notify-error { color: var(--red); font-family: 'GeistMono'; font-size: 11px; }
-/* Subscribed: the same pill, wearing the accent it already uses for an active
-   chip. State comes from the rules the viewer HAS, so this survives a reload —
-   and clicking it unsubscribes, which is why it reads as pressed. */
-.notify-btn.on, .notify-link.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
-.notify-btn.on { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.notify-manage { font-family: 'GeistMono'; font-size: 11px; color: var(--text-low); }
-.notify-manage:hover { color: var(--text-high); }
-/* Asset header: the prefilled alert buttons, pushed to the far edge of the row.
-   Three pills do not fit one phone line, so the row wraps as a block and each
-   button keeps its own count chip beside it. */
-.notify-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
-/* How many alerts of that kind this token already has — any threshold. A link,
-   because the only thing to do with the number is go and look at them. */
-.notify-count {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9999px;
-  background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent);
-  font-family: 'GeistMono'; font-size: 10.5px; line-height: 1;
-}
-.notify-count:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
-/* The filter zone's `extra` slot, when it holds more than one control — one
-   flex child keeps .filter-head's space-between layout intact. */
-.filter-extra { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
-/* The smol toggle and the Notify pill sit side by side here, so they share the
-   toggle's height and pill radius — .btn.sm is 26px, which read as a shorter button
-   beside a 34px one. Scoped to this row: elsewhere a .notify-btn sits among other
-   .btn.sm and should keep matching THEM. */
-.filter-extra .notify-btn { height: 34px; padding: 0 13px; border-radius: 9999px; }
-
-/* Logged-out teaser. Two columns on desktop, stacked on phones. */
-.notif-hero { display: flex; gap: 24px; align-items: flex-start; padding: 26px 24px; flex-wrap: wrap; }
-.notif-hero-copy { flex: 1 1 320px; min-width: 0; }
-.notif-hero-copy h2 { font-family: 'Gazpacho', serif; font-weight: 500; font-size: 25px; margin: 0 0 10px; color: var(--text-high); }
-.notif-hero-copy p { margin: 0; color: var(--text-medium); font-size: 14px; line-height: 1.65; max-width: 62ch; }
-.notif-hero-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
-.notif-hero-note { font-family: 'GeistMono'; font-size: 11px; }
-.notif-hero-channels { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
-.notif-channel-badge {
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 7px 14px; border-radius: 9999px;
-  background: var(--panel); border: 1px solid var(--border);
-  font-family: 'GeistMono'; font-size: 11px; color: var(--text-medium);
-}
-.notif-personas { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
-.notif-persona { padding: 16px 18px; border: 1px solid var(--separator); border-radius: 14px; background: var(--bg-elev); }
-.notif-persona-who { font-family: 'GeistMono'; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-low); }
-.notif-persona-want { color: var(--text-high); font-size: 15px; margin-top: 6px; }
-.notif-persona-how { color: var(--text-medium); font-size: 12.5px; margin-top: 8px; }
-.notif-foot-note { font-family: 'GeistMono'; font-size: 11px; margin-top: 16px; }
-
-/* Channels panel: grouped rows inside one .panel, same box as .device-row. */
-.notif-panel { padding: 4px 0; }
-.notif-list { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; }
-.notif-group-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.notif-group-head:not(:first-child) { margin-top: 10px; }
-.notif-group-title { font-family: 'GeistMono'; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-medium); margin-right: auto; }
-.notif-note { color: var(--text-low); font-size: 12.5px; }
-.notif-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
-.notif-row-main { flex: 1; min-width: 0; }
-.notif-row-title { color: var(--text-high); font-weight: 500; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.notif-row-meta { color: var(--text-low); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
-.notif-row-actions { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
-.notif-linked { padding: 14px 16px; border-radius: 10px; background: var(--green-soft); color: var(--green); font-weight: 500; }
-.notif-link-panel { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
-.notif-link-code { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
-.notif-link-code .mono { color: var(--text-high); overflow-wrap: anywhere; }
-
-/* Rules + inbox. The kind badge borrows the neutral badge colouring rather
-   than inventing a per-kind palette — the summary already says what it is. */
-.notif-kind { color: var(--neutral); background: color-mix(in srgb, var(--neutral) 14%, transparent); }
-.notif-chip {
-  display: inline-flex; align-items: center; margin: 0 4px 4px 0; padding: 2px 8px; border-radius: 9999px;
-  background: var(--panel); border: 1px solid var(--border);
-  font-family: 'GeistMono'; font-size: 10.5px; color: var(--text-medium);
-}
-.tbl tbody tr.notif-rule-muted { opacity: 0.55; }
-/* An unread row is marked on its leading edge — a background tint would fight
-   the table's own hover and zebra treatment. */
-.tbl tbody tr.notif-unread td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
-.notif-quick-add { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; font-family: 'GeistMono'; font-size: 11px; }
-
-/* New-alert form assists. The preset chips are the activity filter's own chips,
-   sitting under the input they fill, so they read as shortcuts to that field
-   rather than as a filter of their own. */
-.alert-presets { margin: 6px 0 0; gap: 5px; }
-.alert-presets .activity-chip { padding: 3px 10px; }
-.alert-price-hint { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; font-size: 11px; }
-.alert-price-hint .mono { color: var(--text-high); }
-/* A parameter the surface decided, not one to pick: the rules list's own
-   parameter pill, sitting where its combo would have been. */
-.alert-locked { display: flex; align-items: center; min-height: 34px; }
-.alert-locked-token { margin: 0; font-size: 11.5px; color: var(--text-high); }
-
-@media (max-width: 720px) {
-  /* Stacked-card viewport: a channel row's actions drop under its label
-     rather than squeezing the endpoint host to nothing. */
-  .notif-row { flex-direction: column; align-items: stretch; }
-  .notif-row-actions { justify-content: flex-end; }
-  .notif-hero-channels { flex-direction: row; flex-wrap: wrap; }
-  .notify-actions { margin-left: 0; }
-  /* The stacked card draws each cell as its own line, so the unread mark moves
-     to the whole card's leading edge. */
-  .tbl tbody tr.notif-unread td:first-child { box-shadow: none; }
-  .tbl tbody tr.notif-unread { box-shadow: inset 2px 0 0 var(--accent); }
-}
-
-/* The link-device landing page (phone camera → URL): one narrow card. */
-.link-device-card { max-width: 480px; padding: 24px; display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
-.link-device-card p { margin: 0; color: var(--text-medium); }
-.link-device-warn { padding: 10px 12px; border-radius: 10px; background: var(--amber-soft); color: var(--amber); font-size: 13px; }
-/* Two-segment sliding switch (visibility private/public) — the indicator pill
-   translates by segment index, preis-ui's interval-selector mechanic. */
-.seg-switch {
-  --seg-width: 84px; --seg-gap: 2px;
-  position: relative; display: grid; grid-template-columns: repeat(2, var(--seg-width)); gap: var(--seg-gap);
-  width: max-content; background: var(--panel); border: 1px solid var(--border); border-radius: 9999px; padding: 3px;
-}
-.seg-switch .seg-indicator {
-  position: absolute; top: 3px; bottom: 3px; left: 3px; width: var(--seg-width); border-radius: 9999px;
-  background: var(--accent);
-  transform: translateX(calc(var(--active-index) * (var(--seg-width) + var(--seg-gap))));
-  transition: transform 180ms ease-out;
-  pointer-events: none;
-}
-.seg-switch button {
-  position: relative; z-index: 1; height: 26px; width: var(--seg-width); border-radius: 9999px;
-  font-size: 12px; font-weight: 500; text-align: center; color: var(--text-medium);
-  transition: color 160ms;
-}
-.seg-switch button:hover { color: var(--text-high); }
-.seg-switch button.active { color: var(--accent-on); }
-.seg-switch button:disabled { opacity: 0.6; pointer-events: none; }
-/* Account picker: chips + search input (invites, tag members). */
-.acct-picker { position: relative; flex: 1; min-width: 220px; }
-.acct-picker-box {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; cursor: text;
-  padding: 6px 8px; border-radius: 10px; background: var(--bg-elev); border: 1px solid var(--border);
-}
-.acct-picker-box:focus-within { border-color: var(--sky); }
-.acct-picker-box.disabled { opacity: 0.6; pointer-events: none; }
-.acct-picker-box input { flex: 1; min-width: 140px; background: none; border: none; outline: none; color: var(--text-high); font-size: 13px; padding: 3px 2px; }
-.acct-chip {
-  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
-  padding: 2px 4px 2px 8px; border-radius: 9999px; background: var(--panel); border: 1px solid var(--border);
-  font-family: 'GeistMono'; font-size: 11.5px; color: var(--text-high);
-}
-.acct-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.acct-chip-x { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; color: var(--text-low); font-size: 13px; line-height: 1; }
-.acct-chip-x:hover { color: var(--text-high); background: var(--panel-hover); }
-/* A tag's members, editable as tokens: the picker (immediate-commit mode)
-   input sits right after the last chip, both inside one `.acct-picker-box` —
-   an AddrPill label plus a separate ✕ button (never nested inside the
-   label's own link). */
-.tag-member-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.tag-member-chip { padding: 3px 4px 3px 3px; gap: 6px; }
-.tag-member-chip .addr-pill { font-size: 11.5px; gap: 5px; }
-/* The grab cursor is a drag-reorder affordance, not a base chip style — the
-   Subscribers tab reuses `.tag-member-chip` for its own (non-draggable)
-   chips via ShareChips, so this needs its own modifier rather than living on
-   the shared class. Drag/keyboard reorder itself is a static outline/opacity
-   swap, no transition, so it reads fine under prefers-reduced-motion without
-   a separate override. */
-.tag-member-chip-draggable { cursor: grab; }
-.tag-member-chip.dragging { opacity: 0.5; cursor: grabbing; }
-.tag-member-chip.drag-over { outline: 2px solid var(--sky); outline-offset: 1px; }
-/* Same background/border/shadow/z-index recipe as .search-results (the page
-   search dropdown) — a solid elevated surface that overlaps whatever panel it
-   sits in, not var(--panel)'s translucent tint (meant for a wash OVER content,
-   not a dropdown that needs to read as opaque). */
-.acct-picker-results {
-  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 120; overflow: hidden;
-  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 16px 40px rgba(0,0,0,0.45);
-}
-.acct-picker-row {
-  display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px;
-  font-size: 12.5px; color: var(--text-medium); text-align: left;
-}
-.acct-picker-row.active, .acct-picker-row:hover { background: var(--panel-hover); color: var(--text-high); }
-.acct-picker-name { color: var(--text-high); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.acct-picker-addr { margin-left: auto; color: var(--text-low); font-size: 11px; flex-shrink: 0; }
-/* The same token box, used as ONE field of the new-alert form rather than as a
-   wide row's recipient input — so it takes the field's full width instead of
-   holding a 220px floor a narrow dialog cannot give it. */
-.alert-target-picker { width: 100%; min-width: 0; }
-.alert-target-picker .acct-picker-row .sr-desc { margin-left: 4px; }
-/* Foreign-list stats: the only view of another user's list contents. */
-/* A public list's own note, one line under its name in the discovery
-   table — truncated rather than wrapped, since the row's other columns
-   (owner, counts) need to stay on that same line. */
-.list-row-note { font-size: 11px; margin-top: 2px; max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Account.tsx's TaggedInHint — a logged-out visitor's "this account is tagged
-   in a public list" nudge, rendered just under the Lists section. A single
-   muted line, not a callout — the login action stays plain text (no button
-   chrome/background), same underline-on-hover treatment as other inline
-   actions (.hash, .pc-hash-toggle) rather than a second CTA box. */
-/* One quiet self-contained line in the account header, under the tag row. */
-.lists-login-hint { display: block; margin-top: 3px; font-size: 11px; font-family: 'GeistMono'; }
-.hint-link { background: none; border: 0; padding: 0; margin: 0; color: var(--sky); font: inherit; cursor: pointer; }
-.hint-link:hover { text-decoration: underline; text-underline-offset: 2px; }
-.list-stats { display: flex; gap: 32px; flex-wrap: wrap; }
-.list-stats > div { display: flex; flex-direction: column; gap: 2px; }
-.list-stat-num { font-family: 'Gazpacho', serif; font-size: 24px; font-weight: 500; color: var(--text-high); }
-.list-stat-label { font-family: 'GeistMono'; font-size: 11px; color: var(--text-medium); text-transform: uppercase; letter-spacing: 0.05em; }
-/* Account rows carry the same avatar an account pill would (profile image /
-   snakewatch emoji / placeholder while the display refs load). */
-.account-row-emoji { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; overflow: hidden; background: var(--bg-elev); border: 1px solid var(--border); }
-/* A tag panel's own header icon (ListDetail's TagPanel): plain `.emoji.id`
-   has no size rule of its own, so when the icon falls back to a member's
-   uploaded avatar (a bare <img> at width/height 100% of an unsized parent)
-   the browser has nothing to resolve those percentages against and falls
-   back to the image's OWN intrinsic pixel size — rendering a full-resolution
-   avatar instead of an icon. Constrained to the same square footprint as
-   .account-row-emoji/.sr-emoji, with the same background+border those carry —
-   omitting it left a plain emoji glyph floating in an invisible box instead
-   of the quiet circle every other icon of this size sits in. `.sr-emoji`'s
-   own var(--panel) fill is the one that reads here (this icon sits on a
-   var(--bg-elev) panel, same as `.acct-picker-results` does for `.sr-emoji`),
-   not `.account-row-emoji`'s var(--bg-elev), which would blend into it. */
-.tag-panel-icon { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; overflow: hidden; background: var(--panel); border: 1px solid var(--border); }
-/* The tag panel header's own icon+name link to the tag's aggregate page —
-   deliberately NOT `.addr-pill` (that class's GeistMono/12.5px would fight
-   this header's serif `.panel-head .t` title styling); same hover affordance
-   `.addr-pill` uses for its own clickable text (an underline on the name),
-   cursor:pointer comes from the element being a real <a href>. */
-.tag-panel-link:hover .tag { text-decoration: underline; text-underline-offset: 2px; }
 
 /* Live mode: briefly highlight rows that were just added so it's clear which /
    how many arrived. Background pulses from an accent tint to transparent. */
@@ -2588,18 +1775,8 @@ a.hdx-card-link:focus-visible { outline: 2px solid var(--sky-deep); outline-offs
 .liq-toggle button.active { background: var(--bg-elev); color: var(--text-high); }
 .hdx-card .hk { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; color: var(--text-high); }
 .hdx-card .hk i { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.hdx-card .hk .cohort-threshold { margin-left: auto; font-family: 'GeistMono'; font-size: 10px; color: var(--text-low); white-space: nowrap; }
 .hdx-card .hv { font-family: 'GeistMono'; font-size: 17px; font-weight: 600; }
 .hdx-card .hs { font-family: 'GeistMono'; font-size: 11px; color: var(--text-low); }
-.hdx-note { font-family: 'GeistMono'; font-size: 11px; color: var(--text-low); margin-top: 12px; }
-.hdx-flow-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; align-items: stretch; margin-bottom: 16px; }
-@media (max-width: 920px) { .hdx-flow-grid { grid-template-columns: 1fr; } }
-.hdx-dca { display: flex; flex-direction: column; gap: 18px; justify-content: center; }
-.hdx-dca .mm-stat .s { font-family: 'GeistMono'; font-size: 11px; color: var(--text-low); }
-/* movers tables sit two-up in .cols — relax the global 760px table min-width.
-   Desktop-only: below 720px the stacked-card rule (.tbl { min-width: 0 }) must win. */
-@media (min-width: 721px) { .hdx-movers .tbl { min-width: 420px; } }
-@media (max-width: 720px) { .hdx-card .hk .cohort-threshold { display: none; } }
 
 /* ---- chart reveal: line and area gently fade in on mount. Plays once (React
    reuses the node on hover/data re-renders, so it never re-triggers).
@@ -2696,22 +1873,13 @@ a.hdx-card-link:focus-visible { outline: 2px solid var(--sky-deep); outline-offs
      line, the 1Y chart spans both, and valueless lines (unknown deployer, nothing
      held) drop out instead of stacking em-dashes. The verification check rides
      inside the pill cell, so it needs no line of its own. */
-  .contracts-tbl tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 10px 0 12px; }
-  .contracts-tbl tbody td { order: 4; grid-column: 1 / -1; }
   .contracts-tbl tbody td.cell-empty { display: none; }
-  .contracts-tbl tbody td[data-label="Contract"] { order: 1; grid-column: 1; max-width: none; text-align: left; padding-right: 4px; padding-top: 4px; }
-  .contracts-tbl tbody td[data-label="Contract"]::before { display: none; }
-  .contracts-tbl tbody td[data-label="Value"] { order: 2; grid-column: 2; grid-row: 1; padding-top: 4px; padding-left: 0; font-size: 15px; font-weight: 600; color: var(--text-high); }
-  .contracts-tbl tbody td[data-label="Value"]::before { display: none; }
-  .contracts-tbl tbody td[data-label="1Y"] { order: 3; text-align: left; padding: 8px 14px 2px; }
-  .contracts-tbl tbody td[data-label="1Y"]::before { float: none; display: block; margin: 0 0 4px; line-height: 1.2; }
   .contracts-tbl tbody td[data-label="1Y"] .spark { display: block; width: 100%; height: 56px; }
   /* The Deployer/Created caps are desktop column widths; a card line spans the
      whole card, so left in place they end the cell 148/118px from the left edge
      and its right-aligned value lands mid-card (Created also wrapping onto a
      second line) instead of at the right edge like every other line. */
   .contracts-tbl tbody td[data-label="Deployer"],
-  .contracts-tbl tbody td[data-label="Created"] { max-width: none; }
 
   /* expanded extrinsic/event panel: full-width, never card-ified */
   .tbl tbody tr.exp-row, .tbl tbody tr.exp-row > td { padding: 0; text-align: left; }
@@ -2868,7 +2036,6 @@ a.hdx-card-link:focus-visible { outline: 2px solid var(--sky-deep); outline-offs
 .vb-bubble .vb-name { font-family: inherit; font-weight: 600; color: var(--text-high); }
 /* Self-set profile name: same amber-and-italic treatment as .addr-pill's, so a
    bubble reads as "the owner's own claim" identically to every other pill. */
-.vb-bubble .vb-name.profile-name { color: var(--amber); font-style: italic; }
 .vb-bubble .id-verified { margin-left: 2px; color: inherit; }
 .vb-legend { margin-top: 10px; font-size: 12px; color: var(--text-medium); min-height: 18px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
 .vb-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 5px 0 2px; }
@@ -2924,519 +2091,15 @@ tr.row-muted td { opacity: .55; }
 .pc-toggle { margin-left: auto; }
 .pc-more { margin-top: 8px; color: var(--sky); }
 .pc-foot { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 11px; }
-.pc-hash-toggle { background: none; border: 0; color: var(--sky); font-size: 11px; cursor: pointer; padding: 0; }
-.pc-hash-toggle:hover { text-decoration: underline; }
 .pc-hash { color: var(--text-medium); font-size: 10.5px; overflow-wrap: anywhere; }
 .pc-unavailable { color: var(--text-medium); font-size: 12px; }
 .pc-error { color: var(--red); font-size: 11px; margin-top: 4px; }
 .pc-copy { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
-.copy-text-btn, .pc-copy-btn { display: inline-flex; align-items: center; gap: 5px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-medium); font-family: 'GeistMono'; font-size: 10.5px; padding: 3px 8px; border-radius: 6px; cursor: pointer; }
-.copy-text-btn:hover, .pc-copy-btn:hover { color: var(--text-high); border-color: var(--text-low); }
-.copy-text-btn.done, .pc-copy-btn.done { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, transparent); }
-.copy-text-btn svg, .pc-copy-btn svg { width: 12px; height: 12px; }
+.copy-text-btn { display: inline-flex; align-items: center; gap: 5px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-medium); font-family: 'GeistMono'; font-size: 10.5px; padding: 3px 8px; border-radius: 6px; cursor: pointer; }
+.copy-text-btn:hover { color: var(--text-high); border-color: var(--text-low); }
+.copy-text-btn.done { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, transparent); }
+.copy-text-btn svg { width: 12px; height: 12px; }
 .json-copy-row { display: flex; justify-content: flex-end; margin-bottom: 8px; }
-
-/* ============================================================
-   Security page
-   The signature element is the fuse grid: one small vertical gauge per asset
-   that carries a deposit limit, filled to the share of its 24h mint allowance
-   already spent. Sixty gauges read as one instrument; the table below carries
-   the numbers. `--fuse-w` is the only knob — every other size follows from it.
-   ============================================================ */
-
-.fuse-grid { --fuse-w: 54px; display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--fuse-w), 1fr)); gap: 8px; }
-.fuse {
-  display: flex; flex-direction: column; border-radius: 9px; overflow: hidden;
-  border: 1px solid var(--separator); background: var(--bg-elev2);
-  text-decoration: none; transition: border-color 140ms, transform 140ms var(--ease-out-soft);
-}
-.fuse:hover { border-color: var(--text-low); transform: translateY(-2px); }
-.fuse:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* The gauge body. `color` is set per fuse so the fill and the number share one
-   hue without a second inline style. */
-.fuse-body { position: relative; display: block; height: 46px; }
-/* A hairline floor so an empty gauge still reads as an instrument rather than a
-   blank tile. */
-.fuse-body::after { content: ''; position: absolute; inset: auto 0 0 0; height: 1px; background: var(--text-lowest); }
-.fuse-fill { position: absolute; inset: auto 0 0 0; background: currentColor; opacity: .82; transition: height 500ms var(--ease-out-soft); }
-.fuse-pct {
-  position: absolute; inset: 4px 0 auto 0; text-align: center;
-  font-family: 'GeistMono'; font-size: 9.5px; font-weight: 600; letter-spacing: 0.02em;
-  color: currentColor;
-}
-/* A gauge filled past the label zone would render the number in its own hue
-   (red on red for a locked/frozen fuse) — back it with the tile's own surface
-   so LOCK/FRZ/99 stay readable on any fill color in both themes. */
-.fuse-pct.on-fill {
-  color: var(--text-high);
-  background: color-mix(in srgb, var(--bg-elev2) 78%, transparent);
-  width: fit-content; margin: 0 auto; padding: 0 3px; border-radius: 4px;
-}
-.fuse-plate {
-  display: block; padding: 4px 3px 5px; text-align: center; border-top: 1px solid var(--separator);
-  background: var(--panel); font-family: 'GeistMono'; font-size: 9px; letter-spacing: 0.02em;
-  color: var(--text-medium); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.fuse.dormant .fuse-plate { color: var(--text-lowest); }
-.fuse.locked { border-color: var(--red); box-shadow: inset 0 0 0 1px var(--red-soft); }
-.fuse.locked .fuse-plate { color: var(--red); }
-@media (prefers-reduced-motion: reduce) {
-  .fuse, .fuse-fill { transition: none; }
-  .fuse:hover { transform: none; }
-}
-
-.sec-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 14px; font-family: 'GeistMono'; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-low); }
-.sec-legend span { display: inline-flex; align-items: center; gap: 6px; }
-.sec-legend i { width: 9px; height: 9px; border-radius: 2px; }
-.sec-legend .muted { margin-left: auto; text-transform: none; letter-spacing: 0; }
-
-/* Wide load meter — the chain-wide withdraw budget. Quarter ticks give the bar a
-   scale without an axis. */
-.load-meter { position: relative; width: 100%; border-radius: 9999px; background: var(--panel); border: 1px solid var(--separator); overflow: hidden; }
-.load-meter .lm-fill { position: absolute; inset: 0 auto 0 0; border-radius: 9999px; transition: width 600ms var(--ease-out-soft); }
-/* Quarter ticks read against both the empty track and the fill, so they are a
-   text-scale hairline rather than the page background. */
-.load-meter .lm-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--text-lowest); opacity: .55; }
-.load-meter .lm-label { position: absolute; inset: 0 10px 0 auto; display: flex; align-items: center; font-size: 10.5px; font-weight: 600; color: var(--text-medium); }
-@media (prefers-reduced-motion: reduce) { .load-meter .lm-fill { transition: none; } }
-
-.sec-meter-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
-.sec-meter-value { font-size: 19px; font-weight: 600; color: var(--text-high); }
-
-.sec-sub { font-family: 'GeistMono'; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-low); margin: 18px 0 9px; }
-.sec-pills { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
-.sec-delisted { background: var(--panel); color: var(--text-medium); border: 1px solid var(--separator); }
-.sec-delisted:hover { color: var(--text-high); border-color: var(--text-low); }
-
-/* Yearly trip counts: value above, bar, year below. Four bars need a scale, not
-   a chart. */
-.year-bars { display: flex; align-items: flex-end; gap: 14px; height: 132px; }
-.year-bars .yb { display: flex; flex-direction: column; align-items: center; gap: 5px; flex: 1; min-width: 34px; height: 100%; }
-.year-bars .yb-v { font-family: 'GeistMono'; font-size: 11px; font-weight: 600; color: var(--text-high); }
-.year-bars .yb-track { flex: 1; width: 100%; display: flex; align-items: flex-end; }
-.year-bars .yb-track i { display: block; width: 100%; border-radius: 4px 4px 0 0; min-height: 3px; opacity: .85; }
-.year-bars .yb-k { font-family: 'GeistMono'; font-size: 10px; color: var(--text-low); }
-
-.sec-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; align-items: start; }
-.sec-errors { display: flex; flex-direction: column; gap: 6px; }
-.sec-err { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 11.5px; color: var(--text-medium); border-bottom: 1px solid var(--separator); padding-bottom: 5px; }
-.sec-err:last-child { border-bottom: 0; }
-.sec-err.dim { color: var(--text-lowest); }
-.sec-err-n { color: var(--text-high); font-weight: 600; }
-.sec-err.dim .sec-err-n { color: var(--text-lowest); font-weight: 400; }
-
-.sec-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
-.tbl td.sec-dot-cell { padding-right: 0; }
-
-.sec-more { display: flex; justify-content: center; margin: 12px 0 4px; }
-.sec-warn { border-color: color-mix(in srgb, var(--amber) 45%, transparent); color: var(--text-medium); font-size: 12.5px; }
-.sec-asof { margin: 26px 0 40px; text-align: center; }
-
-.sec-bounty { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
-.sec-bounty div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text-medium); border-bottom: 1px solid var(--separator); padding-bottom: 5px; }
-.sec-bounty div:last-child { border-bottom: 0; }
-.sec-bounty .mono { color: var(--text-high); }
-.sec-links { display: flex; flex-direction: column; gap: 7px; margin-top: 16px; font-family: 'GeistMono'; font-size: 11px; }
-.sec-links a { color: var(--accent); }
-.sec-links a:hover { text-decoration: underline; }
-/* The audit list is the only table on the page narrow enough not to need the
-   shared 760px floor, so it keeps its natural width beside the bounty card. */
-.assurance .tbl { min-width: 0; }
-.assurance-tbl tbody td { font-size: 12px; }
-
-@media (max-width: 860px) {
-  .fuse-grid { --fuse-w: 46px; gap: 6px; }
-  .sec-split { grid-template-columns: minmax(0, 1fr); gap: 18px; }
-  .sec-legend .muted { margin-left: 0; width: 100%; }
-  .sec-meter-value { font-size: 16px; }
-  .year-bars { height: 112px; gap: 10px; }
-}
-
-/* Egress sinks: the chain a sovereign account belongs to, then the account. The
-   chain name is the identifying half, so it leads. */
-.sec-sinks { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 10px; }
-.sec-sink { display: inline-flex; align-items: center; gap: 7px; }
-.sec-sink-chain { font-family: 'GeistMono'; font-size: 11px; color: var(--text-medium); }
-.sec-orphan { background: var(--amber-soft); color: var(--amber); margin-left: 8px; }
-
-/* Overview cards are buttons that switch tabs, so they carry the card's own look
-   with a button's affordance rather than a link's. */
-/* The summary cards read as rows of three rather than auto-fit's ragged last
-   row, so the fixed count wins here. A card left alone on the last row stretches
-   across it instead of sitting in a column of empty space. */
-.sec-ov { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.sec-ov > :last-child:nth-child(3n + 1) { grid-column: 1 / -1; }
-@media (max-width: 1119px) {
-  .sec-ov { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .sec-ov > :last-child:nth-child(3n + 1) { grid-column: auto; }
-  .sec-ov > :last-child:nth-child(odd) { grid-column: 1 / -1; }
-}
-.sec-ov-card { text-align: left; cursor: pointer; transition: border-color 140ms, background 140ms; }
-.sec-ov-card:hover { border-color: var(--text-low); background: var(--panel-hover); }
-.sec-ov-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.sec-inline-link { color: var(--accent); font: inherit; }
-.sec-inline-link:hover { text-decoration: underline; }
-.sec-supplemental { background: var(--panel); color: var(--text-low); border: 1px solid var(--separator); margin-left: 8px; }
-
-/* Security page — phone layout. (The section nav's own phone rules live with
-   the .sec-nav-link rules below, after the base declarations they override.) */
-@media (max-width: 720px) {
-  /* A phone card should not be a column of em-dashes: a cell with nothing in it
-     drops out, exactly as the accounts directory does. The desktop grid keeps
-     every column so the table still lines up. */
-  .tbl tbody td.cell-empty { display: none; }
-
-  /* Long unbroken identifiers (a pallet.call name) wrap instead of being clipped
-     by the labelled cell's `overflow: hidden`. */
-  .tbl tbody td.sec-wrap { overflow-wrap: anywhere; }
-
-  /* Values that carry a trailing qualifier ("$8.79k vs $0.17 left") need the two
-     parts stacked rather than crushed against the label. */
-  .tbl tbody td[data-label="Debt at risk"] .muted { display: block; }
-
-  /* The fuse plate's symbol is the only text on a 46px tile; give it the width. */
-  .fuse-plate { padding-left: 1px; padding-right: 1px; letter-spacing: 0; }
-
-  /* The egress budget reads as two lines on a phone — the used figure is the
-     number that matters, the limit is context. */
-  .sec-meter-head { row-gap: 6px; }
-  .sec-sinks { gap: 8px 14px; }
-}
-
-/* The first cell of every Security table names the thing the card is about — an
-   asset chip, a market, a paused call, an action. On a phone that is the card's
-   title, so it keeps the left edge and drops its column label, exactly as the
-   assets directory does. Everything after it stays a labelled value row. */
-@media (max-width: 720px) {
-  /* `Action` is named explicitly because the ledger's first cell is its colour dot,
-     which the phone layout hides — so the title is the second cell there. */
-  .sec-tbl tbody td[data-label]:first-child,
-  .sec-tbl tbody td[data-label="Action"] { text-align: left; padding-bottom: 8px; }
-  .sec-tbl tbody td[data-label]:first-child::before,
-  .sec-tbl tbody td[data-label="Action"]::before { display: none; }
-  .sec-tbl tbody td[data-label]:first-child .asset-chip { justify-content: flex-start; }
-  /* A title that is plain text reads as a heading rather than a value. */
-  .sec-tbl tbody td[data-label="Market"], .sec-tbl tbody td[data-label="Action"],
-  .sec-tbl tbody td[data-label="Paused call"], .sec-tbl tbody td[data-label="Published"] { font-weight: 500; }
-}
-
-/* Stat cards nested inside a padded card have ~318px to share on a 390px phone,
-   which is just under the shared 160px floor — so they fell to one per row and the
-   withdraw panel alone became four screens of scrolling. A slightly lower floor,
-   scoped to this page, pairs them up. */
-@media (max-width: 720px) {
-  .sec-page .pf-card .hdx-cards { grid-template-columns: repeat(auto-fit, minmax(136px, 1fr)); gap: 8px; }
-  .sec-page .pf-card .hdx-card { padding: 12px 13px; }
-  .sec-page .pf-card .hdx-card .hs { font-size: 10.5px; }
-}
-
-/* A risk figure leads with the money; the position count follows, small and quiet,
-   because it answers "how many" only after "how much". */
-.sec-amt { display: inline-flex; align-items: baseline; gap: 7px; white-space: nowrap; }
-.sec-amt-n { font-size: 11px; color: var(--text-low); }
-.sec-amt-n::after { content: ' pos'; }
-/* A qualifier that belongs to the column, not to the value under it. */
-.tbl thead th .th-sub { display: block; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text-lowest); }
-
-/* Security sections are pages, not tabs, so the nav row is links — same look as the
-   shared tab bar, but a real navigation, which is what resets the scroll position
-   and gives each section its own URL and history entry. */
-.sec-section-nav .tabs .sec-nav-link {
-  flex: 0 0 auto; padding: 10px 16px; font-size: 13px; font-weight: 500; color: var(--text-medium);
-  border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 140ms, border-color 140ms;
-}
-.sec-section-nav .tabs .sec-nav-link:hover { color: var(--text-high); }
-.sec-section-nav .tabs .sec-nav-link.active { color: var(--accent); border-bottom-color: var(--accent); }
-
-/* Phone: seven section links cannot fit 390px, and the shared tab bar they
-   borrow their look from scrolls with no visible affordance. The row wraps
-   instead — every destination stays on screen, at the cost of a second line.
-   The sliding ink cannot follow the wrap: its ::before is pinned to the BAR's
-   bottom edge with only horizontal coordinates, so a first-row active link
-   would draw its indicator under an unrelated second-row tab. No ink here;
-   the per-link underline marks the active section instead. */
-@media (max-width: 720px) {
-  .sec-section-nav .tabs { flex-wrap: wrap; overflow: visible; row-gap: 0; }
-  .sec-section-nav .tabs .sec-nav-link { flex: 0 1 auto; padding: 9px 12px; }
-  .sec-section-nav .tabs.has-ink::before { content: none; }
-  .sec-section-nav .tabs.has-ink .sec-nav-link.active { border-bottom-color: var(--accent); }
-}
-
-/* Every ribbon number opens the section that explains it. */
-.ribbon .sec-ribbon-cell { border-radius: 10px; transition: background 140ms; }
-.ribbon .sec-ribbon-cell:hover { background: var(--panel-hover); }
-.ribbon .sec-ribbon-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-/* Security → Wormhole
-   The signature element is the beam board: one horizontal beam per bridged
-   asset, where the bar is what Hydration minted plus what is still moving, and
-   a single high-contrast tick is what the origin chain holds in custody. The
-   two sides are normalized against whichever is larger, so every beam spans the
-   full width and the only thing to read is where the tick lands — flush with
-   the end is fully backed, short of it is not. Sizes follow the beam height. */
-.wh-beams { display: flex; flex-direction: column; gap: 15px; }
-.wh-beam-row { display: flex; flex-direction: column; gap: 6px; }
-.wh-beam-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.wh-beam {
-  position: relative; height: 20px; border-radius: 6px; overflow: hidden;
-  background: var(--panel); border: 1px solid var(--separator);
-}
-/* Custody that could not be read: the track keeps its shape but says openly
-   that its right-hand side is unknown — dashed, with the supply bar quietened
-   so a full-width beam never reads as a full-width answer. */
-.wh-beam.unread { border-style: dashed; }
-.wh-beam.unread .wh-minted {
-  background: color-mix(in srgb, currentColor 16%, transparent);
-  box-shadow: inset -2px 0 0 color-mix(in srgb, currentColor 50%, transparent);
-}
-.wh-seg { position: absolute; top: 0; bottom: 0; transition: left 480ms var(--ease-out-soft), width 480ms var(--ease-out-soft); }
-/* Minted supply, in the asset's own brand hue (set inline as `color`): a soft
-   fill so a whole column of beams stays quiet, with a solid inset edge at full
-   strength so the bar's end is exact however thin the segment is. */
-.wh-minted { background: color-mix(in srgb, currentColor 34%, transparent); box-shadow: inset -2px 0 0 currentColor; }
-/* Transfers between the chains, hatched because they are neither minted nor in
-   custody — they are the reason the two sides may legitimately disagree. A
-   floor of 3px keeps a real transfer visible against a million-token bar
-   without inflating the geometry it is measured on. */
-.wh-flight {
-  min-width: 3px;
-  background: repeating-linear-gradient(135deg,
-    color-mix(in srgb, var(--text-medium) 62%, transparent) 0 2px,
-    transparent 2px 5px);
-}
-/* Burned here, redeemed there, and refused release by the origin chain's own
-   inbound rate limiter. Hatched like an in-flight segment, because it explains
-   the same gap between the two sides — and tinted amber, because unlike a
-   transfer in flight it will not clear on its own: somebody has to complete it.
-   Keeps the same 3px floor for the same reason. */
-.wh-queued {
-  min-width: 3px;
-  background: repeating-linear-gradient(135deg,
-    color-mix(in srgb, var(--amber) 70%, transparent) 0 2px,
-    transparent 2px 5px);
-}
-/* Supply custody does not cover, drawn over the stretch of bar it eats into.
-   A shortfall is the one thing on this page that may never be too small to
-   see, so it keeps a floor the same way an in-flight segment does. */
-.wh-gap {
-  background: color-mix(in srgb, var(--red) 30%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red) 60%, transparent);
-}
-/* A small shortfall (inside the attention grade) warns without shouting. */
-.wh-gap.warn {
-  background: color-mix(in srgb, var(--amber) 34%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 65%, transparent);
-}
-/* Custody beyond what the chain owes — expected, and deliberately unalarming. */
-.wh-spare { background: color-mix(in srgb, var(--text-low) 20%, transparent); }
-.wh-tick {
-  /* Placement is inline: clamped `left` when custody reaches the bar's end,
-     right-anchored beside the gap floor when it does not. */
-  position: absolute; top: 0; bottom: 0; width: 3px; z-index: 3;
-  background: var(--text-high);
-  transition: left 480ms var(--ease-out-soft), right 480ms var(--ease-out-soft);
-}
-.wh-beam-foot { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--text-medium); }
-.wh-beam-foot .wh-delta { margin-left: auto; }
-@media (prefers-reduced-motion: reduce) { .wh-seg, .wh-tick { transition: none; } }
-
-/* The legend explains the beam's shapes, so each key is the shape itself rather
-   than a colour dot. */
-.sec-legend .wh-key { width: 13px; height: 9px; border-radius: 2px; }
-.sec-legend .wh-key.minted { background: color-mix(in srgb, var(--text-medium) 34%, transparent); box-shadow: inset -2px 0 0 var(--text-medium); }
-.sec-legend .wh-key.flight { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--text-medium) 62%, transparent) 0 2px, transparent 2px 5px); }
-.sec-legend .wh-key.queued { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--amber) 70%, transparent) 0 2px, transparent 2px 5px); }
-.sec-legend .wh-key.tick { width: 3px; border-radius: 1px; background: var(--text-high); }
-.sec-legend .wh-key.gap { background: color-mix(in srgb, var(--red) 30%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red) 60%, transparent); }
-.sec-legend .wh-key.spare { background: color-mix(in srgb, var(--text-low) 20%, transparent); }
-
-/* Assets table: the chip names the token, the address under it names the
-   manager contract that mints it. */
-.wh-asset { display: inline-flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-.wh-mgr { font-size: 10.5px; color: var(--text-low); }
-.wh-mgr:hover { color: var(--accent); }
-.wh-origin { display: inline-flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-.wh-chain { color: var(--text-high); }
-.wh-out { font-family: 'GeistMono'; font-size: 10.5px; color: var(--accent); white-space: nowrap; }
-.wh-out:hover { text-decoration: underline; }
-.wh-count { color: var(--text-lowest); }
-.wh-route .wh-hop { color: var(--text-high); white-space: nowrap; }
-.wh-route .wh-hop:hover { color: var(--accent); }
-.wh-arrow { color: var(--text-lowest); padding: 0 3px; }
-.badge.wh-quiet { background: var(--panel); color: var(--text-low); }
-/* A queued release sits in the same table as a transfer in flight, so its route
-   is stated rather than linked (a digest is not a transaction anywhere). */
-.wh-queued-row .wh-route .wh-hop { cursor: help; }
-.wh-release { white-space: nowrap; font-size: 11.5px; color: var(--text-medium); }
-/* Past its timer the release is anybody's to complete — the one thing on this
-   surface that is an invitation rather than a report. */
-.wh-release.ready { color: var(--green); }
-.wh-digest { display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; }
-.wh-digest .mono { font-size: 10.5px; }
-/* A footnote naming several sources is prose, not a caption: it reads left, at
-   a measure, rather than centred like the one-line one it sits in place of. */
-/* Left-aligned across the content column — provenance reads as a paragraph,
-   not a centered caption. */
-.sec-asof.sec-wh-asof { text-align: left; }
-
-@media (max-width: 720px) {
-  .wh-beams { gap: 18px; }
-  .wh-beam { height: 18px; }
-  .wh-beam-foot .wh-delta { margin-left: 0; }
-  /* Both cells hold two parts that would otherwise be crushed against the
-     label; they stack under it instead. */
-  .sec-tbl tbody td[data-label="Origin"] .wh-origin { justify-content: flex-end; }
-}
-
-/* ── /revenue — the revenue river ─────────────────────────────────────────────
-   Incomes drift from the right edge into the treasury counter (top → bottom on
-   phones). Particles animate transform only (see .rev-particle below): the
-   drift runs on the compositor, and the travel distance to the counter is
-   measured at spawn from the stage box (RevenueFlow.tsx) into --travel. The
-   global prefers-reduced-motion blocks kill these animations wholesale; the
-   component additionally renders a ledger list instead of the river in that
-   mode. */
-.rev-hero { padding: 0; margin-bottom: 24px; }
-/* River and the totals ribbon share ONE panel; the ribbon's top border is the separator. */
-.rev-hero-ribbon { display: flex; justify-content: flex-start; margin: 0; padding: 14px 8px; border-top: 1px solid var(--separator); }
-.rev-hero-ribbon .cell { align-items: flex-start; }
-.rev-river { position: relative; height: 300px; padding: 0; }
-.rev-river.rev-fullscreen, .rev-river:fullscreen { height: 100vh; border-radius: 0; border: 0; background: var(--bg-elev); }
-.rev-current { position: absolute; inset: 0; pointer-events: none;
-  background:
-    radial-gradient(120% 90% at 12% 50%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 55%),
-    radial-gradient(90% 70% at 85% 20%, color-mix(in srgb, var(--sky) 6%, transparent), transparent 60%),
-    linear-gradient(90deg, transparent, color-mix(in srgb, var(--sky) 3%, transparent));
-}
-.rev-vertical .rev-current { background:
-    radial-gradient(120% 60% at 50% 92%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 55%),
-    linear-gradient(180deg, color-mix(in srgb, var(--sky) 3%, transparent), transparent); }
-.rev-stage { position: absolute; inset: 0; overflow: hidden; }
-
-.rev-counter { position: absolute; left: 20px; top: 50%; transform: translateY(-50%); z-index: 4;
-  padding: 12px 16px; border-radius: 14px; background: color-mix(in srgb, var(--bg-elev2) 78%, transparent);
-  border: 1px solid var(--separator); backdrop-filter: blur(6px); }
-.rev-counter-num { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
-.rev-counter-sub { font-size: 11px; color: var(--text-low); margin-top: 2px; }
-.rev-counter.pulse-a { animation: revPulse 520ms var(--ease-out-soft); }
-.rev-counter.pulse-b { animation: revPulseB 520ms var(--ease-out-soft); }
-@keyframes revPulse  { 30% { transform: translateY(-50%) scale(1.045); } }
-@keyframes revPulseB { 30% { transform: translateY(-50%) scale(1.045); } }
-.rev-vertical .rev-counter { left: 50%; top: auto; bottom: 44px; transform: translateX(-50%); text-align: center; }
-.rev-vertical .rev-counter.pulse-a { animation: revPulseV 520ms var(--ease-out-soft); }
-.rev-vertical .rev-counter.pulse-b { animation: revPulseVB 520ms var(--ease-out-soft); }
-@keyframes revPulseV  { 30% { transform: translateX(-50%) scale(1.045); } }
-@keyframes revPulseVB { 30% { transform: translateX(-50%) scale(1.045); } }
-.rev-fullscreen .rev-counter-num { font-size: 38px; }
-
-/* Drift on TRANSFORM only (composited): animating left/top re-lays-out every
-   frame and visibly stutters once a few pills float. --travel is measured at
-   spawn from the stage's own size. */
-.rev-particle { position: absolute; top: var(--lane); left: 100%; z-index: 2; will-change: transform, opacity; }
-.rev-river:not(.rev-vertical) .rev-particle { animation: revDriftX var(--dur) linear forwards; }
-@keyframes revDriftX {
-  0%   { transform: translateX(0); opacity: 0; }
-  6%   { opacity: 1; }
-  88%  { opacity: 1; }
-  100% { transform: translateX(var(--travel)); opacity: 0; }
-}
-.rev-vertical .rev-particle { top: -30px; left: var(--lane); animation: revDriftY var(--dur) linear forwards; }
-@keyframes revDriftY {
-  0%   { transform: translateY(0); opacity: 0; }
-  6%   { opacity: 1; }
-  86%  { opacity: 1; }
-  100% { transform: translateY(var(--travel)); opacity: 0; }
-}
-.rev-paused .rev-particle { animation-play-state: paused; }
-
-.rev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.rev-mote { width: var(--size); height: var(--size); border-radius: 50%; background: var(--tint);
-  box-shadow: 0 0 calc(var(--size) * 1.6) color-mix(in srgb, var(--tint) 70%, transparent); opacity: 0.9; }
-.rev-merged { outline: 2px solid color-mix(in srgb, var(--tint) 45%, transparent); outline-offset: 2px; }
-.rev-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
-  background: var(--bg-elev2); border: 1px solid var(--separator);
-  font-size: 12px; white-space: nowrap; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14); }
-.rev-pill-label { color: var(--text-high); max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
-a.rev-pill-label:hover { color: var(--accent); }
-.rev-pill-usd { color: var(--text-medium); font-size: 11px; }
-.rev-fullscreen .rev-pill { font-size: 14px; }
-
-/* Deliberately quiet: a ghost control that only surfaces on hover/focus. */
-.rev-fs-btn { position: absolute; top: 10px; right: 12px; z-index: 5; width: 30px; height: 30px;
-  border-radius: 8px; border: 0; background: transparent;
-  color: var(--text-lowest); font-size: 14px; line-height: 1; cursor: pointer; }
-.rev-fs-btn:hover { color: var(--text-high); background: color-mix(in srgb, var(--bg-elev2) 70%, transparent); }
-.rev-fs-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-.rev-river-foot { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; display: flex; gap: 14px;
-  align-items: center; justify-content: space-between; padding: 8px 14px; font-size: 11px; color: var(--text-low);
-  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--bg-elev) 82%, transparent) 55%); }
-.rev-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: flex-start; }
-.rev-legend-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-.rev-legend-item .rev-dot { width: 6px; height: 6px; }
-@media (max-width: 720px) {
-  .rev-river { height: 420px; }
-  .rev-legend { display: none; }
-  .rev-river-foot { justify-content: center; }
-}
-
-/* Reduced-motion ledger: the same incomes as calm rows. */
-.rev-ledger-mode { display: flex; flex-direction: column; height: auto; min-height: 220px; }
-.rev-ledger-mode .rev-counter { position: static; transform: none; margin: 14px 14px 4px; align-self: flex-start; }
-.rev-ledger { padding: 6px 14px 12px; display: flex; flex-direction: column; gap: 4px; }
-.rev-ledger-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 3px 0; }
-.rev-ledger-row .rev-ledger-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-medium); }
-.rev-empty { color: var(--text-low); font-size: 12.5px; padding: 8px 0 14px; }
-
-/* /revenue body: breakdown + top payers side by side, stacked on phones.
-   min-width: 0 on the tracks: a grid child's min-content (a wide table) must
-   shrink into its track instead of blowing the grid past the page wrap. */
-.rev-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; align-items: start; }
-.rev-grid > div { min-width: 0; }
-/* The base .tbl pins min-width: 760px for full-width panels; these two live in
-   half-width tracks and must fit them instead of sliding under each other. */
-.rev-grid .tbl { min-width: 0; }
-@media (max-width: 920px) { .rev-grid { grid-template-columns: 1fr; } }
-/* Page-level timeframe row: governs history, breakdown and top payers alike. */
-.rev-controls { display: flex; justify-content: flex-end; margin: 4px 0 -30px; position: relative; z-index: 1; }
-@media (max-width: 720px) {
-  .rev-controls { justify-content: flex-start; margin-bottom: 0; }
-  /* Three short tabs never scroll, so the mobile tab bars' right-edge
-     "scroll for more" fade (see the .tabs mask below) only chews the last
-     button; exempt this selector from it. */
-  .rev-controls .tabs { -webkit-mask-image: none; mask-image: none; }
-}
-.rev-breakdown-tbl { margin-top: 12px; }
-
-/* Protocol Revenue detail tab: /revenue's breakdown at the account grain, each
-   stream row expandable into its per-asset composition. */
-.revbd-total { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
-.revbd-total .k { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-low); }
-.revbd-total .v { font-size: 16px; font-weight: 600; }
-.revbd-stream.expandable { cursor: pointer; }
-.revbd-stream.expandable:hover td { background: var(--panel-hover); }
-.revbd-chev { margin-left: 7px; font-size: 10px; color: var(--text-low); }
-/* Asset sub-rows: indented under the stream's dot, visually part of its group. */
-.revbd-asset td:first-child { padding-left: 34px; }
-.revbd-asset td { border-bottom-style: dashed; }
-.revbd-asset-cell { display: inline-flex; align-items: center; gap: 12px; min-width: 0; }
-/* Share-of-stream bar in the stream's own color; width set inline. */
-.revbd-assetbar { flex: none; width: 90px; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--text-low) 14%, transparent); overflow: hidden; }
-.revbd-assetbar > span { display: block; height: 100%; border-radius: 2px; }
-@media (max-width: 720px) {
-  .revbd-assetbar { display: none; }
-  .revbd-asset td:first-child { padding-left: 22px; }
-}
-.rev-note { color: var(--text-low); font-size: 12.5px; max-width: 720px; margin: 18px 2px 8px; line-height: 1.55; }
-
-/* ── Top liquidity providers (asset Liquidity tab) ─────────────────────────────
-   The section header is a disclosure button. The global button reset strips
-   everything (see .fn-head), so it wears the surrounding .sec-title type via
-   font/color inherit, with a caret that reflects the expanded state. */
-.lp-expand { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; }
-.lp-expand:hover { color: var(--text-high); }
-.lp-expand:focus-visible { outline: 2px solid var(--sky-deep); outline-offset: 2px; border-radius: 4px; }
-.lp-expand .caret { color: var(--text-low); }
 
 /* ── /governance ──────────────────────────────────────────────────────────────
    One page for every decision body. The live cards lead; the shared status
@@ -3477,4 +2140,3 @@ a.rev-pill-label:hover { color: var(--accent); }
    half a column wrapped and half did not, and the amounts zigzagged vertically
    (the cross-chain fuse table split 36/34 when measured). A block makes every
    priced cell the same two-line shape at every viewport. */
-.sec-usd { display: block; font-size: 11px; white-space: nowrap; }

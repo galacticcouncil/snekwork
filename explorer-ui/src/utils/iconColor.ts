@@ -14,7 +14,7 @@ import type { AssetRef } from '../types'
 // color is requested for registers in a session registry, and collisions
 // (vDOT/aDOT are both Polkadot pink) are resolved centrally in canonical order
 // (resolveAssetChartColors) rather than per chart. That is what makes the same
-// asset wear the same color on every surface — the Omnipool bar and its
+// asset wear the same color on every surface — a pool's bar and its
 // history, a pool row and the pool page, a treemap tile and a legend — while
 // two lookalikes still separate into shades of their own colour where they meet.
 

@@ -1,9 +1,9 @@
 import { expect, test } from './fixtures/test'
 
 // Mobile account header: the identity block (inline emoji + name + address)
-// takes the first row on its own, and every stat — the trading & liquidation
-// volumes, then the account value — shares ONE line below it, clustered right
-// with the value last and largest.
+// takes the first row on its own, and every stat — the trading volume, then
+// the account value — shares ONE line below it, clustered right with the value
+// last and largest.
 test.use({ viewport: { width: 390, height: 844 } })
 
 const FOX = '1L53bUTBopXqDXSXjBdQXFV7jZ8FtdRZS5JoMjGq5z3Cv2zr'
@@ -23,17 +23,15 @@ test('the identity keeps its own row; every stat shares one line below', async (
   // Right-aligned: the value block ends in the right half of the 390px viewport.
   expect(v.x + v.width).toBeGreaterThan(300)
 
-  // Both volumes exist for this account and sit on that same line, left of the
-  // value — the whole group top-aligned so the labels read as one row.
+  // The trading volume sits on that same line, left of the value — the whole
+  // group top-aligned so the labels read as one row.
   const addr = (await page.locator('.acct-meta .full').boundingBox())!
   const volumes = page.locator('.acct-stats .acct-bal.subtle')
-  await expect(volumes).toHaveCount(2)
+  await expect(volumes).toHaveCount(1)
   const b0 = (await volumes.nth(0).boundingBox())!
-  const b1 = (await volumes.nth(1).boundingBox())!
-  expect(b0.y, 'volumes below the address').toBeGreaterThan(addr.y + addr.height - 2)
-  expect(Math.abs(b0.y - b1.y), 'volumes on one shared line').toBeLessThan(2)
+  expect(b0.y, 'volume below the address').toBeGreaterThan(addr.y + addr.height - 2)
   expect(Math.abs(b0.y - v.y), 'value on that same line').toBeLessThan(2)
-  expect(b1.x + b1.width, 'value last in the group').toBeLessThanOrEqual(v.x)
+  expect(b0.x + b0.width, 'value last in the group').toBeLessThanOrEqual(v.x)
 
   // The header must not widen the page.
   const overflow = await page.evaluate(() =>

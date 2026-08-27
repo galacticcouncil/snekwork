@@ -117,7 +117,7 @@ export function separateSeriesColors(colors: readonly string[], floor = FLOOR): 
 
 // THE app-wide assignment of chart colours to assets: every asset that gets
 // charted anywhere resolves here, in one canonical order, so the same asset
-// wears the same colour on every surface (Omnipool bar vs its history, a pool
+// wears the same colour on every surface (a pool's bar vs its history, a pool
 // row vs the pool page, a treemap tile vs a legend). Canonical order is
 // assetId ascending — the established listing keeps its exact icon colour and
 // a newer near-duplicate takes the shade — which also makes the result

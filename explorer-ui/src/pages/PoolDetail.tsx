@@ -3,31 +3,17 @@ import { usePoolActivity, usePoolDetail, usePoolLps } from '../hooks/useExplorer
 import { useNow } from '../hooks/useNow'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { Link, paths } from '../router'
-import { accountHref, AddrPill, Ago, AreaChart, AssetAmount, AssetChip, AssetIcon, ChartSkeleton, compactAmount, Crumbs, Dash, EmptyRow, F, Pager, pendingRows, PoolBadge, rowNav, TableSkeleton } from '../components/ui'
-import { ChartLegend, MultiLineChart, ShareBar, StackedAreaChart, type ShareSegment } from '../components/charts'
+import { accountHref, AddrPill, Ago, AreaChart, AssetAmount, AssetChip, AssetIcon, ChartSkeleton, Crumbs, Dash, EmptyRow, F, Pager, pendingRows, PoolBadge, rowNav, TableSkeleton } from '../components/ui'
+import { ChartLegend, ShareBar, StackedAreaChart, type ShareSegment } from '../components/charts'
 import { ActivityTable } from '../components/ActivityTable'
 import { useAssetColors } from '../utils/iconColor'
-import type { PegSourceInfo, PoolDetail as PoolDetailData } from '../types'
+import type { PoolDetail as PoolDetailData } from '../types'
 
-// One stableswap or XYK pool, addressed by its share/LP token id: current
-// composition (with drifting pegs and their oracle sources where the pool has
-// them), parameters, the sampled history (TVL, per-asset composition, peg
-// drift, LP supply) and the pool's recent activity.
+// One XYK pool, addressed by its share/LP token id: current composition,
+// parameters, the sampled history (TVL, per-asset composition) and the pool's
+// recent activity.
 
 const fmtPermill = (v: number) => `${(v / 10_000).toLocaleString('en-US', { maximumFractionDigits: 4 })}%`
-const fmtPerbill = (v: number) => `${(v / 10_000_000).toLocaleString('en-US', { maximumFractionDigits: 7 })}%`
-const fmtPeg = (v: number) => v.toLocaleString('en-US', { minimumSignificantDigits: 4, maximumSignificantDigits: 6 })
-
-function pegSourceLabel(src: PegSourceInfo): string {
-  if (src.kind === 'value') return 'Constant'
-  if (src.kind === 'mmOracle') return `MM oracle ${src.address ? `${src.address.slice(0, 6)}…${src.address.slice(-4)}` : ''}`.trim()
-  return [src.source, src.oracleAsset?.symbol, src.period].filter(Boolean).join(' · ')
-}
-
-const PARAM_KIND_LABEL: Record<string, string> = {
-  created: 'Created', amplification: 'Amplification', fee: 'Fee',
-  'peg-source': 'Peg source', 'max-peg-update': 'Peg limit', destroyed: 'Destroyed',
-}
 
 function PoolBody({ d }: { d: PoolDetailData }) {
   // Share first: a pool's history is about the balance between its assets, and
@@ -40,15 +26,12 @@ function PoolBody({ d }: { d: PoolDetailData }) {
   const colorFor = useAssetColors([
     ...d.assets.map(a => a.asset),
     ...d.history.composition.map(c => c.asset),
-    ...(d.history.pegs ?? []).map(p => p.asset),
   ])
   // The pool's OWN activity, not its share token's: a swap through this pool
   // moves its member assets, so an asset-pinned feed on the share token shows
   // liquidity and share trades while the pool's swaps are invisible.
   const activity = usePoolActivity(d.poolId, 12)
   const activityRows = activity.data ?? []
-  const hasPegs = d.assets.some(a => a.peg != null && a.peg.price !== 1)
-  const ramping = d.amplification != null && d.amplification.current !== d.amplification.final
 
   const shareSegments: ShareSegment[] = d.tvlUsd != null
     ? d.assets.map((a, i) => ({
@@ -58,10 +41,10 @@ function PoolBody({ d }: { d: PoolDetailData }) {
     : []
 
   // History models: composition in USD (nulls where a leg was unpriced or the
-  // pool inactive); TVL and issuance as gap-aware line series.
+  // pool inactive); TVL as a gap-aware line series.
   //
-  // Share is the default view, as on the Omnipool: what a reader wants from a
-  // pool's history is how its balance between the assets moved, and in USD that
+  // Share is the default view: what a reader wants from a pool's history is how
+  // its balance between the assets moved, and in USD that
   // rotation is hidden inside the pool's own growth or decline — every band
   // rises and falls together and says nothing about the mix. Normalizing each
   // bucket to 100% of its priced total answers the question directly, and the
@@ -76,28 +59,14 @@ function PoolBody({ d }: { d: PoolDetailData }) {
   }))
   const hasCompUsd = compSeries.some(s => s.values.some(v => v != null))
   const tvlPoints = d.history.buckets.map((b, i) => ({ b, v: d.history.tvlUsd[i] })).filter(p => p.v != null)
-  const pegSeries = (d.history.pegs ?? []).map(p => ({
-    key: String(p.asset.assetId), label: p.asset.symbol, color: colorFor(p.asset), values: p.prices,
-  }))
-  const issuancePoints = (d.history.issuance ?? []).map((v, i) => ({ b: d.history.buckets[i], v })).filter(p => p.v != null)
 
   return (
     <>
       <div className="detail-card"><div className="dl">
-        <div className="dt">Venue</div><div className="dd">{d.kind === 'stableswap' ? 'Stableswap' : 'XYK'}{d.destroyed && <span className="badge" style={{ marginLeft: 8, background: 'color-mix(in srgb, var(--red) 15%, transparent)', color: 'var(--red)' }}>Destroyed</span>}</div>
+        <div className="dt">Venue</div><div className="dd">XYK{d.destroyed && <span className="badge" style={{ marginLeft: 8, background: 'color-mix(in srgb, var(--red) 15%, transparent)', color: 'var(--red)' }}>Destroyed</span>}</div>
         <div className="dt">Pool account</div><div className="dd"><AddrPill account={d.account} /></div>
         <div className="dt">TVL</div><div className="dd mono">{d.tvlUsd != null ? F.usd(d.tvlUsd) : <Dash />}</div>
         <div className="dt">Trade fee</div><div className="dd mono">{d.feePermill != null ? fmtPermill(d.feePermill) : <Dash />}</div>
-        {d.amplification != null && <>
-          <div className="dt">Amplification</div>
-          <div className="dd mono">{F.int(d.amplification.current)}
-            {ramping && <span className="muted" style={{ marginLeft: 8 }}>ramping {F.int(d.amplification.initial)} → {F.int(d.amplification.final)} until block {F.int(d.amplification.finalBlock)}</span>}
-          </div>
-        </>}
-        {hasPegs && d.maxPegUpdatePerbill != null && <>
-          <div className="dt">Max peg drift</div>
-          <div className="dd mono">{fmtPerbill(d.maxPegUpdatePerbill)} <span className="muted">per block</span></div>
-        </>}
         <div className="dt">Share token</div><div className="dd"><AssetChip asset={d.shareToken} /> <span className="muted mono">#{d.poolId}</span></div>
         <div className="dt">LP supply</div><div className="dd mono">{F.amount(d.totalIssuance, d.shareToken.decimals)} <Link to={paths.holders(d.poolId)} className="hash" style={{ marginLeft: 8 }}>holders</Link></div>
         {d.createdAt && <>
@@ -110,7 +79,7 @@ function PoolBody({ d }: { d: PoolDetailData }) {
       <div className="pf-card">
         {shareSegments.length > 0 && <ShareBar segments={shareSegments} h={30} />}
         <div className="panel" style={{ marginTop: shareSegments.length ? 14 : 0 }}><table className="tbl">
-          <thead><tr><th>Asset</th><th className="r">Reserve</th><th className="r">Value</th><th className="r">Share</th>{hasPegs && <><th className="r">Peg</th><th>Peg source</th></>}</tr></thead>
+          <thead><tr><th>Asset</th><th className="r">Reserve</th><th className="r">Value</th><th className="r">Share</th></tr></thead>
           <tbody>
             {d.assets.map((a, i) => (
               <tr key={`${a.asset.assetId}:${i}`} {...rowNav(paths.asset(a.asset.assetId))}>
@@ -118,10 +87,6 @@ function PoolBody({ d }: { d: PoolDetailData }) {
                 <td data-label="Reserve" className="r"><AssetAmount asset={a.asset} raw={a.amount} /></td>
                 <td data-label="Value" className="r mono">{a.usd != null ? F.usd(a.usd) : <Dash />}</td>
                 <td data-label="Share" className="r mono muted">{a.sharePct != null ? `${a.sharePct.toFixed(1)}%` : '—'}</td>
-                {hasPegs && <>
-                  <td data-label="Peg" className="r mono">{a.peg ? fmtPeg(a.peg.price) : <Dash />}</td>
-                  <td data-label="Peg source">{a.pegSource ? <span className="mono" style={{ fontSize: 12 }}>{pegSourceLabel(a.pegSource)}</span> : <Dash />}</td>
-                </>}
               </tr>
             ))}
           </tbody>
@@ -151,44 +116,7 @@ function PoolBody({ d }: { d: PoolDetailData }) {
         </>
       )}
 
-      {pegSeries.length > 0 && (
-        <>
-          <div className="sec-title">Peg drift
-            <span style={{ color: 'var(--text-low)', textTransform: 'none', letterSpacing: 0 }}> · the on-chain rate the trading curve balances around, per unit of the pool's base asset</span>
-          </div>
-          <div className="pf-card">
-            <ChartLegend items={pegSeries.map(s => ({ label: s.label, color: s.color }))} />
-            <MultiLineChart buckets={d.history.buckets} series={pegSeries} yFmt={fmtPeg} />
-          </div>
-        </>
-      )}
-
-      {issuancePoints.length > 1 && (
-        <>
-          <div className="sec-title">LP supply</div>
-          <div className="pf-card"><AreaChart data={issuancePoints.map(p => p.v!)} dates={issuancePoints.map(p => p.b)} color="var(--lavender-deep)" floor={0} valueFmt={v => `${compactAmount(v)} shares`} /></div>
-        </>
-      )}
-
       <PoolLpsSection d={d} />
-
-      {d.paramEvents.length > 0 && (
-        <>
-          <div className="sec-title">Parameter changes</div>
-          <div className="panel"><table className="tbl">
-            <thead><tr><th style={{ width: 130 }}>When</th><th style={{ width: 120 }}>What</th><th>Change</th></tr></thead>
-            <tbody>
-              {d.paramEvents.map(e => (
-                <tr key={`${e.blockHeight}:${e.kind}:${e.summary}`}>
-                  <td data-label="When" className="mono"><Link to={paths.block(e.blockHeight)} className="hash"><Ago ts={e.timestamp} now={now} /></Link></td>
-                  <td data-label="What"><PoolBadge pool={PARAM_KIND_LABEL[e.kind] ?? e.kind} /></td>
-                  <td data-label="Change">{e.summary}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table></div>
-        </>
-      )}
 
       <div className="sec-title" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>Activity
         <Link to={`${paths.asset(d.poolId)}?tab=activity`} className="ext-link" style={{ marginLeft: 'auto', textTransform: 'none', letterSpacing: 0 }}>View all →</Link>
@@ -201,11 +129,10 @@ function PoolBody({ d }: { d: PoolDetailData }) {
 }
 
 // The pool's liquidity providers: holders of its share token, largest first,
-// with XYK farm-deposited principal attributed to its economic owners (rows
-// marked "farm"). Share % and value are fractions of the SAME LP supply and
-// TVL shown above, so the section reconciles with the pool card by
-// construction. Custodial holders (the Omnipool holding a listed share token,
-// the money market's vaults) appear as their tagged accounts.
+// with farm-deposited principal attributed to its economic owners (rows marked
+// "farm"). Share % and value are fractions of the SAME LP supply and TVL shown
+// above, so the section reconciles with the pool card by construction.
+// Custodial holders appear as their tagged accounts.
 const LPS_PAGE = 10
 function PoolLpsSection({ d }: { d: PoolDetailData }) {
   const [page, setPage] = useState(0)
@@ -254,7 +181,7 @@ export function PoolDetail({ poolId }: { poolId: number }) {
           <div className="page-title">
             {data && <AssetIcon assetId={data.shareToken.assetId} iconAssetId={data.shareToken.iconAssetId} symbol={data.shareToken.symbol} size={30} parachainId={data.shareToken.parachainId} origin={data.shareToken.origin} />}
             {' '}{data?.name ?? `Pool #${poolId}`}
-            {data && <span className="sub muted" style={{ marginLeft: 8 }}><PoolBadge pool={data.kind === 'stableswap' ? 'Stableswap' : 'XYK'} /></span>}
+            {data && <span className="sub muted" style={{ marginLeft: 8 }}><PoolBadge pool="XYK" /></span>}
           </div>
         </div>
       </div>

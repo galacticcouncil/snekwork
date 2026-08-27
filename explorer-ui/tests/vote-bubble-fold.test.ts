@@ -17,7 +17,7 @@ function voter(over: Partial<ReferendumVoter> & { blockHeight: number }): Refere
   } as ReferendumVoter
 }
 
-const TAG: ResolvedTag = { kind: 'user', id: 'tag-1', name: 'Whales', color: '#22c55e', icon: '🐳', listId: 'lib1' }
+const TAG: ResolvedTag = { kind: 'system', id: 'tag-1', name: 'Whales', color: '#22c55e', icon: '🐳' }
 const inTag = (ids: string[]) => (a: AccountRef): ResolvedTag | null => (ids.includes(a.accountId) ? TAG : null)
 
 describe('foldVoters', () => {

@@ -50,7 +50,7 @@ export function TagDetail({ tagId }: { tagId: string }) {
                   <div className="tag">{data.name} <span className="em" style={{ color: data.color }}>· tag</span></div>
                   <div className="full"><span className="muted">{members.length} accounts</span></div>
                 </div>
-                <ProfileStats tradingVolumeUsd={data.tradingVolumeUsd} liquidationVolumeUsd={data.liquidationVolumeUsd} valueUsd={data.portfolioUsd} />
+                <ProfileStats tradingVolumeUsd={data.tradingVolumeUsd} valueUsd={data.portfolioUsd} />
               </div>
 
               <DetailTabs tabs={tabs} active={activeView} onChange={k => setQuery({ view: k === 'overview' ? null : k })} />

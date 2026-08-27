@@ -21,10 +21,9 @@ type Target = {
 const SELECTOR = '.addr-pill:not([data-no-hover]), .asset-chip, a.hash, a[href*="/swap/"], a[href*="/block/"], a[href*="/referendum/"], [data-activity], [data-ext]'
 const HOVER_DWELL_MS = 180
 
-function ProfileMetrics({ portfolioUsd, tradingVolumeUsd, liquidationVolumeUsd, topAssets }: {
+function ProfileMetrics({ portfolioUsd, tradingVolumeUsd, topAssets }: {
   portfolioUsd: number
   tradingVolumeUsd?: number | null
-  liquidationVolumeUsd?: number | null
   topAssets?: { asset: AssetRef; valueUsd: number }[]
 }) {
   return (
@@ -32,7 +31,6 @@ function ProfileMetrics({ portfolioUsd, tradingVolumeUsd, liquidationVolumeUsd, 
       <div className="hc-row"><span>Value</span><span className="mono">{F.usd(portfolioUsd)}</span></div>
       {topAssets && topAssets.length > 0 && <div className="hc-row"><span>Holdings</span><TokenIconRow assets={topAssets} size={18} /></div>}
       {(tradingVolumeUsd ?? 0) > 0 && <div className="hc-row"><span>Trading volume</span><span className="mono">{F.usd(tradingVolumeUsd)}</span></div>}
-      {(liquidationVolumeUsd ?? 0) > 0 && <div className="hc-row"><span>Liquidation volume</span><span className="mono">{F.usd(liquidationVolumeUsd)}</span></div>}
     </>
   )
 }

@@ -19,7 +19,7 @@ const plain: AccountRef = {
   tag: null,
 }
 const moduleAcct: AccountRef = {
-  accountId: '0x6d6f646c6f6d6e69706f6f6c0000000000000000000000000000000000000000',
+  accountId: '0x6d6f646c78796b00000000000000000000000000000000000000000000000000',
   address: '13UVJyLnzJK7QHvX9YYUyJZ9Gw9b5x3p2X1aQ1B4yfdYw',
   emoji: '🦊',
   tag: null,
@@ -43,10 +43,10 @@ describe('AddrPill — label-aware display (grouping feature)', () => {
     expect(html).not.toContain('class="tag"')
   })
   it('renders a pallet/module account with a gear', () => {
-    expect(moduleName(moduleAcct.accountId)).toBe('omnipool')
+    expect(moduleName(moduleAcct.accountId)).toBe('xyk')
     const html = renderToStaticMarkup(<AddrPill account={moduleAcct} noCopy />)
     expect(html).toContain('⚙️')
-    expect(html).toContain('omnipool')
+    expect(html).toContain('xyk')
   })
 })
 

@@ -4,25 +4,23 @@ import { LIVE_PUSH_KEYS, parseHeadEvent } from '../src/live'
 import { pendingRefetchMs } from '../src/hooks/useExplorerData'
 
 describe('parseHeadEvent', () => {
-  it('accepts a frame when either height watermark advances', () => {
-    expect(parseHeadEvent('{"head":13487500,"best":13487507}', { head: 13487499, best: 13487507 }))
-      .toEqual({ head: 13487500, best: 13487507 })
-    // a new unfinalized best block alone must refetch the feeds too
-    expect(parseHeadEvent('{"head":13487500,"best":13487508}', { head: 13487500, best: 13487507 }))
-      .toEqual({ head: 13487500, best: 13487508 })
+  it('accepts a frame when the head watermark advances', () => {
+    expect(parseHeadEvent('{"head":13487500,"main":13487498}', { head: 13487499 }))
+      .toEqual({ head: 13487500 })
   })
 
   it('ignores a replayed or regressed frame — reconnects must not refetch-storm', () => {
-    expect(parseHeadEvent('{"head":13487500,"best":13487507}', { head: 13487500, best: 13487507 })).toBeNull()
-    expect(parseHeadEvent('{"head":13487499,"best":13487506}', { head: 13487500, best: 13487507 })).toBeNull()
+    expect(parseHeadEvent('{"head":13487500,"main":13487498}', { head: 13487500 })).toBeNull()
+    expect(parseHeadEvent('{"head":13487499,"main":13487498}', { head: 13487500 })).toBeNull()
   })
 
-  it('tolerates frames without best (older api) and malformed data', () => {
-    expect(parseHeadEvent('{"head":13487500}', { head: 13487499, best: 0 })).toEqual({ head: 13487500, best: 0 })
-    expect(parseHeadEvent('{"head":13487500,"best":13487507}', { head: 13487499, best: 13487507 }))
-      .toEqual({ head: 13487500, best: 13487507 })
-    expect(parseHeadEvent('not json', { head: 0, best: 0 })).toBeNull()
-    expect(parseHeadEvent('{"head":"soon"}', { head: 0, best: 0 })).toBeNull()
+  it("ignores the frame's trailing indexer watermark, and malformed data", () => {
+    // `main` advancing alone is the price indexer catching up, not a new block
+    // for the feeds to read.
+    expect(parseHeadEvent('{"head":13487500,"main":13487500}', { head: 13487500 })).toBeNull()
+    expect(parseHeadEvent('{"head":13487500}', { head: 13487499 })).toEqual({ head: 13487500 })
+    expect(parseHeadEvent('not json', { head: 0 })).toBeNull()
+    expect(parseHeadEvent('{"head":"soon"}', { head: 0 })).toBeNull()
   })
 })
 

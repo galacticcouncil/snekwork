@@ -1,18 +1,19 @@
-/* Deterministic API fixtures shared by Vitest and Playwright. */
+/* Deterministic API fixtures shared by Vitest and Playwright.
+
+   One mock world, served through the routes the API actually exposes. Every
+   surface reads the same generators, so a row opened from a feed is the same
+   row its block, its extrinsic and its detail page report — the identity rule
+   in AGENTS.md's UI section. */
 import type {
   ExplorerStats, IndexerStatus, BlockSummary, BlockDetail, ExtrinsicSummary, ExtrinsicDetail,
-  TransferRow, EventRow, TradeRow, ActivityRow, MoneyMarketResponse, AssetDetail, HoldersResponse,
-  AddressDetail, AddressBalance, CloseAccountsResponse, TagDetail, SearchResult, AssetListItem, TopAccountRow, AccountsPage, DailyPoint, Tag,
-  ContractInfo, ContractsPage, ContractTransactionsPage, ContractEventsPage, ContractEventRow, DecodedEvmCall, EvmLogDecode, EvmReceipt, EvmTransactionFacts,
-  AccountRef, AssetRef, FeePayment, AssetLiquidationDay, AssetLiquidationTotal, HdxDashboard, HdxCohort, HdxLockType, HdxUnlockBucket, HdxDailyFlow, HdxMover,
-  AssetLiquidity, AssetLiquiditySource, PoolDetail, OmnipoolDetail, PoolCompositionEntry,
-  HollarDashboard, HollarCollateral, HollarArbDay, HollarTradeDay, HollarPool, HollarPegPoint,
-  SecurityDashboard, SecurityFuse, SecurityPerBlockRow, SecurityLiquidityMove,
-  WormholeAssetRow, WormholeBridgeDetail, WormholeFuse, WormholeInflightOp, WormholeQueuedRelease, WormholeSummary,
-  WormholeTransferRow,
+  EventRow, EventDetail, ActivityRow, AssetDetail, HoldersResponse,
+  AddressDetail, AddressBalance, AccountHistoryResponse, CloseAccountsResponse, TagDetail,
+  SearchResult, AssetListItem, TopAccountRow, AccountsPage, DailyPoint, Tag,
+  AccountRef, AssetRef, ExplorerAssetType, FeePayment, ValueEvent, VoteRow, VoteGroupRow, VotesByReferendumPage,
+  AssetLiquidity, AssetLiquiditySource, PoolDetail, PoolsIndexResponse, PoolCompositionEntry,
+  PoolLpsResponse, LpPosition,
+  GovernanceOverview, GovernanceReferendaPage, CollectiveMotionsPage, TreasuryTipsPage, ReferendumDetail,
   TradeDetail as TradeDetailResponse,
-  ListSummaryRef, ListDetailResponse, ListTagDetail, TagMapResponse, MeResponse,
-  NotificationChannel, NotificationRule, NotificationInboxRow, NotificationsOverview,
   FilterNames,
 } from '../../src/types'
 
@@ -42,12 +43,12 @@ function tsMs(ms: number): string { return new Date(ms).toISOString().replace('T
 function hx(seed: number, n: number): string { const r = rng(seed); let s = '0x'; for (let i = 0; i < n; i++) s += Math.floor(r() * 16).toString(16); return s }
 
 /* ---------- assets ---------- */
-type MAsset = AssetRef & { price: number; ch: number; ch7d: number; ch1h: number; type: string }
+type MAsset = AssetRef & { price: number; ch: number; ch7d: number; ch1h: number; type: ExplorerAssetType }
 const ASSETS: MAsset[] = [
   { assetId: 0, symbol: 'HDX', name: 'Hydration', decimals: 12, parachainId: null, price: 0.02184, ch: 4.28, ch7d: 11.2, ch1h: 0.4, type: 'Native' },
   { assetId: 5, symbol: 'DOT', name: 'Polkadot', decimals: 10, parachainId: null, price: 4.4422, ch: -1.16, ch7d: -3.1, ch1h: -0.2, type: 'Token' },
   { assetId: 10, symbol: 'USDT', name: 'Tether USD', decimals: 6, parachainId: 1000, price: 1.0001, ch: 0.01, ch7d: 0.02, ch1h: 0.0, type: 'Token' },
-  { assetId: 1002, symbol: 'aUSDT', name: 'Aave USDT', decimals: 6, parachainId: null, price: 1.0001, ch: 0.01, ch7d: 0.02, ch1h: 0.0, type: 'Aave' },
+  { assetId: 1002, symbol: 'aUSDT', name: 'Aave USDT', decimals: 6, parachainId: null, price: 1.0001, ch: 0.01, ch7d: 0.02, ch1h: 0.0, type: 'Token' },
   { assetId: 22, symbol: 'USDC', name: 'USD Coin', decimals: 6, parachainId: 1000, price: 0.9999, ch: -0.01, ch7d: -0.01, ch1h: 0.0, type: 'Token' },
   { assetId: 15, symbol: 'vDOT', name: 'Voucher DOT', decimals: 10, parachainId: 2030, price: 5.8401, ch: 1.84, ch7d: 4.0, ch1h: 0.1, type: 'Derivative' },
   { assetId: 19, symbol: 'WBTC', name: 'Wrapped BTC', decimals: 8, parachainId: 1000, price: 67241.1, ch: -0.72, ch7d: 2.4, ch1h: -0.05, type: 'Token' },
@@ -55,40 +56,13 @@ const ASSETS: MAsset[] = [
   { assetId: 16, symbol: 'GLMR', name: 'Moonbeam', decimals: 18, parachainId: 2004, price: 0.1842, ch: 9.18, ch7d: 14.0, ch1h: 1.1, type: 'Token' },
   { assetId: 1000, symbol: 'HOLLAR', name: 'Hollar', decimals: 18, parachainId: null, price: 1.0, ch: 0.02, ch7d: 0.0, ch1h: 0.0, type: 'Token' },
   { assetId: 1001, symbol: 'GDOT', name: 'Gigadot', decimals: 10, parachainId: null, price: 4.4501, ch: -1.1, ch7d: -2.0, ch1h: -0.1, type: 'Derivative' },
-  // The GDOT stable pool's share token: pool id == share asset id, so /pool/690
-  // and the Liquidity tab's pegged-pool card share one identity.
-  { assetId: 690, symbol: '2-Pool-GDOT', name: 'GDOT stable pool', decimals: 18, parachainId: null, price: 5.1, ch: 0.4, ch7d: 1.1, ch1h: 0.0, type: 'Share token' },
+  // An XYK pair's LP token: pool id == share asset id, so /pool/690 and the
+  // Liquidity tab's card for it share one identity.
+  { assetId: 690, symbol: 'vDOT/DOT LP', name: 'vDOT/DOT share token', decimals: 18, parachainId: null, price: 5.1, ch: 0.4, ch7d: 1.1, ch1h: 0.0, type: 'Token' },
 ]
 const assetById = new Map(ASSETS.map(a => [a.assetId, a]))
 function aref(a: MAsset): AssetRef { return { assetId: a.assetId, symbol: a.symbol, name: a.name, decimals: a.decimals, parachainId: a.parachainId } }
 function raw(v: number, dec: number): string { return BigInt(Math.round(v * 1e6)).toString() + '0'.repeat(Math.max(0, dec - 6)) }
-
-/* ---------- money-market liquidations ---------- */
-// Primary-market reserves. USDC, vDOT and aUSDT are reserves that have never been
-// liquidated, so the asset card's Liquidated row is exercised at zero as well as
-// with history. Days land on the asset's own price dates, as the real API's
-// day buckets do.
-const MOCK_MM_RESERVES = new Set([5, 10, 22, 15, 19, 1002])
-const MOCK_LIQUIDATED_ASSETS = new Set([5, 10, 19])
-function mockLiquidationDays(a: MAsset, priceDates: string[]): AssetLiquidationDay[] {
-  if (!MOCK_LIQUIDATED_ASSETS.has(a.assetId)) return []
-  const r = rng(a.assetId * 977 + 3)
-  const out: AssetLiquidationDay[] = []
-  priceDates.forEach((date, i) => {
-    if (i % 11 !== 3) return
-    const roll = r()
-    const tokens = (0.2 + roll * 4) * 1000 / a.price
-    out.push({ date, valueUsd: +(tokens * a.price).toFixed(2), amount: raw(tokens, a.decimals), count: 1 + Math.floor(roll * 4) })
-  })
-  return out
-}
-function mockLiquidationTotal(days: AssetLiquidationDay[]): AssetLiquidationTotal {
-  return {
-    valueUsd: days.reduce((s, d) => s + d.valueUsd, 0),
-    amount: days.reduce((s, d) => s + BigInt(d.amount), 0n).toString(),
-    count: days.reduce((s, d) => s + d.count, 0),
-  }
-}
 
 /* ---------- accounts ---------- */
 function acc(accountId: string, address: string, emoji: string, tag: AccountRef['tag'] = null, identity: AccountRef['identity'] = null): AccountRef {
@@ -107,186 +81,19 @@ const A = {
 const ACCS = [A.krakenEvm, A.binance, A.fox, A.owl, A.treasury, A.swan]
 const COLLATORS = [acc('0xf617ddeb11327140143ea2c663520f91c6f56d351fa2fb5cb5f2b0e80b755b37', '16ZfsSG7swhuyw79EMUcjmV3LEpYpAroUuMv13FZYuYSpb7B', '🌳')]
 
-/* ---------- tag lists ---------- */
-// Owners and members are the SAME mock accounts used everywhere else (the fox,
-// owl, swan, binance, kraken) — a list's owner card, member pills, and an
-// address page's "in these lists" panel must agree on one identity per
-// account, exactly as the live accounts/tags/activity feeds already do.
-const FOX_PROFILE = { name: 'fox.hdx', avatarVersion: 1 }
-const MOCK_PERSONAL_LIST: ListSummaryRef = {
-  listId: 'personal', name: 'My list', note: '', visibility: 'private', isPersonal: true,
-  owner: { ...A.fox, profile: FOX_PROFILE }, tagCount: 1, accountCount: 1, subscriberCount: 0,
-}
-// Two public lists, owned by two different existing mock accounts.
-export const MOCK_LISTS: ListSummaryRef[] = [
-  { listId: 'defi-desks', name: 'DeFi desks', note: 'Accounts trading actively across Omnipool and the money markets', visibility: 'public', isPersonal: false, owner: { ...A.fox, profile: FOX_PROFILE }, tagCount: 2, accountCount: 3, subscriberCount: 3 },
-  { listId: 'exchange-wallets', name: 'Exchange wallets', note: 'Known CEX hot and deposit wallets', visibility: 'public', isPersonal: false, owner: A.binance, tagCount: 1, accountCount: 2, subscriberCount: 7 },
-]
-const MOCK_LIST_DETAILS: Record<string, ListDetailResponse> = {
-  'defi-desks': {
-    ...MOCK_LISTS[0],
-    tags: [
-      { tagId: 'defi-desks-active', name: 'Active traders', color: '#5865f2', icon: '📈', note: 'Trades weekly across Omnipool or the router', members: [A.fox, A.owl] },
-      { tagId: 'defi-desks-lp', name: 'Liquidity providers', color: '#22c55e', icon: '💧', note: 'Holds a live Omnipool or stablepool position', members: [A.swan] },
-    ] satisfies ListTagDetail[],
-    subscribed: false,
-  },
-  'exchange-wallets': {
-    ...MOCK_LISTS[1],
-    tags: [
-      { tagId: 'exchange-wallets-hot', name: 'Hot wallets', color: '#f97316', icon: '🔥', note: 'Active deposit/withdrawal wallets', members: [A.binance, A.krakenEvm] },
-    ] satisfies ListTagDetail[],
-    subscribed: true,
-  },
-}
-export const MOCK_LIST_DETAIL = MOCK_LIST_DETAILS['defi-desks']
-// Which public lists list this address as owner or tagged member — the
-// account page's "in these lists" panel. Any address not one of the two
-// owners/members below falls back to the fox's set, mirroring buildAddress's
-// own unknown-address fallback.
-function addressLists(rawAddress: string): ListSummaryRef[] {
-  const wanted = decodeURIComponent(rawAddress)
-  const is = (a: AccountRef) => a.accountId === wanted || a.address.toLowerCase() === wanted.toLowerCase()
-  if (is(A.binance) || is(A.krakenEvm)) return [MOCK_LISTS[1]]
-  return [MOCK_LISTS[0]]
-}
-// Which public lists TAG this address as a member of one of their real
-// MOCK_LIST_DETAILS tags — a DIFFERENT question from addressLists above
-// (ownership). Unlike addressLists' any-address fallback, this has no
-// default: an address that is genuinely nobody's tagged member (Treasury, an
-// arbitrary generated one, …) gets [], matching what the real
-// publicListsTagging scan would answer.
-function addressTaggedIn(rawAddress: string): ListSummaryRef[] {
-  const wanted = decodeURIComponent(rawAddress)
-  const is = (a: AccountRef) => a.accountId === wanted || a.address.toLowerCase() === wanted.toLowerCase()
-  return Object.entries(MOCK_LIST_DETAILS)
-    .filter(([, detail]) => detail.visibility === 'public' && detail.tags.some(t => t.members.some(is)))
-    .map(([listId]) => MOCK_LISTS.find(l => l.listId === listId)!)
-}
-// A personal list (the tag map's non-system entry) plus the required
-// system marker. `personal-watch` holds a known mock address so a resolved
-// pill can be asserted against it.
-export const MOCK_TAG_MAP: TagMapResponse = {
-  lists: [
-    { listId: 'personal', name: 'My list', tags: [
-      { tagId: 'personal-watch', name: 'Watching', color: '#f97316', icon: '👀', members: [A.owl.address] },
-    ] },
-    { listId: 'system', name: 'Hydration', tags: [] },
-  ],
-}
-// The 'personal-watch' tag's own aggregate view — same tagId/name/color/icon a
-// pill resolved through MOCK_TAG_MAP links to, so /list/personal/tag/personal-watch
-// renders the identical label its pill already showed.
-export const MOCK_LIST_TAG_DETAIL: TagDetail = {
-  tagId: 'personal-watch', name: 'Watching', color: '#f97316', note: '', icon: '👀',
-  members: [A.owl], balances: [], topAssets: [], portfolioUsd: 0,
-  moneyMarket: [], liquidityPositions: [], activeDcas: [], portfolioSeries: [], portfolioDates: [], balanceHistory: [],
-}
-// A private, invite-only list the viewer has been invited to but neither
-// owns nor has accepted yet.
-const MOCK_INVITE_LIST: ListSummaryRef = {
-  listId: 'whale-watch', name: 'Whale watch', note: 'Invite-only — large HDX holders under active monitoring', visibility: 'private', isPersonal: false,
-  owner: A.binance, tagCount: 1, accountCount: 2, subscriberCount: 1,
-}
-export const MOCK_INVITES: ListSummaryRef[] = [MOCK_INVITE_LIST]
-export const MOCK_ME: MeResponse = {
-  account: { ...A.fox, profile: FOX_PROFILE },
-  profile: FOX_PROFILE,
-  lists: [MOCK_PERSONAL_LIST, MOCK_LISTS[0]],
-  subscriptions: [MOCK_LISTS[1]],
-  invites: MOCK_INVITES,
-  // Priority order always names every slot, including the built-in 'system'
-  // directory — here last, so a viewer's own lists outrank it by default.
-  order: [MOCK_PERSONAL_LIST.listId, MOCK_LISTS[0].listId, MOCK_LISTS[1].listId, 'system'],
-}
-
-/* ---------- notifications ---------- */
-// Both channel kinds, and four rules covering four different trigger shapes,
-// three channel routings (all channels / one named channel / all channels
-// while muted), both cooldown shapes and all three account-activity target
-// spellings (legacy flat address, tag) — so the rules table renders every
-// branch it has from one fixture. The webpush channel is described by its
-// endpoint HOST and the telegram one by its @username, exactly as the API
-// ships them: a channel's real config is a credential and never leaves the
-// server. `summary` is the server's own describeRule() wording.
-export const MOCK_NOTIFICATION_VAPID_KEY = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U'
-export const MOCK_NOTIFICATION_TELEGRAM_BOT = 'hydration_explorer_bot'
-export const MOCK_NOTIFICATION_CHANNELS: NotificationChannel[] = [
-  { id: 'chan-webpush-1', kind: 'webpush', label: 'Chrome on macOS', verified: true, endpointHost: 'fcm.googleapis.com' },
-  { id: 'chan-telegram-1', kind: 'telegram', label: '', verified: true, username: 'hydrationwatcher' },
-]
-export const MOCK_NOTIFICATION_RULES: NotificationRule[] = [
-  {
-    id: 'rule-whale', kind: 'large-trade', kindLabel: 'Large trade', name: 'Large HDX trades',
-    summary: 'trades over $10k on HDX', params: { assetId: 0, minUsd: 10_000 },
-    channels: [], muted: false, cooldownS: 0,
-  },
-  {
-    id: 'rule-price', kind: 'price', kindLabel: 'Price alert', name: '',
-    summary: 'HDX price above $0.03', params: { assetId: 0, direction: 'above', price: 0.03 },
-    channels: ['chan-telegram-1'], muted: false, cooldownS: 3600,
-  },
-  // Deliberately the LEGACY flat `{ address }` shape: the server still accepts
-  // and still stores rules written before targets existed, so the rules table
-  // and every subscribe button have to read one.
-  {
-    id: 'rule-owl-activity', kind: 'account-activity', kindLabel: 'Account activity', name: 'Owl watch',
-    summary: `activity over $50k by ${A.owl.address.slice(0, 4)}…${A.owl.address.slice(-5)}`,
-    params: { address: A.owl.address, minUsd: 50_000 },
-    channels: [], muted: true, cooldownS: 300,
-  },
-  // A TAG target, with the display fields the server resolves for it — the tag
-  // is what the rule watches, so the table draws the tag rather than the
-  // addresses it happens to hold today.
-  {
-    id: 'rule-tag-activity', kind: 'account-activity', kindLabel: 'Account activity', name: '',
-    summary: 'activity by anyone tagged Kraken',
-    params: { target: { kind: 'tag', tagId: 'kraken' } },
-    targetLabel: 'Kraken', targetIcon: '/tag-icons/kraken.jpg', targetColor: '#7b6cf6', targetMemberCount: 2,
-    channels: [], muted: false, cooldownS: 0,
-  },
-]
-// Two unread of three — the badge count the topbar and the inbox header both
-// read, and the same row identities across the overview and the inbox.
-export const MOCK_NOTIFICATION_UNREAD = 2
-export const MOCK_NOTIFICATION_INBOX: NotificationInboxRow[] = [
-  {
-    id: 'notif-1', ruleId: 'rule-whale', kind: 'large-trade', kindLabel: 'Large trade',
-    title: 'Large trade: 4.87M HDX → 106k USDT', body: 'Swapped on Omnipool for $106k.',
-    url: `/swap/${TIP - 12}-e4`, blockHeight: TIP - 12, read: false, createdAt: tsAt(TIP - 12),
-  },
-  {
-    id: 'notif-2', ruleId: 'rule-price', kind: 'price', kindLabel: 'Price alert',
-    title: 'HDX rose above $0.03', body: 'Now $0.0304, up 4.28% on the day.',
-    url: '/asset/0', blockHeight: TIP - 240, read: false, createdAt: tsAt(TIP - 240),
-  },
-  {
-    id: 'notif-3', ruleId: 'rule-owl-activity', kind: 'account-activity', kindLabel: 'Account activity',
-    title: 'Owl watch: transfer out', body: '233M HDX left the account.',
-    url: `/transfer/${TIP - 900}-e2`, blockHeight: TIP - 900, read: true, createdAt: tsAt(TIP - 900),
-  },
-]
-export const MOCK_NOTIFICATIONS_OVERVIEW: NotificationsOverview = {
-  channels: MOCK_NOTIFICATION_CHANNELS,
-  rules: MOCK_NOTIFICATION_RULES,
-  unread: MOCK_NOTIFICATION_UNREAD,
-  vapidPublicKey: MOCK_NOTIFICATION_VAPID_KEY,
-  telegramBot: MOCK_NOTIFICATION_TELEGRAM_BOT,
-}
-
 /* ---------- call/event catalogue ---------- */
-const CALLS = ['Omnipool.sell', 'Omnipool.buy', 'Router.sell', 'Tokens.transfer', 'Balances.transfer_keep_alive', 'XTokens.transfer', 'Omnipool.add_liquidity', 'Staking.stake', 'DCA.schedule', 'EVM.call']
+const CALLS = ['XYK.sell', 'XYK.buy', 'Router.sell', 'Tokens.transfer', 'Balances.transfer_keep_alive', 'XTokens.transfer', 'XYK.add_liquidity', 'XYK.remove_liquidity']
 
 // What `/explorer/filter-names` serves: the names the indexed data holds, which
-// the Extrinsics/Events name filters and the alert form's pallet/name pickers
-// offer. Deliberately a SUPERSET of the mock's own rows — the real endpoint
-// answers from a block window, not from the page in front of you — but every call
-// the mock extrinsics carry is in it, so a name picked from the list matches rows
-// the mock feeds actually return. Sorted, exactly as the endpoint sorts.
+// the Extrinsics/Events name filters offer. Deliberately a SUPERSET of the
+// mock's own rows — the real endpoint answers from a block window, not from the
+// page in front of you — but every call the mock extrinsics carry is in it, so a
+// name picked from the list matches rows the mock feeds actually return.
+// Sorted, exactly as the endpoint sorts.
 export const MOCK_FILTER_NAMES: FilterNames = {
-  calls: [...CALLS, 'Ethereum.transact', 'ParachainSystem.set_validation_data', 'Referenda.submit', 'Timestamp.set'].sort(),
+  calls: [...CALLS, 'ParachainSystem.set_validation_data', 'Referenda.submit', 'Timestamp.set'].sort(),
   events: [
-    'Balances.Transfer', 'DCA.Scheduled', 'EVM.Executed', 'EVM.Log', 'Omnipool.BuyExecuted', 'Omnipool.SellExecuted',
+    'Balances.Transfer', 'XYK.BuyExecuted', 'XYK.SellExecuted', 'XYK.LiquidityAdded', 'XYK.LiquidityRemoved',
     'Referenda.Approved', 'Referenda.Cancelled', 'Referenda.Confirmed', 'Referenda.DecisionStarted', 'Referenda.Rejected', 'Referenda.Submitted',
     'System.ExtrinsicFailed', 'System.ExtrinsicSuccess', 'Tokens.Transfer', 'TransactionPayment.TransactionFeePaid',
   ].sort(),
@@ -305,51 +112,35 @@ function genExtrinsic(height: number, idx: number): ExtrinsicDetail {
   const aIn = ASSETS[Math.floor(r() * ASSETS.length)], aOut = ASSETS[Math.floor(r() * ASSETS.length)]
   const success = r() > 0.06
   const isInherent = idx < 2
-  // The chain's one EVM transaction (see MOCK_EVM_TX): an Ethereum.transact
-  // extrinsic, everywhere the mock walks a block, so its hash-resolved page and
-  // its height-index page are literally the same row.
-  const isEvmTx = height === MOCK_EVM_TX.height && idx === MOCK_EVM_TX.index
-  const callName = isInherent ? (idx === 0 ? 'Timestamp.set' : 'ParachainSystem.set_validation_data') : isEvmTx ? 'Ethereum.transact' : call
+  const callName = isInherent ? (idx === 0 ? 'Timestamp.set' : 'ParachainSystem.set_validation_data') : call
   const amt = +(10 + r() * 4000).toFixed(4)
-  const callArgs: Record<string, unknown> = isEvmTx ? evmTxCallArgs(height, idx, amt) : isInherent
+  const callArgs: Record<string, unknown> = isInherent
     ? (idx === 0 ? { now: Date.parse(tsAt(height).replace(' ', 'T') + 'Z') } : { data: '0x…relay-chain-state-proof' })
-    : call.startsWith('Omnipool.sell') || call.startsWith('Router')
+    : call.startsWith('XYK.sell') || call.startsWith('XYK.buy') || call.startsWith('Router')
       ? { asset_in: aIn.assetId, asset_out: aOut.assetId, amount: raw(amt, aIn.decimals), min_buy_amount: raw(amt * 0.99, aOut.decimals) }
       : call.startsWith('Tokens.transfer') ? { currency_id: aIn.assetId, dest: dest.address, amount: raw(amt, aIn.decimals) }
       : call.startsWith('Balances') ? { dest: dest.address, value: raw(amt, 12) }
       : call.startsWith('XTokens') ? { currency_id: aIn.assetId, amount: raw(amt, aIn.decimals), dest: { V3: { parents: 1, interior: { X2: [{ Parachain: 2004 }, { AccountId32: { id: dest.address } }] } } } }
-      : call.startsWith('EVM') ? { source: EVM_CALLER, target: VERIFIED_CONTRACT_ADDRESS, input: evmTransferInput(height, idx, amt), value: '0', gas_limit: 300000 }
-      : { amount: raw(amt, 12) }
-  const events = isEvmTx
-    ? [
-      evmLogEvent(height, idx, amt),
-      evmExecutedEvent(),
-      // No TransactionPayment.TransactionFeePaid: the EVM takes its own fee, which
-      // is why an Ethereum.transact extrinsic shows no substrate fee at all.
-      { eventIndex: 3, name: 'System.ExtrinsicSuccess', args: { weight: 412_000_000 } },
-    ]
-    : isInherent
+      : { asset_a: aIn.assetId, asset_b: aOut.assetId, amount_a: raw(amt, aIn.decimals) }
+  const events = isInherent
     ? [{ eventIndex: 0, name: 'System.ExtrinsicSuccess', args: { weight: 137_316_000 } }]
     : success
       ? [
-        { eventIndex: 0, name: call.startsWith('Balances') ? 'Balances.Transfer' : 'Tokens.Transfer', args: { currency_id: aIn.assetId, from: signer.address, to: call.startsWith('Omnipool') ? 'Omnipool' : dest.address, amount: raw(amt, aIn.decimals) } },
-        ...(call.startsWith('EVM') ? [evmLogEvent(height, idx, amt)] : []),
+        { eventIndex: 0, name: call.startsWith('Balances') ? 'Balances.Transfer' : 'Tokens.Transfer', args: { currency_id: aIn.assetId, from: signer.address, to: dest.address, amount: raw(amt, aIn.decimals) } },
         { eventIndex: 2, name: 'TransactionPayment.TransactionFeePaid', args: { who: signer.address, actual_fee: raw(0.02, 12), tip: '0' } },
         { eventIndex: 3, name: 'System.ExtrinsicSuccess', args: { weight: 412_000_000 } },
       ]
       : [{ eventIndex: 0, name: 'System.ExtrinsicFailed', args: { dispatch_error: 'Token.BelowMinimum' } }]
-  const feePayment = mockFeePayment(height, idx, isEvmTx, isInherent)
+  const feePayment = mockFeePayment(height, idx, isInherent)
   return {
     blockHeight: height, index: idx, hash: hx(height * 17 + idx, 64), timestamp: tsAt(height),
-    signer: isInherent ? null : signer, success: isInherent || isEvmTx ? true : success, callName,
-    fee: isInherent || isEvmTx ? null : raw(0.002 + r() * 0.05, 12), version: 4,
-    // An Ethereum.transact extrinsic has no substrate fee OR tip figure — the EVM
-    // charges its own gas and no TransactionFeePaid is emitted.
-    tip: mockTip(idx, isEvmTx, isInherent),
-    callArgs, error: success || isInherent || isEvmTx ? null : { module: 'Tokens', error: 'BelowMinimum' }, events,
+    signer: isInherent ? null : signer, success: isInherent ? true : success, callName,
+    fee: isInherent ? null : raw(0.002 + r() * 0.05, 12), version: 4,
+    tip: mockTip(idx, isInherent),
+    callArgs, error: success || isInherent ? null : { module: 'Tokens', error: 'BelowMinimum' },
+    errorReason: success || isInherent ? null : { label: 'Token.BelowMinimum', docs: 'The transfer would leave the account below the existential deposit.' },
+    events,
     ...(feePayment ? { feePayment } : {}),
-    ...((call.startsWith('EVM') || isEvmTx) && !isInherent ? { evmCalls: [evmCallDecode(height, idx, amt)] } : {}),
-    ...(isEvmTx ? { evmTx: MOCK_EVM_TX_FACTS } : {}),
   }
 }
 
@@ -361,173 +152,26 @@ const MOCK_FEE_CURRENCY: Record<number, number> = { 3: 5, 4: 10 }
 // proportional split makes them agree on chain.
 const MOCK_TIP_INDEX = 4
 const MOCK_TIP_HDX = raw(0.5, 12)
-function mockTip(idx: number, isEvmTx: boolean, isInherent: boolean): string | null {
-  if (isInherent || isEvmTx) return null
+function mockTip(idx: number, isInherent: boolean): string | null {
+  if (isInherent) return null
   return idx === MOCK_TIP_INDEX ? MOCK_TIP_HDX : '0'
 }
 
 // The fee currency an extrinsic settled in, when that is not HDX. The api derives
 // this from the extrinsic's own balance events (extrinsicFeePayment.ts), so the
-// mock has to state it the same way: an EVM transaction pays in WETH and has no
-// substrate tip figure at all (tipAmount null → the row reads as unknown), while
-// a nominated-currency payer pays fee and tip in that asset.
-function mockFeePayment(height: number, idx: number, isEvmTx: boolean, isInherent: boolean): FeePayment | null {
+// mock has to state it the same way: a nominated-currency payer pays fee and tip
+// in that asset.
+function mockFeePayment(height: number, idx: number, isInherent: boolean): FeePayment | null {
   if (isInherent) return null
-  if (isEvmTx) return { asset: aref(assetById.get(20)!), amount: raw(0.0000031, 18), tipAmount: null }
   const assetId = MOCK_FEE_CURRENCY[idx]
   const a = assetId != null ? assetById.get(assetId) : undefined
   if (!a) return null
-  const amount = raw(0.0041 * (1 + (height % 7) / 10), a.decimals)
   return {
     asset: aref(a),
-    amount,
+    amount: raw(0.0041 * (1 + (height % 7) / 10), a.decimals),
     tipAmount: idx === MOCK_TIP_INDEX ? raw(0.0041 * 3, a.decimals) : '0',
   }
 }
-
-/* ---------- verified-ABI decode fixtures (§9) ---------- */
-// The mock EVM.call extrinsic targets the verified contract with a well-formed
-// transfer(address,uint256) calldata, and carries the same request-time decode
-// shapes the api attaches: `evmCalls` on the extrinsic detail and `evmDecoded`
-// on its EVM.Log event.
-const EVM_CALLER = '0x4b0540d29f19b2da4cce2b1ba6b6325dd9d86622'
-const TRANSFER_TOPIC0 = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
-const evmWord = (hex: string) => hex.replace(/^0x/, '').padStart(64, '0')
-function evmTransferTo(height: number, idx: number): string { return hx(height * 3 + idx + 1, 40) }
-function evmTransferAmount(amt: number): string { return raw(amt, 18) }
-function evmTransferInput(height: number, idx: number, amt: number): string {
-  return `0xa9059cbb${evmWord(evmTransferTo(height, idx))}${evmWord(BigInt(evmTransferAmount(amt)).toString(16))}`
-}
-function evmCallDecode(height: number, idx: number, amt: number): DecodedEvmCall {
-  return {
-    target: VERIFIED_CONTRACT_ADDRESS,
-    contractName: 'GhoToken',
-    call: {
-      decoded: true, name: 'transfer', signature: 'transfer(address,uint256)', selector: '0xa9059cbb',
-      params: [
-        { name: 'to', type: 'address', value: evmTransferTo(height, idx) },
-        { name: 'value', type: 'uint256', value: evmTransferAmount(amt) },
-      ],
-    },
-  }
-}
-function evmTransferLogDecode(height: number, idx: number, amt: number): EvmLogDecode {
-  return {
-    decoded: true, name: 'Transfer', signature: 'Transfer(address,address,uint256)', decodedBy: 'verified-abi',
-    params: [
-      { name: 'from', type: 'address', value: EVM_CALLER, indexed: true },
-      { name: 'to', type: 'address', value: evmTransferTo(height, idx), indexed: true },
-      { name: 'value', type: 'uint256', value: evmTransferAmount(amt) },
-    ],
-  }
-}
-function evmLogEvent(height: number, idx: number, amt: number): ExtrinsicDetail['events'][number] {
-  return {
-    eventIndex: 1,
-    name: 'EVM.Log',
-    args: {
-      log: {
-        address: VERIFIED_CONTRACT_ADDRESS,
-        topics: [TRANSFER_TOPIC0, `0x${evmWord(EVM_CALLER)}`, `0x${evmWord(evmTransferTo(height, idx))}`],
-        data: `0x${evmWord(BigInt(evmTransferAmount(amt)).toString(16))}`,
-      },
-    },
-    decoded: true,
-    evmDecoded: evmTransferLogDecode(height, idx, amt),
-  }
-}
-
-/* ---------- the chain's EVM transaction (Ethereum.transact) ---------- */
-// One `Ethereum.transact` extrinsic, addressable BOTH ways: by its extrinsic id
-// and by the Ethereum transaction hash a reader pastes from a wallet or another
-// explorer. The two hashes are deliberately different values — that is the whole
-// reason the hash needs resolving — and both name this one extrinsic, so the
-// feeds, the block, the hash lookup and the receipt all agree on one identity.
-export const MOCK_EVM_TX = { height: TIP - 5, index: 5 }
-export const MOCK_EVM_TX_HASH = hx(909_090, 64)
-// Its Ethereum.Executed facts, as the api derives them from that event.
-export const MOCK_EVM_TX_FACTS: EvmTransactionFacts = { txHash: MOCK_EVM_TX_HASH, exitKind: 'Succeed', exitDetail: 'Stopped', extraData: null }
-// Gas, which nothing indexes: the receipt endpoint answers this for MOCK_EVM_TX_HASH
-// and 404s for every other hash, exactly as a node that has no such transaction does.
-export const MOCK_EVM_TX_RECEIPT: EvmReceipt = { gasUsed: '355638', effectiveGasPrice: '7000447' }
-const MOCK_EVM_TX_GAS_LIMIT = '565795'
-
-/* ---------- a transaction still in the pool (mempool) ---------- */
-// One pool transaction: a dry-run PROJECTION with 0-0 block placeholders,
-// addressed by hash, leading page 0 of the activity and extrinsics feeds.
-export const MOCK_MEMPOOL_HASH = hx(777_777, 64)
-function mempoolExtrinsicSummary(): ExtrinsicSummary {
-  return { blockHeight: 0, index: 0, hash: MOCK_MEMPOOL_HASH, timestamp: tsAt(TIP + 2), signer: A.fox, success: true, callName: 'Router.sell', fee: null, finalized: false, mempool: true, projected: 'ok' }
-}
-function mempoolExtrinsicDetail(): ExtrinsicDetail {
-  return {
-    ...mempoolExtrinsicSummary(),
-    version: 4, tip: '0',
-    callArgs: { asset_in: ASSETS[2].assetId, asset_out: ASSETS[1].assetId, amount_in: raw(500, ASSETS[2].decimals), min_amount_out: raw(495 * ASSETS[2].price / ASSETS[1].price, ASSETS[1].decimals), route: [] },
-    error: null, errorReason: null,
-    events: [
-      { eventIndex: 0, name: 'Broadcast.Swapped3', args: { swapper: A.fox.address }, decoded: false },
-      { eventIndex: 1, name: 'System.ExtrinsicSuccess', args: {}, decoded: false },
-    ],
-  }
-}
-function mempoolEventRows(): EventRow[] {
-  return mempoolExtrinsicDetail().events.map(e => ({
-    blockHeight: 0, eventIndex: e.eventIndex, extrinsicIndex: null, timestamp: tsAt(TIP + 2),
-    name: e.name, args: e.args, decoded: false, finalized: false, mempool: true, hash: MOCK_MEMPOOL_HASH,
-  }))
-}
-function mempoolActivityRow(): ActivityRow {
-  return {
-    type: 'trade', mempool: true, finalized: false, hash: MOCK_MEMPOOL_HASH,
-    blockHeight: 0, timestamp: tsAt(TIP + 2), eventIndex: 0, extrinsicIndex: 0,
-    who: A.fox, to: null, asset: null, assetIn: aref(ASSETS[2]), assetOut: aref(ASSETS[1]),
-    amount: null, amountIn: raw(500, ASSETS[2].decimals), amountOut: raw(500 * ASSETS[2].price / ASSETS[1].price, ASSETS[1].decimals),
-    valueUsd: 500 * ASSETS[2].price,
-  }
-}
-
-// An EIP1559 envelope as raw_extrinsics stores it: the transaction nested under
-// `transaction.value`, integers as strings, the target in `action`. Calldata is the
-// same verified-ABI transfer the EVM.call fixture uses, so the Parameters tab
-// decodes it the same way.
-function evmTxCallArgs(height: number, idx: number, amt: number): Record<string, unknown> {
-  return {
-    transaction: {
-      __kind: 'EIP1559',
-      value: {
-        chainId: '222222', nonce: '141', maxPriorityFeePerGas: '7000447', maxFeePerGas: '7000447',
-        gasLimit: MOCK_EVM_TX_GAS_LIMIT,
-        action: { __kind: 'Call', value: VERIFIED_CONTRACT_ADDRESS },
-        value: '0', input: evmTransferInput(height, idx, amt), accessList: [],
-      },
-    },
-  }
-}
-
-function evmExecutedEvent(): ExtrinsicDetail['events'][number] {
-  return {
-    eventIndex: 2,
-    name: 'Ethereum.Executed',
-    args: {
-      from: EVM_CALLER, to: VERIFIED_CONTRACT_ADDRESS, transactionHash: MOCK_EVM_TX_HASH,
-      exitReason: { __kind: 'Succeed', value: { __kind: 'Stopped' } }, extraData: '0x',
-    },
-  }
-}
-
-// The first EVM.call extrinsic below the tip — a stable target for e2e specs
-// that exercise the extrinsic detail's decoded rendering.
-export function firstEvmCallExtrinsic(): { height: number; index: number } {
-  for (let h = TIP; h > TIP - 400; h--) {
-    for (let i = 2; i < blockExtrinsicCount(h); i++) {
-      const x = genExtrinsic(h, i)
-      if (x.callName === 'EVM.call' && x.success) return { height: h, index: i }
-    }
-  }
-  throw new Error('no successful EVM.call extrinsic in the mock window')
-}
-
 
 // Rows above the fixture's finalized boundary (stats.finalizedBlock = TIP - 2)
 // carry the pending-head marker, mirroring the api's unfinalized merge.
@@ -544,6 +188,23 @@ function recentExtrinsics(limit: number, signedOnly: boolean): ExtrinsicSummary[
       const x = genExtrinsic(h, i)
       if (signedOnly && !x.signer) continue
       out.push({ blockHeight: x.blockHeight, index: x.index, hash: x.hash, timestamp: x.timestamp, signer: x.signer, success: x.success, callName: x.callName, fee: x.fee, ...mockFinal(h) })
+    }
+    h--
+  }
+  return out.slice(0, limit)
+}
+
+function recentEvents(limit: number): EventRow[] {
+  const out: EventRow[] = []
+  let h = TIP
+  while (out.length < limit && h > TIP - 200) {
+    const n = blockExtrinsicCount(h)
+    for (let i = n - 1; i >= 0 && out.length < limit; i--) {
+      const x = genExtrinsic(h, i)
+      for (const e of x.events) {
+        out.push({ blockHeight: h, eventIndex: out.length, extrinsicIndex: x.index, timestamp: x.timestamp, name: e.name, args: e.args, decoded: true, ...mockFinal(h) })
+        if (out.length >= limit) break
+      }
     }
     h--
   }
@@ -575,52 +236,31 @@ function mockExtrinsicActivity(height: number, index: number): ActivityRow[] {
   }
   if (!x.signer) return []
   if (/transfer/i.test(x.callName)) return [{ ...base, type: x.callName.startsWith('XTokens') ? 'xcm' : 'transfer', to: ACCS[(index + 1) % ACCS.length], asset: aref(aIn), amount: raw(amount, aIn.decimals), destChain: x.callName.startsWith('XTokens') ? 'Moonbeam' : undefined }]
-  if (/liquidity/i.test(x.callName)) return [{ ...base, type: 'liquidity', asset: aref(aIn), amount: raw(amount, aIn.decimals), liqAction: 'Add' }]
-  if (/staking/i.test(x.callName)) return [{ ...base, type: 'staking', asset: aref(ASSETS[0]), amount: raw(amount, ASSETS[0].decimals), stakingAction: 'Stake' }]
-  if (/DCA/i.test(x.callName)) return [{ ...base, type: 'trade', assetIn: aref(aIn), assetOut: aref(aOut), amountIn: raw(amount, aIn.decimals), amountOut: raw(amount * aIn.price / aOut.price, aOut.decimals), dca: true, dcaScheduleId: 33546 }]
-  if (/EVM/i.test(x.callName)) return [{ ...base, type: 'mm', asset: aref(aIn), amount: raw(amount, aIn.decimals), mmAction: 'Supply' }]
+  if (/liquidity/i.test(x.callName)) return [{ ...base, type: 'liquidity', asset: aref(aIn), amount: raw(amount, aIn.decimals), liqAction: /remove/i.test(x.callName) ? 'Remove' : 'Add' }]
   return [{ ...base, type: 'trade', assetIn: aref(aIn), assetOut: aref(aOut), amountIn: raw(amount, aIn.decimals), amountOut: raw(amount * aIn.price / aOut.price, aOut.decimals) }]
 }
 
-// Derive OTC sub-fields from the row identity so every feed returns the same row.
-function otcFields(h: number, aIn: MAsset, aOut: MAsset, amt: number): {
-  action: NonNullable<ActivityRow['otcAction']>; orderId: number; partiallyFillable?: boolean; partial?: boolean; fee?: string
-} {
-  const action = (['Place', 'Pull', 'Fill'] as const)[h % 3]
-  const orderId = 1000 + (h % 900)
-  if (action === 'Place') return { action, orderId, partiallyFillable: h % 2 === 0 }
-  if (action === 'Fill') return { action, orderId, partial: h % 5 === 0, fee: raw((amt * aIn.price / aOut.price) * 0.001, aOut.decimals) }
-  return { action, orderId }
-}
+// The categories the feeds classify into — the ActivityRow union minus `vote`,
+// which has its own generator (a vote is not part of the per-height cycle).
+const FEED_TYPES: ActivityRow['type'][] = ['trade', 'transfer', 'xcm', 'liquidity']
 
 // Deterministic single row for a given height, computed the same way the
-// `/explorer/activity` feed's per-height loop does (below) — a pure function of
-// `h` via its own freshly-seeded rng, so it reproduces byte-identical output to
-// whatever the feed showed for that height. Included in mockBlockActivity so a
-// row clicked in the Activity feed is still found when its own block's activity
-// is re-fetched (e.g. by ActivityDetailPage's row lookup), instead of "not found".
+// `/explorer/activity` feed's per-height loop does — a pure function of `h` via
+// its own freshly-seeded rng, so it reproduces byte-identical output to whatever
+// the feed showed for that height. Included in mockBlockActivity so a row clicked
+// in the Activity feed is still found when its own block's activity is re-fetched
+// (e.g. by ActivityDetailPage's row lookup), instead of "not found".
 function activityRowAtHeight(h: number): ActivityRow {
   const r = rng(h * 2654435761 + 13)
-  const types: ActivityRow['type'][] = ['trade', 'transfer', 'xcm', 'liquidity', 'mm', 'dca', 'otc']
-  const t = types[h % types.length]
+  const t = FEED_TYPES[h % FEED_TYPES.length]
   const aIn = ASSETS[Math.floor(r() * ASSETS.length)], aOut = ASSETS[Math.floor(r() * ASSETS.length)]
   const amt = r() < 0.25 ? +((0.5 + r() * 8) / aIn.price).toFixed(6) : +(10 + r() * 4000).toFixed(2)
   const who = ACCS[Math.floor(r() * ACCS.length)]
   const base = { blockHeight: h, timestamp: tsAt(h), eventIndex: h % 100, extrinsicIndex: 2 + Math.floor(r() * 3), who, to: null as AccountRef | null, asset: null as AssetRef | null, assetIn: null as AssetRef | null, assetOut: null as AssetRef | null, amount: null as string | null, amountIn: null as string | null, amountOut: null as string | null, valueUsd: amt * aIn.price }
-  if (t === 'trade' || t === 'dca') return { ...base, type: t, assetIn: aref(aIn), assetOut: aref(aOut), amountIn: raw(amt, aIn.decimals), amountOut: raw(amt * aIn.price / aOut.price, aOut.decimals), ...(t === 'dca' ? { dca: true, dcaScheduleId: 33546 } : {}) }
-  if (t === 'otc') {
-    const f = otcFields(h, aIn, aOut, amt)
-    if (f.action === 'Pull') return { ...base, type: t, valueUsd: null, otcAction: f.action, otcOrderId: f.orderId }
-    return { ...base, type: t, assetIn: aref(aIn), assetOut: aref(aOut), amountIn: raw(amt, aIn.decimals), amountOut: raw(amt * aIn.price / aOut.price, aOut.decimals), otcAction: f.action, otcOrderId: f.orderId, otcPartiallyFillable: f.partiallyFillable, otcPartial: f.partial, otcFee: f.fee }
-  }
-  if (t === 'xcm' && h % 2 === 0) return { ...base, type: t, extrinsicIndex: null, asset: aref(aIn), amount: raw(amt, aIn.decimals), xcmDir: 'in', fromChain: 'AssetHub', fromAccount: xcmExternalAccount(h) }
-  if (t === 'transfer' || t === 'xcm') return { ...base, type: t, to: ACCS[Math.floor(r() * ACCS.length)], asset: aref(aIn), amount: raw(amt, aIn.decimals), destChain: t === 'xcm' ? 'Moonbeam' : undefined, xcmDir: t === 'xcm' ? 'out' : undefined }
-  // GIGAHDX reaches the feed mainly through the debt side of its market: the
-  // collateral legs of a GIGAHDX stake are that staking row's plumbing and the API
-  // suppresses them, so a mock Lend/Withdraw belongs to the primary market.
-  const mmAction = t === 'mm' ? ['Supply', 'Borrow', 'Repay', 'Withdraw'][Math.floor(r() * 4)] : undefined
-  const gigaMm = mmAction === 'Borrow' || mmAction === 'Repay'
-  return { ...base, type: t, asset: aref(aIn), amount: raw(amt, aIn.decimals), mmAction, ...(gigaMm ? { mmMarketKey: 'gigahdx', mmMarket: 'GIGAHDX' } : {}) }
+  if (t === 'trade') return { ...base, type: t, assetIn: aref(aIn), assetOut: aref(aOut), amountIn: raw(amt, aIn.decimals), amountOut: raw(amt * aIn.price / aOut.price, aOut.decimals) }
+  if (t === 'xcm' && h % 2 === 0) return { ...base, type: t, extrinsicIndex: null, asset: aref(aIn), amount: raw(amt, aIn.decimals), xcmDir: 'in', fromChain: 'AssetHub' }
+  if (t === 'transfer' || t === 'xcm') return { ...base, type: t, to: ACCS[Math.floor(r() * ACCS.length)], asset: aref(aIn), amount: raw(amt, aIn.decimals), destChain: t === 'xcm' ? 'Moonbeam' : undefined, destAccount: t === 'xcm' ? xcmDestAccount(h) : undefined, xcmDir: t === 'xcm' ? 'out' : undefined }
+  return { ...base, type: t, asset: aref(aIn), amount: raw(amt, aIn.decimals), liqAction: (['Add', 'Remove'] as const)[h % 2] }
 }
 
 // One vote per height, cycling the conviction values the chain actually emits —
@@ -635,7 +275,7 @@ export function voteRowAtHeight(h: number): ActivityRow {
     type: 'vote', blockHeight: h, timestamp: tsAt(h), eventIndex: 95, extrinsicIndex: 3,
     who: ACCS[h % ACCS.length], to: null, asset: aref(hdx), assetIn: null, assetOut: null,
     amount: raw(amt, hdx.decimals), amountIn: null, amountOut: null, valueUsd: amt * hdx.price,
-    votePallet: 'ConvictionVoting', voteAction: 'Voted', voteRef: 380,
+    votePallet: 'ConvictionVoting', voteAction: 'Voted', voteRef: '380',
     voteSide: h % 7 === 0 ? 'Nay' : 'Aye', voteConviction: conviction,
     voteRefPallet: 'opengov', voteRefTitle: 'Security patch runtime upgrade v50.0.2',
     linkBlock: h, linkIndex: 3,
@@ -662,17 +302,16 @@ export function collectiveVoteRowAtHeight(h: number, who: AccountRef = A.owl): A
   }
 }
 
-// Inbound XCM's source account, cycling through a tagged, an identity-only, and
-// a plain local account by the same pubkey — demonstrates ExternalAccountPill's
-// full tag > identity > address precedence (same pubkey, same Hydration
-// tag/identity, even shown as an AssetHub-side sender).
-function xcmExternalAccount(h: number): NonNullable<ActivityRow['fromAccount']> {
+// An outbound XCM's destination account, cycling through a tagged, an
+// identity-only, and a plain local account by the same pubkey — demonstrates the
+// external account pill's full tag > identity > address precedence (same pubkey,
+// same tag/identity, even shown as a destination-chain recipient).
+function xcmDestAccount(h: number): NonNullable<ActivityRow['destAccount']> {
   const src = [A.krakenSub, A.fox, A.owl][(h / 2) % 3]
   return {
-    kind: 'AccountId32', address: src.address, raw: src.accountId,
-    subscanUrl: `https://assethub-polkadot.subscan.io/account/${encodeURIComponent(src.address)}`,
-    emoji: src.emoji, emojiName: src.emojiName, emojiUrl: src.emojiUrl,
-    tag: src.tag, identity: src.identity ?? null,
+    kind: 'AccountId32', accountId: src.accountId, address: src.address, raw: src.accountId,
+    subscanUrl: `https://moonbeam.subscan.io/account/${encodeURIComponent(src.address)}`,
+    emoji: src.emoji, tag: src.tag, identity: src.identity ? { display: src.identity.display, verified: src.identity.verified } : null,
   }
 }
 
@@ -704,15 +343,6 @@ function mockBlockActivity(height: number): ActivityRow[] {
   return rows
 }
 
-/* ---------- money market ---------- */
-function mmFor(seed: number) {
-  const r = rng(seed)
-  const supply = 5000 + r() * 90000
-  const debt = r() > 0.4 ? supply * (0.2 + r() * 0.45) : 0
-  const hf = debt > 0 ? (supply * 0.78) / debt : Infinity
-  return { supply, debt, hf }
-}
-
 /* ---------- builders per route ---------- */
 function buildAssets(): AssetListItem[] {
   return ASSETS.map(a => ({ ...aref(a), price: a.price, change24h: a.ch / 100, change7d: a.ch7d / 100, type: a.type, amountUsd: 2_000_000 * (0.3 + rng(a.assetId + 9)() * 4), holderCount: 20 + Math.floor(rng(a.assetId + 17)() * 8000), sparkline: series(a.assetId * 13 + 1, 14, a.price) }))
@@ -725,17 +355,8 @@ function buildAssets(): AssetListItem[] {
 const ACTIVITY_FLOOR_ACCOUNT = A.treasury
 const ACTIVITY_FLOOR_COUNT = 50_000
 
-// Shared by buildAccounts and buildAccountsForViewer, so a viewer-folded page
-// ranks its (re-summed) rows the exact same way the plain directory does.
 function sortAccountRows(rows: TopAccountRow[], sort: string): TopAccountRow[] {
-  const health = (row: TopAccountRow) => {
-    if (!row.healthFactor) return Number.POSITIVE_INFINITY
-    return row.healthFactor === 'inf' ? Number.MAX_SAFE_INTEGER : Number(row.healthFactor)
-  }
   return [...rows].sort((a, b) => {
-    if (sort === 'supplied') return (b.suppliedUsd ?? -1) - (a.suppliedUsd ?? -1)
-    if (sort === 'borrowed') return (b.borrowedUsd ?? -1) - (a.borrowedUsd ?? -1)
-    if (sort === 'health') return health(a) - health(b)
     // Mirrors the server's `activity_count_complete DESC, activity_count DESC,
     // usd_total DESC`. The completeness term comes FIRST: a floor says only "at least
     // this many", so ranking it against an exact total by number alone would put a
@@ -746,7 +367,6 @@ function sortAccountRows(rows: TopAccountRow[], sort: string): TopAccountRow[] {
         || b.portfolioUsd - a.portfolioUsd
     }
     if (sort === 'volume') return (b.tradingVolumeUsd ?? -1) - (a.tradingVolumeUsd ?? -1) || b.portfolioUsd - a.portfolioUsd
-    if (sort === 'liquidation') return (b.liquidationVolumeUsd ?? -1) - (a.liquidationVolumeUsd ?? -1) || b.portfolioUsd - a.portfolioUsd
     if (sort === 'identity') {
       // Named rows first, alphabetically; unnamed by value (mirrors the server).
       const an = a.identity ?? a.tag?.name ?? '', bn = b.identity ?? b.tag?.name ?? ''
@@ -755,243 +375,41 @@ function sortAccountRows(rows: TopAccountRow[], sort: string): TopAccountRow[] {
     return b.portfolioUsd - a.portfolioUsd
   })
 }
+
+// Holdings: the four largest as an icon stack, plus how many further holdings
+// clear $10 without making the four. The shapes that matter are all here — a
+// spread portfolio (few icons, big count), a plain one (no count), and an
+// account holding nothing (the cell stays empty).
+function holdings(i: number): { topAssets: { asset: AssetRef; valueUsd: number }[]; otherAssets?: number } {
+  if (i === 4) return { topAssets: [] }
+  const picks = ASSETS.slice(i % 3, (i % 3) + (i === 1 ? 2 : 4))
+  return {
+    topAssets: picks.map((x, k) => ({ asset: aref(x), valueUsd: 90_000 / (k + 1) })),
+    ...(i === 0 ? { otherAssets: 17 } : i === 2 ? { otherAssets: 3 } : {}),
+  }
+}
+
 function buildAccounts(offset: number, limit: number, sort: string): AccountsPage {
   const rows: TopAccountRow[] = []
-  // Kraken tag (2 members) as one row
+  // Kraken tag (2 members) as one row.
   // 53 weekly points = the real API's 1Y padded sparkline shape.
-  rows.push({ account: null, tag: { tagId: 'kraken', name: 'Kraken', color: '#7b6cf6', icon: '/tag-icons/kraken.jpg', memberCount: 2 }, portfolioUsd: 5_240_000, lastBlock: TIP - 12, healthFactor: '1410000000000000000', identity: 'Kraken', suppliedUsd: null, borrowedUsd: null, supplementalMarket: { marketKey: 'gigahdx', market: 'GIGAHDX', borrowedUsd: 6_200, healthFactor: '2380000000000000000' }, sparkline: series(99, 53, 5_240_000), activityCount: 2143, activityCountComplete: true, tradingVolumeUsd: 82_400_000, liquidationVolumeUsd: 740_000 })
+  rows.push({ account: null, tag: { tagId: 'kraken', name: 'Kraken', color: '#7b6cf6', icon: '/tag-icons/kraken.jpg', memberCount: 2 }, portfolioUsd: 5_240_000, lastBlock: TIP - 12, identity: 'Kraken', sparkline: series(99, 53, 5_240_000), activityCount: 2143, activityCountComplete: true, tradingVolumeUsd: 82_400_000, ...holdings(0) })
   const seeds: [AccountRef, number][] = [[A.binance, 3_900_000], [A.fox, 1_240_000], [A.treasury, 980_000], [A.owl, 410_000], [A.swan, 96_000]]
-  // Holdings: the four largest as an icon stack, plus how many further holdings
-  // clear $10 without making the four. The shapes that matter are all here — a
-  // spread portfolio (few icons, big count), a plain one (no count), and an
-  // account holding nothing (the cell stays empty).
-  const holdings = (i: number): { topAssets: { asset: AssetRef; valueUsd: number }[]; otherAssets?: number } => {
-    if (i === 4) return { topAssets: [] }
-    const picks = ASSETS.slice(i % 3, (i % 3) + (i === 1 ? 2 : 4))
-    return {
-      topAssets: picks.map((x, k) => ({ asset: aref(x), valueUsd: 90_000 / (k + 1) })),
-      ...(i === 0 ? { otherAssets: 17 } : i === 2 ? { otherAssets: 3 } : {}),
-    }
-  }
   for (const [i, [a, usd]] of seeds.entries()) {
-    const mm = mmFor(a.accountId.length * 7)
     const floor = a === ACTIVITY_FLOOR_ACCOUNT
-    rows.push({ account: a, tag: null, portfolioUsd: usd, lastBlock: TIP - Math.floor(usd % 900), healthFactor: mm.debt > 0 ? BigInt(Math.round(mm.hf * 1e18)).toString() : 'inf', identity: a === A.binance ? 'Binance' : null, suppliedUsd: mm.supply > 0 ? mm.supply : null, borrowedUsd: mm.debt > 0 ? mm.debt : null, supplementalMarket: a === A.fox ? { marketKey: 'gigahdx', market: 'GIGAHDX', borrowedUsd: 4_800, healthFactor: '2500000000000000000' } : null, sparkline: series(a.accountId.length * 31, 53, usd), activityCount: floor ? ACTIVITY_FLOOR_COUNT : 100 + (usd % 4000), activityCountComplete: !floor, tradingVolumeUsd: usd * (12 + (a.accountId.charCodeAt(4) % 9)), liquidationVolumeUsd: mm.debt > 0 ? usd * (0.08 + (a.accountId.charCodeAt(6) % 5) / 100) : undefined, ...holdings(i) })
+    rows.push({ account: a, tag: null, portfolioUsd: usd, lastBlock: TIP - Math.floor(usd % 900), identity: a === A.binance ? 'Binance' : null, sparkline: series(a.accountId.length * 31, 53, usd), activityCount: floor ? ACTIVITY_FLOOR_COUNT : 100 + (usd % 4000), activityCountComplete: !floor, tradingVolumeUsd: usd * (12 + (a.accountId.charCodeAt(4) % 9)), ...holdings(i) })
   }
   const sorted = sortAccountRows(rows, sort)
   return { rows: sorted.slice(offset, offset + limit), total: sorted.length }
 }
 
-// The contracts directory: a verified top-level create, a factory child
-// ("first seen", destroyed, unverified) and an unknown-provenance contract, so
-// every creation label and both verification states are exercised. Hoisted so
-// buildAddress can attach the same rows to their account pages (same identity
-// across feeds, per the mock-data rule).
-const evmContractRef = (h160: string): AccountRef => ({ accountId: '0x45544800' + h160.slice(2) + '0000000000000000', address: h160, emoji: '🪙', tag: null, identity: null, profile: null, isContract: true })
-export const VERIFIED_CONTRACT_ADDRESS = '0x531a654d1696ed52e7275a8cede955e82620f99a'
-export const UNVERIFIED_CONTRACT_ADDRESS = '0x9a1c2b3d4e5f60718293a4b5c6d7e8f901234567'
-// A verified ERC1967 proxy in front of the verified contract: its own ABI has
-// no functions (constructor, events, fallback), so Read/Write must resolve the
-// implementation. The e2e RPC mock answers its EIP-1967 slot accordingly.
-export const PROXY_CONTRACT_ADDRESS = '0x7b1967aa5e0d38d1f2a1e6f7dd5f5cbe4c31c0de'
-const MOCK_CONTRACTS: ContractInfo[] = [
-  {
-    address: VERIFIED_CONTRACT_ADDRESS, account: evmContractRef(VERIFIED_CONTRACT_ADDRESS),
-    verified: { status: 'verified', name: 'GhoToken', matchType: 'exact_match' },
-    verification: {
-      status: 'verified', name: 'GhoToken', compilerVersion: 'v0.8.10+commit.fc410830', matchType: 'exact_match',
-      source: 'verified', verifiedAt: tsAt(TIP - 100), abiPresent: true, sourceFileCount: 2, supersededBytecode: false,
-    },
-    creation: { method: 'create', deployer: A.fox, deployerWhitelisted: true, blockHeight: TIP - 2_000_000, extrinsicIndex: 2, timestamp: tsAt(TIP - 2_000_000), txHash: '0x' + 'ab'.repeat(32) },
-    codeHash: '0x' + 'cd'.repeat(32), codeSize: 10719, destroyed: false,
-    txCount: 41230, logCount: 96780, firstActivity: tsAt(TIP - 2_000_000), lastActivity: tsAt(TIP - 40),
-  },
-  {
-    address: '0x02639ec01313c8775fae74f2dad1118c8a8a86da', account: evmContractRef('0x02639ec01313c8775fae74f2dad1118c8a8a86da'),
-    verified: null, verification: { status: 'unverified' },
-    creation: { method: 'factory', factory: evmContractRef('0x1b02e051683b5cfac5929c25e84adb26ecf87b38'), attribution: 'first-log', blockHeight: TIP - 900_000, timestamp: tsAt(TIP - 900_000), txHash: '0x' + 'ef'.repeat(32) },
-    codeHash: '0x' + '12'.repeat(32), codeSize: 13783, destroyed: true,
-    txCount: 340, logCount: 2210, firstActivity: tsAt(TIP - 900_000), lastActivity: tsAt(TIP - 120_000),
-  },
-  {
-    address: UNVERIFIED_CONTRACT_ADDRESS, account: evmContractRef(UNVERIFIED_CONTRACT_ADDRESS),
-    verified: null, verification: { status: 'unverified' },
-    creation: { method: 'unknown' },
-    codeHash: '0x' + '34'.repeat(32), codeSize: 2333, destroyed: false,
-    txCount: 12, logCount: 0, firstActivity: tsAt(TIP - 300_000), lastActivity: tsAt(TIP - 300_000),
-  },
-  {
-    address: PROXY_CONTRACT_ADDRESS, account: evmContractRef(PROXY_CONTRACT_ADDRESS),
-    verified: { status: 'verified', name: 'ERC1967Proxy', matchType: 'match' },
-    verification: {
-      status: 'verified', name: 'ERC1967Proxy', compilerVersion: 'v0.8.19+commit.7dd6d404', matchType: 'match',
-      source: 'verified', verifiedAt: tsAt(TIP - 80), abiPresent: true, sourceFileCount: 1, supersededBytecode: false,
-    },
-    creation: { method: 'create', deployer: A.fox, deployerWhitelisted: true, blockHeight: TIP - 150_000, extrinsicIndex: 1, timestamp: tsAt(TIP - 150_000), txHash: '0x' + '77'.repeat(32) },
-    codeHash: '0x' + '56'.repeat(32), codeSize: 733, destroyed: false,
-    txCount: 18, logCount: 3, firstActivity: tsAt(TIP - 150_000), lastActivity: tsAt(TIP - 200),
-  },
-]
-
-// The verified contract's lazy artifacts (Code/Read sub-tabs); unverified
-// addresses fall through to the harness 404 exactly like the real API.
-const MOCK_CONTRACT_ABI = {
-  address: VERIFIED_CONTRACT_ADDRESS,
-  abi: [
-    { type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }] },
-    { type: 'function', name: 'totalSupply', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
-    { type: 'function', name: 'symbol', stateMutability: 'pure', inputs: [], outputs: [{ name: '', type: 'string' }] },
-    { type: 'function', name: 'transfer', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ name: '', type: 'bool' }] },
-    { type: 'function', name: 'deposit', stateMutability: 'payable', inputs: [], outputs: [] },
-    { type: 'event', name: 'Transfer', inputs: [] },
-  ],
-  source: 'verified',
-  contractName: 'GhoToken',
-}
-// The proxy's own verified ABI, deliberately function-free — the shape that
-// forces Read/Write through the implementation.
-const MOCK_PROXY_ABI = {
-  address: PROXY_CONTRACT_ADDRESS,
-  abi: [
-    { type: 'constructor', stateMutability: 'payable', inputs: [{ name: '_logic', type: 'address' }, { name: '_data', type: 'bytes' }] },
-    { type: 'event', name: 'Upgraded', inputs: [{ name: 'implementation', type: 'address', indexed: true }] },
-    { type: 'fallback', stateMutability: 'payable' },
-    { type: 'receive', stateMutability: 'payable' },
-  ],
-  source: 'verified',
-  contractName: 'ERC1967Proxy',
-}
-const MOCK_CONTRACT_SOURCES = {
-  address: VERIFIED_CONTRACT_ADDRESS,
-  files: [
-    { path: 'src/GhoToken.sol', content: '// SPDX-License-Identifier: MIT\npragma solidity ^0.8.10;\n\ncontract GhoToken {\n  uint256 public totalSupply;\n}\n' },
-    { path: 'src/lib/Math.sol', content: 'library Math { function min(uint256 a, uint256 b) internal pure returns (uint256) { return a < b ? a : b; } }\n' },
-  ],
-  compiler: { version: 'v0.8.10+commit.fc410830', evmVersion: 'london', optimizerEnabled: true, optimizerRuns: 200, constructorArguments: '0xabcd', settings: null },
-}
-
-export function mockContractByAddress(address: string): ContractInfo | undefined {
-  const lc = address.toLowerCase()
-  return MOCK_CONTRACTS.find(c => c.address === lc || c.account.accountId === lc)
-}
-
-function buildContracts(offset: number, limit: number, sort: string): ContractsPage {
-  const rows = MOCK_CONTRACTS
-  const created = (c: ContractInfo) => c.creation.blockHeight ?? -1
-  const sorted = [...rows].sort((a, b) => {
-    if (sort === 'txs') return b.txCount - a.txCount || (a.address < b.address ? -1 : 1)
-    if (sort === 'logs') return b.logCount - a.logCount || (a.address < b.address ? -1 : 1)
-    if (sort === 'active') return (b.lastActivity ?? '').localeCompare(a.lastActivity ?? '') || (a.address < b.address ? -1 : 1)
-    return created(b) - created(a) || (a.address < b.address ? -1 : 1)
-  })
-  return { contracts: sorted.slice(offset, offset + limit), total: sorted.length }
-}
-
-// Contract-tab activity views. The verified contract's rows carry decoded
-// method chips and named events (with one selector-only and one raw row per
-// cycle so the fallbacks stay exercised); an unverified contract gets bare
-// selectors and topics. Unknown addresses fall through to the harness 404.
-const MOCK_CONTRACT_TX_TOTAL = 60
-function buildContractTransactions(address: string, offset: number, limit: number): ContractTransactionsPage | undefined {
-  const c = mockContractByAddress(address)
-  if (!c) return undefined
-  const verified = !!c.verified
-  const rows = Array.from({ length: Math.max(0, Math.min(limit, MOCK_CONTRACT_TX_TOTAL - offset)) }, (_, k) => {
-    const n = offset + k
-    const r = rng(n * 13 + 7)
-    const height = TIP - 40 - n * 7
-    return {
-      blockHeight: height, extrinsicIndex: 2, timestamp: tsAt(height), txHash: hx(n * 11 + 3, 64),
-      from: ACCS[Math.floor(r() * ACCS.length)], success: r() > 0.1,
-      method: !verified ? { selector: '0x12345678', name: null, signature: null }
-        : n % 5 === 4 ? { selector: '0xdeadbeef', name: null, signature: null }
-          : { selector: '0xa9059cbb', name: 'transfer', signature: 'transfer(address,uint256)' },
-    }
-  })
-  return { transactions: rows, total: MOCK_CONTRACT_TX_TOTAL }
-}
-
-const MOCK_CONTRACT_EVENT_TOTAL = 40
-function buildContractEvents(address: string, offset: number, limit: number): ContractEventsPage | undefined {
-  const c = mockContractByAddress(address)
-  if (!c) return undefined
-  const verified = !!c.verified
-  const rows: ContractEventRow[] = Array.from({ length: Math.max(0, Math.min(limit, MOCK_CONTRACT_EVENT_TOTAL - offset)) }, (_, k) => {
-    const n = offset + k
-    const height = TIP - 45 - n * 9
-    const base = {
-      blockHeight: height, eventIndex: 4, extrinsicIndex: 2, timestamp: tsAt(height),
-      topics: [TRANSFER_TOPIC0, `0x${evmWord(EVM_CALLER)}`, `0x${evmWord(evmTransferTo(height, 4))}`],
-      data: `0x${evmWord('f4240')}`,
-    }
-    if (verified && n % 3 === 0) return { ...base, name: 'Transfer', decodedBy: 'verified-abi' as const, evmDecoded: evmTransferLogDecode(height, 4, 12.5) }
-    if (n % 3 === 1) return { ...base, name: 'Borrow', decodedBy: 'ingest' as const, args: { reserve: c.address, user: EVM_CALLER, amount: raw(12.5, 18) } }
-    return { ...base, name: null, topics: [hx(n * 5 + 1, 64)], data: `0x${evmWord('1234')}` }
-  })
-  return { events: rows, total: MOCK_CONTRACT_EVENT_TOTAL }
-}
-
-// The accounts directory, folded under a VIEWER's own tags too — the mock's
-// analogue of userListService.directoryFoldFor + accountsPage's viewer-fold
-// grouping. Walks tagMap.lists in priority order exactly like resolveTag()
-// (userTags.ts) does client-side, but over buildAccounts's own already
-// system-tag-grouped rows: the 'system' slot wins a row that already carries
-// a system tag (never overridden), and the first list ahead of it whose tag
-// contains the row's account wins otherwise — summed exactly like a system
-// tag's own group, not fetched from a separate aggregate.
-//
-// Known, deliberate divergence from the real SQL: this operates on
-// buildAccounts's OWN already-grouped TopAccountRow[] and folds by
-// `listId:tagId` alone. It has no notion of the real query's `label_id` —
-// the per-account system-tag id the `grouped` CTE ALSO groups by (see
-// accountsPage's `labelIdSql`) — so it cannot reproduce a real regression
-// where a single user tag holds both a system-tagged and a system-tagless
-// account and the SQL's grouping splits it in two. That regression is
-// covered at the API level instead (accountsViewerFold.test.ts), where the
-// real grouping expressions are exercised; this mock only has to give the
-// e2e suite deterministic, plausible fold ROWS to assert rendering against.
-export function buildAccountsForViewer(tagMap: TagMapResponse | null, offset: number, limit: number, sort: string): AccountsPage {
-  if (!tagMap) return buildAccounts(offset, limit, sort)
-  const { rows } = buildAccounts(0, 1000, sort)
-  const winnerFor = (row: TopAccountRow) => {
-    if (!row.account) return null   // already a system-tag group row — never re-folds
-    for (const lib of tagMap.lists) {
-      if (lib.listId === 'system') { if (row.account.tag) return null; continue }
-      const tag = lib.tags.find(t => t.members.includes(row.account!.accountId))
-      if (tag) return { tagId: tag.tagId, listId: lib.listId, name: tag.name, color: tag.color, icon: tag.icon, memberCount: tag.members.length }
-    }
-    return null
-  }
-  const groups = new Map<string, TopAccountRow>()
-  const out: TopAccountRow[] = []
-  for (const row of rows) {
-    const winner = winnerFor(row)
-    if (!winner) { out.push(row); continue }
-    const key = `${winner.listId}:${winner.tagId}`
-    const existing = groups.get(key)
-    if (existing) {
-      existing.portfolioUsd += row.portfolioUsd
-      if (row.suppliedUsd) existing.suppliedUsd = (existing.suppliedUsd ?? 0) + row.suppliedUsd
-      if (row.borrowedUsd) existing.borrowedUsd = (existing.borrowedUsd ?? 0) + row.borrowedUsd
-      if (row.tradingVolumeUsd) existing.tradingVolumeUsd = (existing.tradingVolumeUsd ?? 0) + row.tradingVolumeUsd
-      if (row.liquidationVolumeUsd) existing.liquidationVolumeUsd = (existing.liquidationVolumeUsd ?? 0) + row.liquidationVolumeUsd
-      continue
-    }
-    const grouped: TopAccountRow = {
-      ...row, account: null, identity: winner.name,
-      tag: { tagId: winner.tagId, name: winner.name, color: winner.color, icon: winner.icon, memberCount: winner.memberCount, userTagId: winner.tagId, listId: winner.listId },
-    }
-    groups.set(key, grouped)
-    out.push(grouped)
-  }
-  const sorted = sortAccountRows(out, sort)
-  return { rows: sorted.slice(offset, offset + limit), total: sorted.length }
-}
 // Deterministic HDX lock/reserve breakdown for a balance of `bal` tokens (free =
-// 92%, reserved = 8%, matching the mock balance split): overlapping vesting /
-// governance / staking / GIGAHDX locks, a binding unlock timeline whose slices
-// sum exactly to `frozen`, and reserve components that deliberately cover only
-// part of `reserved` so the "other" remainder row is exercised.
+// 92%, reserved = 8%, matching the mock balance split): overlapping vesting and
+// governance locks, a binding unlock timeline whose slices sum exactly to
+// `frozen`, and reserve components that deliberately cover only part of
+// `reserved` so the "other" remainder row is exercised. Sources are the ones
+// lockBreakdownService actually emits — an unknown source would render as its
+// own raw name.
 function hdxBreakdown(bal: number, dec: number): Pick<AddressBalance, 'frozen' | 'breakdown' | 'timeline'> {
   const f = (x: number) => raw(bal * x, dec)
   // Unlock `until` dates anchor to WALL-CLOCK now, not MOCK_NOW_MS: the panel
@@ -1004,18 +422,16 @@ function hdxBreakdown(bal: number, dec: number): Pick<AddressBalance, 'frozen' |
     breakdown: [
       { kind: 'lock', source: 'vesting', amount: f(0.506), claimable: f(0.138) },
       { kind: 'lock', source: 'vote', amount: f(0.414) },
-      { kind: 'lock', source: 'staking', amount: f(0.276) },
-      { kind: 'lock', source: 'gigahdx', amount: f(0.166) },
-      { kind: 'reserve', source: 'dca', amount: f(0.03) },
+      { kind: 'lock', source: 'democracy', amount: f(0.276) },
+      { kind: 'reserve', source: 'referenda', amount: f(0.03) },
       { kind: 'deposit', source: 'identity', amount: f(0.012) },
       { kind: 'deposit', source: 'multisig', amount: f(0.008) },
     ],
-    // when · how much · why (act-now semantics) — sums to frozen
-    // (0.08+0.055+0.1+0.09+0.211+0.03 = 0.566)
+    // when · how much · why — sums to frozen
+    // (0.08 + 0.155 + 0.09 + 0.211 + 0.03 = 0.566)
     timeline: [
-      { state: 'releasable', cause: 'staking', amount: f(0.08) },
-      { state: 'scheduled', cause: 'gigahdx', amount: f(0.055), until: inDays(21) },
-      { state: 'scheduled', cause: 'gigahdx', amount: f(0.1), until: inDays(28), conditional: true },
+      { state: 'releasable', cause: 'democracy', amount: f(0.08) },
+      { state: 'scheduled', cause: 'democracy', amount: f(0.155), until: inDays(21) },
       { state: 'scheduled', cause: 'vote', amount: f(0.09), until: inDays(36) },
       { state: 'scheduled', cause: 'vesting', amount: f(0.211), until: inDays(230), linear: true },
       { state: 'active', cause: 'vote', amount: f(0.03) },
@@ -1024,20 +440,16 @@ function hdxBreakdown(bal: number, dec: number): Pick<AddressBalance, 'frozen' |
 }
 
 function buildAddress(accountId: string): AddressDetail {
-  // A contract address gets the contract's own account ref (and the `contract`
-  // field below), so its account page grows the Contract tab; everything else
-  // keeps the fox fallback.
-  const contract = mockContractByAddress(accountId)
-  const a = contract?.account ?? ACCS.find(x => x.accountId === accountId || x.address.toLowerCase() === accountId.toLowerCase()) ?? A.fox
+  const a = ACCS.find(x => x.accountId === accountId || x.address.toLowerCase() === accountId.toLowerCase()) ?? A.fox
   const r = rng(a.accountId.length * 17)
   const priced = ASSETS.filter((_, i) => (r() > 0.4) || i < 2).slice(0, 6).map(as => {
     const bal = +(r() * (as.price > 1000 ? 3 : as.price > 1 ? 6000 : 2_000_000)).toFixed(4)
     return {
       asset: aref(as), total: raw(bal, as.decimals), free: raw(bal * 0.92, as.decimals), reserved: raw(bal * 0.08, as.decimals), lastBlock: TIP - Math.floor(r() * 40000), valueUsd: bal * as.price,
       // HDX carries the full lock breakdown; DOT shows the single-component
-      // shape (an OTC order reserve) for a non-native asset.
+      // shape (one clearable deposit) for a non-native asset.
       ...(as.assetId === 0 ? hdxBreakdown(bal, as.decimals) : {}),
-      ...(as.assetId === 5 ? { breakdown: [{ kind: 'reserve' as const, source: 'otc', amount: raw(bal * 0.08, as.decimals) }] } : {}),
+      ...(as.assetId === 5 ? { breakdown: [{ kind: 'deposit' as const, source: 'other', amount: raw(bal * 0.08, as.decimals) }] } : {}),
     }
   }).sort((x, y) => (y.valueUsd ?? 0) - (x.valueUsd ?? 0))
   // The fox additionally holds one asset with no market price, so the "without a
@@ -1061,25 +473,16 @@ function buildAddress(accountId: string): AddressDetail {
   const balances = [...priced, ...unpricedHoldings, ...dustHoldings]
   const portfolioUsd = balances.reduce((s, b) => s + (b.valueUsd ?? 0), 0)
   const isEvm = a.address.startsWith('0x')
-  const mm = mmFor(a.accountId.length * 7)
-  const hasMm = mm.supply > 0 && (a === A.krakenEvm || a === A.fox || a === A.binance)
-  const boundEvm = !isEvm && hasMm ? `0x${a.accountId.slice(2, 42)}` : null
   return {
     input: a.address, kind: isEvm ? 'evm' : 'ss58', accountId: a.accountId, emoji: a.emoji,
     evmAddress: isEvm ? a.address : null,
     ss58: a.address.startsWith('1') || a.address.startsWith('7') ? a.address : '7' + a.accountId.slice(2, 47),
     ss58Polkadot: isEvm ? '1MqRsT3uV4wX5yZ6aB7cD8eF9gH0iJ1kL2mN3pQ4rS5tU6v' : a.address,
     tag: a.tag, identity: a.identity ?? null, relatedAccountIds: [a.accountId],
-    aliases: isEvm
-      ? [{ accountId: a.accountId, evmAddress: a.address, primaryProfile: a.address, relationship: 'EVMAccounts.Bound', confidence: 100 }]
-      : boundEvm
-        ? [{ accountId: a.accountId, evmAddress: boundEvm, primaryProfile: `evm:${boundEvm}`, relationship: 'explicit_binding', confidence: 1 }]
-        : [],
-    balances, portfolioUsd, tradingVolumeUsd: portfolioUsd * (18 + (a.accountId.charCodeAt(5) % 11)), liquidationVolumeUsd: hasMm ? portfolioUsd * 0.11 : undefined,
-    activeDcas: [
-      { id: 33546, assetIn: aref(assetById.get(0)!), assetOut: aref(assetById.get(10)!), direction: 'Sell', amountPerTrade: raw(60000, 12), totalAmount: raw(1_200_000, 12), filledAmount: raw(480_000, 12), remainingAmount: raw(720_000, 12), executionsDone: 8, period: 180, nextExecutionBlock: TIP + 90, valueUsd: 3080, scheduleBlock: TIP - 40000, scheduleIndex: 2 },
-      { id: 30104, assetIn: aref(assetById.get(5)!), assetOut: aref(assetById.get(0)!), direction: 'Sell', amountPerTrade: raw(1.04, 10), totalAmount: '0', filledAmount: raw(101_818, 10), remainingAmount: null, executionsDone: 97902, period: 10, nextExecutionBlock: TIP + 4, valueUsd: 4.6, scheduleBlock: TIP - 500000, scheduleIndex: 3 },
-    ],
+    balances,
+    topAssets: balances.filter(b => (b.valueUsd ?? 0) > 10).slice(0, 4).map(b => ({ asset: b.asset, valueUsd: b.valueUsd ?? 0 })),
+    portfolioUsd, tradingVolumeUsd: portfolioUsd * (18 + (a.accountId.charCodeAt(5) % 11)),
+    liquidityPositions: a === A.fox ? mockLpPositions() : [],
     balanceHistory: [
       ...balances.slice(0, 5).map(b => {
         const tokens = Number(b.total) / 10 ** b.asset.decimals
@@ -1094,28 +497,6 @@ function buildAddress(accountId: string): AddressDetail {
         points: series(313131, 20, 5000).map((v, i, arr) => ({ ts: tsAt(TIP - (19 - i) * 18000), blockHeight: TIP - (19 - i) * 18000, balance: i >= arr.length - 3 ? 0 : v })),
       }] : []),
     ],
-    moneyMarket: hasMm ? [{
-      marketKey: 'core', market: 'Money Market', role: 'primary', defiSimSupported: true,
-      blockHeight: TIP - 8, timestamp: tsAt(TIP - 8),
-      totalCollateralBase: BigInt(Math.round(mm.supply * 1e8)).toString(), totalDebtBase: BigInt(Math.round(mm.debt * 1e8)).toString(),
-      availableBorrowsBase: BigInt(Math.round(Math.max(0, mm.supply * 0.78 - mm.debt) * 1e8)).toString(),
-      liquidationThreshold: '7800', ltv: '6500',
-      healthFactor: mm.debt > 0 ? BigInt(Math.round(mm.hf * 1e18)).toString() : 'inf',
-      reserves: [
-        { assetId: 1000, symbol: 'HOLLAR', decimals: 18, supplied: '0', debt: raw(mm.debt, 18), suppliedUsd: null, debtUsd: mm.debt, collateral: false },
-        { assetId: 43, symbol: 'PRIME', decimals: 6, supplied: raw(mm.supply * 0.6, 6), debt: '0', suppliedUsd: mm.supply * 0.6, debtUsd: null, collateral: true },
-        { assetId: 5, symbol: 'DOT', decimals: 10, supplied: raw(mm.supply * 0.4 / 4.44, 10), debt: '0', suppliedUsd: mm.supply * 0.4, debtUsd: null, collateral: true },
-      ],
-    }, ...((a === A.krakenEvm || a === A.fox) ? [{
-      marketKey: 'gigahdx', market: 'GIGAHDX', role: 'supplemental' as const, defiSimSupported: false, stakingBacked: true,
-      blockHeight: TIP - 4, timestamp: tsAt(TIP - 4),
-      totalCollateralBase: '2400000000000', totalDebtBase: '620000000000', availableBorrowsBase: '540000000000',
-      liquidationThreshold: '8000', ltv: '6000', healthFactor: '2380000000000000000',
-      reserves: [
-        { assetId: 670, symbol: 'stHDX', decimals: 12, supplied: raw(24_000_000, 12), debt: '0', suppliedUsd: 24_000, debtUsd: null, collateral: true },
-        { assetId: 1000, symbol: 'HOLLAR', decimals: 18, supplied: '0', debt: raw(6_200, 18), suppliedUsd: null, debtUsd: 6_200, collateral: false },
-      ],
-    }] : [])] : [],
     portfolioSeries: series(a.accountId.length * 5, 52, portfolioUsd || 1000),
     // Proxy/multisig demo data: the fox is a 2-of-3 multisig controlled-by-proxy
     // account, the owl is one of its signatories, the swan is a pure proxy.
@@ -1134,8 +515,17 @@ function buildAddress(accountId: string): AddressDetail {
       pending: [{ callHash: '0x25737077ac4eea2d3cc075243902f0d7e8e3a0ea9a39a00e6484121ba5b89aa8', depositor: A.owl, approvals: [A.owl], sinceBlock: TIP - 4200 }],
     } : null,
     multisigMemberships: a === A.owl ? [{ account: A.fox, threshold: 2, signatories: 3 }] : [],
-    ...(contract ? { contract } : {}),
   }
+}
+
+// Both LP venues in one account: shares held in the wallet, and the same pool's
+// shares deposited in a liquidity-mining farm.
+function mockLpPositions(): LpPosition[] {
+  const share = assetById.get(690)!
+  return [
+    { positionId: 'xyk:690:direct', asset: aref(share), amount: raw(12_400, share.decimals), shares: raw(12_400, share.decimals), valueUsd: 12_400 * share.price, venue: 'XYK' },
+    { positionId: 'xyk:690:farm', asset: aref(share), amount: raw(3_100, share.decimals), shares: raw(3_100, share.decimals), valueUsd: 3_100 * share.price, venue: 'XYK Farm' },
+  ]
 }
 
 // A finite, deterministic account/tag activity feed. The detail pagers publish an
@@ -1151,12 +541,13 @@ function mockAccountActivity(a: AccountRef, r: () => number): ActivityRow[] {
 function accountActivityCycle(a: AccountRef, r: () => number): ActivityRow[] {
   return Array.from({ length: MOCK_ACTIVITY_ROWS }, (_, i) => {
     const h = TIP - i * 90 - Math.floor(r() * 30)
-    const t = (['trade', 'transfer', 'dca', 'trade'] as const)[Math.floor(r() * 4)]
+    const t = (['trade', 'transfer', 'liquidity', 'trade'] as const)[Math.floor(r() * 4)]
     const aIn = ASSETS[Math.floor(r() * ASSETS.length)], aOut = ASSETS[Math.floor(r() * ASSETS.length)]
     const amt = +(10 + r() * 4000).toFixed(2)
     const base = { blockHeight: h, timestamp: tsAt(h), extrinsicIndex: 2 + Math.floor(r() * 3), who: a, to: null as AccountRef | null, asset: null as AssetRef | null, assetIn: null as AssetRef | null, assetOut: null as AssetRef | null, amount: null as string | null, amountIn: null as string | null, amountOut: null as string | null, valueUsd: amt * aIn.price, linkBlock: h, linkIndex: 2 }
     if (t === 'transfer') return { ...base, type: t, to: ACCS[Math.floor(r() * ACCS.length)], asset: aref(aIn), amount: raw(amt, aIn.decimals) }
-    return { ...base, type: t, assetIn: aref(aIn), assetOut: aref(aOut), amountIn: raw(amt, aIn.decimals), amountOut: raw(amt * aIn.price / aOut.price, aOut.decimals), dca: t === 'dca', ...(t === 'dca' ? { dcaScheduleId: 33546 } : {}) }
+    if (t === 'liquidity') return { ...base, type: t, asset: aref(aIn), amount: raw(amt, aIn.decimals), liqAction: 'Add' as const }
+    return { ...base, type: t, assetIn: aref(aIn), assetOut: aref(aOut), amountIn: raw(amt, aIn.decimals), amountOut: raw(amt * aIn.price / aOut.price, aOut.decimals) }
   })
 }
 
@@ -1188,814 +579,57 @@ function mockListTotal(qs: URLSearchParams, activityRows: () => ActivityRow[]): 
   }
 }
 
-/* ---------- HDX dashboard ---------- */
-function buildHdx(): HdxDashboard {
-  const r = rng(4242)
-  const now = MOCK_NOW_MS
-  const day = 86_400_000
-  const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10)
-  const ts = (ms: number) => new Date(ms).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '')
-  const cohorts: HdxCohort[] = [
-    { key: 'whale', label: 'Whale', minPct: 0.1, minHdx: 6_420_000, accounts: 92, totalHdx: 2.5e9 },
-    { key: 'dolphin', label: 'Dolphin', minPct: 0.01, minHdx: 642_000, accounts: 456, totalHdx: 9.4e8 },
-    { key: 'fish', label: 'Fish', minPct: 0.000001, minHdx: 64, accounts: 25_549, totalHdx: 4.5e8 },
-    { key: 'shrimp', label: 'Shrimp', minPct: 0, minHdx: 0, accounts: 34_872, totalHdx: 6.0e5 },
-  ]
-  const lockTypes: HdxLockType[] = [
-    { key: 'vote', label: 'Vote', accounts: 8235, totalHdx: 1.56e9 },
-    { key: 'staking', label: 'Staking', accounts: 5117, totalHdx: 1.24e9 },
-    { key: 'gigahdx', label: 'GIGAHDX', accounts: 641, totalHdx: 7.97e8 },
-    { key: 'vesting', label: 'Vesting', accounts: 118, totalHdx: 5.0e8 },
-  ]
-  const buckets: HdxUnlockBucket[] = []
-  for (let i = 0; i < 8; i++) {
-    const from = now + i * 7 * day
-    buckets.push({
-      label: `W${i + 1}`, fromTs: ts(from), toTs: ts(from + 7 * day),
-      gigahdx: Math.round(1.5e6 + r() * 9e6), vesting: Math.round(8.2e6 + r() * 3.2e6), vote: Math.round(9e6 + r() * 4.4e7),
-    })
-  }
-  // Monthly buckets step by calendar month (not 30 days) so no month label repeats.
-  const weeklyEnd = now + 8 * 7 * day
-  const monthFrom = (i: number) => { const d = new Date(weeklyEnd); d.setUTCMonth(d.getUTCMonth() + i); return d.getTime() }
-  for (let i = 0; i < 6; i++) {
-    buckets.push({
-      label: `M${i + 1}`, fromTs: ts(monthFrom(i)), toTs: ts(monthFrom(i + 1)),
-      gigahdx: Math.round(8e6 + r() * 2.6e7), vesting: Math.round(3.4e7 + r() * 8e6), vote: Math.round(2e7 + r() * 8.5e7),
-    })
-  }
-  const daily: HdxDailyFlow[] = Array.from({ length: 60 }, (_, i) => {
-    const d = now - (59 - i) * day
-    return {
-      date: iso(d), buyHdx: Math.round(2e6 + r() * 2.6e7), sellHdx: Math.round(2e6 + r() * 2.4e7),
-      buyers: Math.round(120 + r() * 640), sellers: Math.round(110 + r() * 580),
-    }
-  })
-  const weekly = Array.from({ length: 12 }, (_, i) => ({
-    weekStart: iso(now - (11 - i) * 7 * day),
-    newHolders: Math.round(320 + r() * 620), exitedHolders: Math.round(260 + r() * 520),
+// The value chart's clickable markers, drawn from the account's own feed so a
+// marker and the row it opens are the same event.
+function mockValueEvents(rows: ActivityRow[]): ValueEvent[] {
+  return rows.slice(0, 12).map(row => ({
+    blockHeight: row.blockHeight, eventIndex: row.eventIndex ?? 0, extrinsicIndex: row.extrinsicIndex,
+    timestamp: row.timestamp,
+    kind: row.type === 'trade' ? 'swap' : row.type === 'liquidity' ? 'liquidity' : row.type === 'xcm' ? 'cross-chain' : 'transfer-out',
+    valueUsd: row.valueUsd ?? 0,
+    asset: row.asset ?? row.assetIn,
+    counterparty: row.to,
   }))
-  const MOVER_ACCS = [...ACCS, ...COLLATORS]
-  const mover = (i: number, dir: 1 | -1): HdxMover => {
-    const big = 3e6 + r() * 4.5e7, small = big * (0.04 + r() * 0.38)
-    const boughtHdx = Math.round(dir > 0 ? big : small), soldHdx = Math.round(dir > 0 ? small : big)
-    return { account: MOVER_ACCS[i % MOVER_ACCS.length], balanceHdx: Math.round(big * (2 + i)), boughtHdx, soldHdx, netHdx: boughtHdx - soldHdx }
-  }
-  return {
-    price: 0.0046,
-    change24h: 0.0231,
-    supply: { totalHdx: 6.5e9, protocolHdx: 2.6e9, userHdx: 3.9e9, holders: 60_968 },
-    cohorts,
-    locks: { types: lockTypes, totalLockedHdx: 2.9e9, lockedPctOfUser: 74.4, vestedUnclaimedHdx: 2.3e8, snapshotAt: ts(now - 3_600_000) },
-    unlocks: {
-      buckets,
-      laterHdx: { gigahdx: 9.2e7, vesting: 1.6e8, vote: 1.4e8 },
-      unlockableNowHdx: 6.7e8,
-      activeVoteHdx: 7.8e8,
-      stakingAnytimeHdx: 1.24e9,
-      gigaPending: { count: 12, totalHdx: 1.4e6, nextUnlockTs: ts(now + 2 * day) },
-    },
-    flows: { daily, dca: { buy: { orders: 46, hdxPerDay: 2.1e6 }, sell: { orders: 13, hdxPerDay: 6.4e5 } } },
-    churn: { weekly },
-    structure: (() => {
-      // Full-era weekly holder structure: ~4 years of Mondays with a slow
-      // treasury/tranche drift and deepening HODL bands — deterministic via
-      // the shared rng like every other series here.
-      const N_WEEKS = 210
-      const monday = (i: number) => { const d = new Date(now - (N_WEEKS - 1 - i) * 7 * day); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return iso(d.getTime()) }
-      const weeks = Array.from({ length: N_WEEKS }, (_, i) => monday(i))
-      const grow = (from: number, to: number, jitter: number) =>
-        Array.from({ length: N_WEEKS }, (_, i) => Math.round(from + (to - from) * (i / (N_WEEKS - 1)) + (r() - 0.5) * jitter))
-      return {
-        weeks,
-        ownership: {
-          treasury: grow(2.3e9, 2.1e9, 4e7),
-          protocol: grow(1e6, 3.1e8, 8e6),
-          kraken: grow(0, 2.4e8, 6e6).map((v, i) => (i < 30 ? 0 : v)), // pre-listing gap
-          top10: grow(1.5e9, 1.05e9, 3e7),
-          top11to100: grow(1.4e9, 1.3e9, 3e7),
-          top101to1000: grow(8e8, 9.6e8, 2e7),
-          rest: grow(3e8, 4.4e8, 1e7),
-        },
-        effectiveHolders: grow(38, 85, 4),
-        hodl: {
-          under3m: grow(9e8, 1e8, 3e7),
-          m3to12: grow(6e8, 1.7e8, 2e7),
-          y1to2: grow(1e8, 7.7e8, 2e7),
-          over2y: grow(0, 2.66e9, 4e7).map((v, i) => (i < 20 ? 0 : v)),
-        },
-        backfilledAllocationHdx: 1.999e9,
-        trends: (() => {
-          // ~4 years of month starts; series start at staggered offsets like
-          // the real data (staking from month 14, buybacks from month 27, …).
-          const N = 50
-          const monthStart = (i: number) => { const d = new Date(now); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - (N - 1 - i)); return iso(d.getTime()).slice(0, 8) + '01' }
-          const months = Array.from({ length: N }, (_, i) => monthStart(i))
-          const ramp = (from: number, to: number, startAt: number, jitter = 0) =>
-            months.map((_, i) => (i < startAt ? null : Math.round(from + (to - from) * ((i - startAt) / Math.max(1, N - 1 - startAt)) + (r() - 0.5) * jitter)))
-          const stakedClassic = ramp(5e8, 2.0e9, 14, 4e7).map((v, i) => (i >= N - 2 ? 8.3e8 : v))
-          const stakedGiga = months.map((_, i) => (i < N - 2 ? null : i === N - 2 ? 1.0e9 : 1.28e9))
-          return {
-            months,
-            stakedClassic,
-            stakedGiga,
-            liquidFloat: ramp(3.9e9, 1.6e9, 0, 5e7),
-            realizedPrice: months.map((_, i) => (i < 9 ? null : +(0.005 + 0.004 * Math.min(1, (i - 9) / 18)).toFixed(4))),
-            marketPrice: months.map((_, i) => (i < 9 ? null : +(0.009 + 0.009 * Math.sin(i / 5) * (r() * 0.4 + 0.6)).toFixed(4))),
-            top100Share: ramp(70, 64, 0, 2).map(v => (v != null ? +v.toFixed(1) : null)),
-            krakenHdx: ramp(2.1e8, 2.4e8, 6, 1e7).map((v, i) => (v != null && i > 20 ? Math.round(4.8e8 - (i - 20) * 8e6) : v)),
-            buybackHdx: ramp(1.8e7, 4.86e8, 27, 0),
-            traders: ramp(400, 550, 6, 120).map((v, i) => (v != null && i > 28 && i < 44 ? Math.round(3000 - (i - 28) * 150) : v)),
-            gov: {
-              quarters: Array.from({ length: 17 }, (_, i) => { const d = new Date(Date.UTC(2022, 6 + i * 3, 1)); return d.toISOString().slice(0, 10) }),
-              capital: Array.from({ length: 17 }, (_, i) => Math.round(2e6 + i * 7e7 + r() * 1e8)),
-              voters: Array.from({ length: 17 }, (_, i) => Math.round(18 + i * 60 + r() * 300)),
-            },
-          }
-        })(),
-      }
-    })(),
-    topMovers: {
-      accumulators: Array.from({ length: 6 }, (_, i) => mover(i, 1)).sort((a, b) => b.netHdx - a.netHdx),
-      distributors: Array.from({ length: 6 }, (_, i) => mover(i + 3, -1)).sort((a, b) => a.netHdx - b.netHdx),
-    },
-    gigaLiquidations: {
-      currentPrice: 0.0218,
-      points: Array.from({ length: 40 }, (_, i) => {
-        const r = rng(i * 17 + 3)
-        // liq prices between −85% and −5% of spot, size skewed to a few whales
-        const price = 0.0218 * (0.15 + 0.8 * (i / 39))
-        return { price, stHdx: Math.round(2_800_000 * (r() < 0.12 ? 4 : 1) * (0.2 + r())) }
-      }),
-    },
-    gigaMarket: [
-      { asset: { assetId: 670, symbol: 'stHDX', name: 'Staked HDX', decimals: 12, parachainId: null }, supplied: 48_200_000, suppliedUsd: 1_052_688, debt: 0, debtUsd: 0, suppliers: 412, borrowers: 0 },
-      { asset: { assetId: 1000, symbol: 'HOLLAR', name: 'Hollar', decimals: 18, parachainId: null }, supplied: 310_000, suppliedUsd: 310_310, debt: 264_500, debtUsd: 264_764, suppliers: 58, borrowers: 187 },
-    ],
-  }
 }
 
-/* ---------- HOLLAR dashboard ----------
-   Fully deterministic (no Date.now()/Math.random()) — every value is derived
-   from a fixed anchor timestamp + index-based formulas, so render tests can
-   assert exact numbers instead of "close enough" ranges. */
-const HOLLAR_MOCK_ANCHOR = Date.parse('2026-07-10T00:00:00.000Z')
-// The Security page: one fuse per rate-limited asset, one Omnipool row per
-// listed asset, and a live lockdown so the grid's tripped state is exercised.
-function buildSecurity(): SecurityDashboard {
-  const limited: [number, number][] = [[5, 5_000_000], [10, 5_000_000], [22, 5_000_000], [15, 1_500_000], [19, 0.5], [20, 17], [16, 500_000]]
-  // Deliberately varied loads so the grid shows a cold, a warm, a hot and a
-  // tripped fuse — the four states the gauge has to tell apart.
-  const load: Record<number, number> = { 5: 0, 10: 2.94, 22: 52.4, 15: 81.7, 19: 0, 20: 0, 16: 100 }
-  const fuses: SecurityFuse[] = limited.map(([assetId, limit]) => {
-    const a = assetById.get(assetId)!
-    const pct = load[assetId] ?? 0
-    const locked = assetId === 16
-    const status: SecurityFuse['status'] = locked ? 'locked' : assetId === 19 ? 'expired' : assetId === 20 ? 'unarmed' : 'active'
+function mockVoteRows(account: AccountRef | null, limit: number): VoteRow[] {
+  const hdx = ASSETS[0]
+  return Array.from({ length: limit }, (_, i) => {
+    const h = TIP - i * 700 - 40
+    const amt = 1000 + (h % 9000)
     return {
-      asset: aref(a), status,
-      limit: raw(limit, a.decimals),
-      used: raw((limit * pct) / 100, a.decimals),
-      headroom: raw((limit * (100 - pct)) / 100, a.decimals),
-      usagePct: locked ? 100 : pct,
-      untilBlock: locked ? TIP + 9_400 : null,
-      periodEndBlock: locked ? null : TIP + 4_200,
-      category: assetId === 0 ? 'local' : 'external',
-      lockdownCount: assetId === 16 ? 3 : assetId === 22 ? 1 : 0,
+      blockHeight: h, timestamp: tsAt(h), eventIndex: 95, extrinsicIndex: 3,
+      account: account ?? ACCS[i % ACCS.length], pallet: 'ConvictionVoting', action: 'Voted',
+      referendum: String(380 - i), side: h % 7 === 0 ? 'Nay' : 'Aye',
+      conviction: MOCK_VOTE_CONVICTIONS[h % MOCK_VOTE_CONVICTIONS.length],
+      amount: raw(amt, hdx.decimals), asset: aref(hdx), valueUsd: amt * hdx.price,
+      voteRefPallet: 'opengov', voteRefTitle: 'Security patch runtime upgrade v50.0.2',
+      weighted: raw(amt * 6, hdx.decimals),
     }
   })
-  // The API serves fuses worst-first (usage, then trip history, then symbol) and
-  // both the grid and the table render in the order given, so the mock sorts the
-  // same way rather than leaving the order to its own asset list.
-  fuses.sort((a, b) => b.usagePct - a.usagePct || b.lockdownCount - a.lockdownCount || a.asset.symbol.localeCompare(b.asset.symbol))
-
-  const perBlock: SecurityPerBlockRow[] = [0, 5, 10, 15, 19, 20].map((assetId, i) => {
-    const a = assetById.get(assetId)!
-    const reserve = 1_000_000 / (i + 1)
-    return {
-      asset: aref(a), reserve: raw(reserve, a.decimals), reserveUsd: reserve * a.price,
-      tradeLimitPct: 50, tradeAllowance: raw(reserve / 2, a.decimals), tradeAllowanceUsd: (reserve / 2) * a.price,
-      addLimitPct: assetId === 5 ? null : 5, addAllowance: assetId === 5 ? null : raw(reserve / 20, a.decimals),
-      removeLimitPct: 5, removeAllowance: raw(reserve / 20, a.decimals),
-      overridden: assetId === 5,
-      peakBlockNet: raw(reserve / 90, a.decimals), peakBlockHeight: TIP - 500 * (i + 1),
-      peakPressurePct: 100 / 45, tradable: ['Sell', 'Buy', 'Add liquidity', 'Remove liquidity'],
-    }
-  })
-  return {
-    head: { blockHeight: TIP, blockTimestamp: tsAt(TIP) },
-    chainAsOf: tsAt(TIP).replace(' ', 'T') + 'Z',
-    chainBlock: TIP + 1,
-    withdraw: {
-      configured: true, limit: 1_000_000_000, used: 41_820_004, usagePct: 4.18,
-      windowMs: 21_600_000, lastCreditedMs: Date.parse(tsAt(TIP) + 'Z'), lockdownUntilMs: null,
-      armedAt: { blockHeight: TIP - 900_000, blockTimestamp: tsAt(TIP - 900_000) },
-      everTripped: false,
-      egressAccounts: [
-        { account: A.treasury, chain: 'AssetHub' },
-        { account: A.owl, chain: 'Moonbeam' },
-      ],
-      localAssets: [aref(assetById.get(0)!)], externalAssetCount: 56,
-    },
-    fuses: {
-      periodBlocks: 14_400, rows: fuses, lockedCount: 1, frozenCount: 0, lockdownTotal: 26, releaseTotal: 108,
-      lockdowns: [16, 22, 5, 10, 15, 19, 20, 16, 22, 5, 10, 15].map((assetId, i) => ({
-        asset: aref(assetById.get(assetId)!),
-        blockHeight: TIP - 20_000 * (i + 1), blockTimestamp: tsAt(TIP - 20_000 * (i + 1)),
-        untilBlock: TIP - 20_000 * (i + 1) + 14_400,
-        liftedAtBlock: i === 0 ? null : TIP - 20_000 * (i + 1) + 2_000,
-        liftedAtTimestamp: i === 0 ? null : tsAt(TIP - 20_000 * (i + 1) + 2_000),
-        liftedEarly: i === 0 ? null : i === 1,
-        extrinsicIndex: i === 2 ? 3 : null,
-      })),
-    },
-    perBlock: { defaultTradePct: 50, defaultAddPct: 5, defaultRemovePct: 5, rows: perBlock, peakWindowDays: 30 },
-    trips: {
-      total: 438, enforcementTotal: 431, directTotal: 253, nestedTotal: 185,
-      byError: [
-        { name: 'MaxLiquidityLimitPerBlockReached', count: 430, enforcement: true },
-        { name: 'AssetInLockdown', count: 1, enforcement: true },
-        { name: 'InvalidAmount', count: 7, enforcement: false },
-      ],
-      byYear: [{ year: 2023, count: 38 }, { year: 2024, count: 94 }, { year: 2025, count: 161 }, { year: 2026, count: 138 }],
-      recent: [0, 1, 2].map(i => ({
-        blockHeight: TIP - 700 * (i + 1), blockTimestamp: tsAt(TIP - 700 * (i + 1)),
-        extrinsicId: `${TIP - 700 * (i + 1)}-${i + 2}`,
-        callName: i === 0 ? 'Omnipool.remove_liquidity' : 'Utility.batch_all',
-        errorName: 'MaxLiquidityLimitPerBlockReached', account: ACCS[i],
-      })),
-    },
-    freezes: {
-      paused: [
-        { pallet: 'PolkadotXcm', call: 'claim_assets', pausedAtBlock: TIP - 8_000, pausedAtTimestamp: tsAt(TIP - 8_000), extrinsicIndex: 3, orphaned: false },
-        { pallet: 'Elections', call: 'vote', pausedAtBlock: TIP - 900_000, pausedAtTimestamp: tsAt(TIP - 900_000), extrinsicIndex: 2, orphaned: true },
-      ],
-      hubTradability: ['Sell'],
-      omnipool: [{ asset: aref(assetById.get(16)!), poolId: null, bits: 8, flags: ['Remove liquidity'] }],
-      omnipoolAssetCount: 19,
-      delisted: [{ asset: aref(assetById.get(19)!), poolId: null, bits: 0, flags: ['Frozen'] }],
-      stableswap: [{ asset: aref(assetById.get(15)!), poolId: 690, bits: 11, flags: ['Sell', 'Buy', 'Remove liquidity'] }],
-    },
-    risk: {
-      windowDays: 30,
-      markets: [
-        { key: 'core', label: 'Money Market', role: 'primary' as const, borrowers: 662, debtUsd: 15_712_980, collateralUsd: 31_402_118, underwaterCount: 54, underwaterDebtUsd: 8_797.34, underwaterCollateralUsd: 0.17, badDebtCount: 45, badDebtUsd: 8_795.14, liquidatableCount: 9, liquidatableDebtUsd: 2.2, nearLiquidationCount: 24, nearLiquidationDebtUsd: 65_341 },
-        { key: 'gigahdx', label: 'GIGAHDX', role: 'supplemental' as const, borrowers: 53, debtUsd: 223_622, collateralUsd: 918_400, underwaterCount: 0, underwaterDebtUsd: 0, underwaterCollateralUsd: 0, badDebtCount: 0, badDebtUsd: 0, liquidatableCount: 0, liquidatableDebtUsd: 0, nearLiquidationCount: 0, nearLiquidationDebtUsd: 0 },
-        { key: 'bil', label: 'BIL', role: 'supplemental' as const, borrowers: 0, debtUsd: 0, collateralUsd: 0, underwaterCount: 0, underwaterDebtUsd: 0, underwaterCollateralUsd: 0, badDebtCount: 0, badDebtUsd: 0, liquidatableCount: 0, liquidatableDebtUsd: 0, nearLiquidationCount: 0, nearLiquidationDebtUsd: 0 },
-      ],
-      liquidations: {
-        day: 0, week: 5, month: 487, total: 8_358, lastTimestamp: tsAt(TIP - 12_000),
-        recent: [0, 1, 2].map(i => ({
-          blockHeight: TIP - 12_000 - i * 3_000, blockTimestamp: tsAt(TIP - 12_000 - i * 3_000),
-          extrinsicIndex: 2, borrower: A.binance,
-          collateral: aref(assetById.get(690)!), debt: aref(assetById.get(i === 0 ? 5 : 22)!),
-        })),
-      },
-      // Deliberately spans the 100% mark: the allowance is today's reserve, so a
-      // historical move can exceed it.
-      largestMoves: ([[1000, 'add', 118, 105.9], [5, 'remove', 42, 48.2], [10, 'add', 9, 3.1]] as const).map(([assetId, kind, amount, share]) => {
-        const a = assetById.get(assetId)!
-        return {
-          asset: aref(a), kind: kind as SecurityLiquidityMove['kind'],
-          amount: raw(amount * 1_000, a.decimals),
-          blockHeight: TIP - 4_000 - assetId, blockTimestamp: tsAt(TIP - 4_000 - assetId),
-          extrinsicIndex: 3,
-          allowance: raw((amount * 1_000 * 100) / share, a.decimals),
-          shareOfAllowancePct: share,
-        }
-      }),
-    },
-    runtime: { specVersion: 435, upgrades: 64, lastUpgrade: { blockHeight: TIP - 76_000, blockTimestamp: tsAt(TIP - 76_000) } },
-    // Long enough that the ledger's own pager has something to reveal.
-    timeline: Array.from({ length: 31 }, (_, i) => {
-      const shape = [
-        { kind: 'pause', label: 'Call paused', detail: 'PolkadotXcm.claim_assets', asset: null },
-        { kind: 'lockdown', label: 'Deposit fuse tripped', detail: 'GLMR locked until block ' + (TIP + 9_400).toLocaleString('en-US'), asset: aref(assetById.get(16)!) },
-        { kind: 'freeze', label: 'Omnipool tradability set', detail: 'WBTC → Frozen', asset: aref(assetById.get(19)!) },
-        { kind: 'unpause', label: 'Call unpaused', detail: 'Omnipool.add_liquidity', asset: null },
-        { kind: 'limit', label: 'Global withdraw limit set', detail: '1,000,000,000 HDX per 6h', asset: null },
-      ][i % 5]
-      const height = TIP - 8_000 - i * 30_000
-      return { ...shape, blockHeight: height, blockTimestamp: tsAt(height), extrinsicIndex: i % 3 === 0 ? null : i + 2 }
-    }),
-    guardians: {
-      techCommittee: { members: [A.fox, A.owl, A.swan, A.binance, A.krakenSub, A.treasury, A.krakenEvm], size: 7, majority: 4, superMajority: 5 },
-      memberSetAtBlock: TIP - 300_000,
-      outstandingWhitelisted: [{ callHash: '0x95dddfa3a727e46ac23c451d603846dafd4c8d50f0ae1144ab99077dd9dc650a', blockHeight: TIP - 120_000, blockTimestamp: tsAt(TIP - 120_000) }],
-    },
-    wormhole: wormholeSummary(),
-  }
-}
-
-/* ---------- Wormhole NTT backing ----------
-   One asset per state the page has to tell apart: two covered exactly, a seeded
-   surplus, a real deficit, a shortfall small enough to be seed noise, and an
-   asset whose origin chain nobody configured. Two Ethereum assets also carry a
-   release held at the origin rate limiter — one past its timer, one still
-   counting down. Every amount is a raw integer at the asset's own decimals and
-   every residual is derived from those integers, so the beams, the table and
-   the totals cannot disagree. */
-const WH_HYDRATION_CHAIN = 73
-const WH_ETHEREUM = 2
-const WH_SOLANA = 1
-const WH_SUI = 21
-const WH_ASOF = tsMs(MOCK_NOW_MS - 48_000)
-const WH_SCAN_ASOF = tsMs(MOCK_NOW_MS - 31_000)
-
-// [limit, capacity left now, hours since last consumed] in whole tokens.
-type WhFuseSpec = [number, number, number | null]
-
-// Every Hydration-side NTT manager is configured at the u64 trimmed ceiling, so
-// the local legs can never bind and the origin side carries every real limit.
-// The same number on every asset, which is what lets the page say so from data.
-const WH_LOCAL_LIMIT = 184_467_440_737
-// One rolling window, the same on every leg of every chain.
-const WH_LIMIT_WINDOW_SEC = 86_400
-
-interface WhSpec {
-  assetId: number
-  symbol: string
-  decimals: number
-  price: number
-  chainId: number
-  chainName: string
-  issuance: number
-  // Gap-closing mints parked at the dead address — inside issuance, outside
-  // circulation, so the residual must not move when both rise together.
-  burned?: number
-  locked: number | null
-  inflightIn: number
-  inflightOut: number
-  inflightCount: number | null
-  // Held at the origin rate limiter. Null on the chains whose family has no
-  // queue reader (Sui), which is not the same answer as zero. Custody
-  // still holds a queued release, so `locked` includes it and the residual —
-  // and therefore the row's verdict — is unchanged by it.
-  queued: number | null
-  queuedCount: number | null
-  // The origin chain's two rate limiters, in whole tokens: [limit, capacity
-  // left now, hours since the leg was last consumed]. Null on a chain nobody
-  // configured, which is what makes its fuse tiles read as unread rather than
-  // as a limiter nothing has touched. Hydration's own two legs are the same
-  // deliberate near-infinity on every asset, so they are not spelled out per
-  // spec (see WH_LOCAL_LIMIT).
-  limits: { in: WhFuseSpec; out: WhFuseSpec } | null
-  status: WormholeAssetRow['status']
-  statusDetail: string
-  pausedOrigin?: boolean
-  mintedIn: number
-  burnedOut: number
-  transfers14d: { out: number; in: number }
-  peer: string
-  originToken: string
-}
-
-const WH_SPECS: WhSpec[] = [
-  {
-    assetId: 1000752, symbol: 'SOL', decimals: 9, price: 168.5, chainId: WH_SOLANA, chainName: 'Solana',
-    issuance: 18_400, locked: null, inflightIn: 0, inflightOut: 0, inflightCount: null,
-    queued: null, queuedCount: null,
-    limits: null,
-    status: 'unconfigured',
-    statusDetail: 'Solana is not configured on this deployment, so custody cannot be read.',
-    mintedIn: 26_000, burnedOut: 9_100, transfers14d: { out: 11, in: 14 },
-    peer: 'NTtAaoDJUECKrRhKrbVy9dhbdVK5CvfXNv5tKQFbvHB',
-    originToken: 'So11111111111111111111111111111111111111112',
-  },
-  {
-    assetId: 1000753, symbol: 'SUI', decimals: 9, price: 1.42, chainId: WH_SUI, chainName: 'Sui',
-    issuance: 2_000_000, locked: 1_999_991.18, inflightIn: 0, inflightOut: 0, inflightCount: 0,
-    queued: null, queuedCount: null,
-    // Some room used on the way in, untouched on the way out.
-    limits: { in: [100_000, 88_500, 9], out: [100_000, 100_000, null] },
-    status: 'attention',
-    statusDetail: 'Custody is 8.82 SUI short of the minted supply — a few dollars, and unchanged since the origin manager was seeded.',
-    mintedIn: 1_400_000, burnedOut: 320_000, transfers14d: { out: 6, in: 9 },
-    peer: '0x5f0d7cba9d6a1f4b4c6a2d92e07b3c8a1b5e4d6f7a8c9b0d1e2f3a4b5c6d7e8f',
-    originToken: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
-  },
-  {
-    assetId: 20, symbol: 'WETH', decimals: 18, price: 3204.4, chainId: WH_ETHEREUM, chainName: 'Ethereum',
-    issuance: 640, locked: 642.5, inflightIn: 0, inflightOut: 2.5, inflightCount: 1,
-    queued: 0, queuedCount: 0,
-    // The hot one: two thirds of the day's entry allowance already spent.
-    limits: { in: [10_000, 3_400, 2], out: [10_000, 9_997.5, 1] },
-    status: 'ok',
-    statusDetail: 'Custody covers every token minted, with one transfer still in flight.',
-    mintedIn: 5_100, burnedOut: 4_600, transfers14d: { out: 18, in: 21 },
-    peer: '0x3c2b1a9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b',
-    originToken: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
-  },
-  {
-    assetId: 1000745, symbol: 'sUSDS', decimals: 18, price: 1.0, chainId: WH_ETHEREUM, chainName: 'Ethereum',
-    // 12 of the minted total sit at the dead address; the residual ignores them.
-    issuance: 1_240_012, burned: 12, locked: 1_322_500, inflightIn: 0, inflightOut: 0, inflightCount: 0,
-    queued: 2_500, queuedCount: 1,
-    // The release leg is nearly spent, which is exactly why this asset has a
-    // transfer sitting in the origin manager's queue.
-    limits: { in: [100_000, 100_000, null], out: [100_000, 20_001.033576, 20] },
-    status: 'surplus', pausedOrigin: true,
-    statusDetail: 'Custody holds 80,000 sUSDS more than Hydration has minted, which is how the origin manager was funded.',
-    mintedIn: 900_000, burnedOut: 40_000, transfers14d: { out: 3, in: 7 },
-    peer: '0x8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b',
-    originToken: '0xa3931d71877c0e7a3148cb7eb4463524fec27fbd',
-  },
-  {
-    assetId: 19, symbol: 'WBTC', decimals: 8, price: 67_241.1, chainId: WH_ETHEREUM, chainName: 'Ethereum',
-    issuance: 12, locked: 11.98, inflightIn: 0, inflightOut: 0, inflightCount: 0,
-    queued: 0, queuedCount: 0,
-    // A fully refilled entry leg: 0% consumed, and no fill drawn for it.
-    limits: { in: [10, 10, null], out: [10, 9.6, 6] },
-    status: 'deficit',
-    statusDetail: 'Minted supply exceeds custody by 0.02 WBTC, and no transfer in flight accounts for it.',
-    mintedIn: 41, burnedOut: 30, transfers14d: { out: 4, in: 5 },
-    peer: '0x1f2e3d4c5b6a7988a9b0c1d2e3f4a5b6c7d8e9f0',
-    originToken: '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599',
-  },
-  {
-    assetId: 22, symbol: 'USDC', decimals: 6, price: 0.9999, chainId: WH_ETHEREUM, chainName: 'Ethereum',
-    issuance: 227_000, locked: 233_800, inflightIn: 5_000, inflightOut: 0, inflightCount: 1,
-    queued: 1_800, queuedCount: 1,
-    // The live-probe numbers: a 100k entry limit with 93,411.583448 left, which
-    // is 6.588416552% consumed.
-    limits: { in: [100_000, 93_411.583448, 3], out: [100_000, 98_200, 5] },
-    status: 'ok',
-    statusDetail: 'Custody covers every token minted, with one transfer still in flight.',
-    mintedIn: 3_100_000, burnedOut: 2_874_000, transfers14d: { out: 22, in: 26 },
-    peer: '0x9e8d7c6b5a4938271605f4e3d2c1b0a998877665',
-    originToken: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
-  },
-]
-
-// One rate limiter, from whole-token figures. The utilization is derived from
-// the raw integers rather than stated, so a tile's fill can never disagree with
-// the two exact amounts in its own tooltip.
-function whFuse(s: WhSpec, [limit, capacity, agoHours]: WhFuseSpec, whole = false): WormholeFuse {
-  // The local legs are whole tokens far past what a float can hold exactly, so
-  // their raw value is scaled as digits rather than through `raw`.
-  const scale = (v: number) => whole ? BigInt(v) * 10n ** BigInt(s.decimals) : BigInt(raw(v, s.decimals))
-  const l = scale(limit)
-  const c = scale(capacity)
-  const used = l - c
-  return {
-    limit: l.toString(),
-    capacity: c.toString(),
-    utilizationPct: l === 0n ? 0 : Number((used * 1_000_000_000n) / l) / 10_000_000,
-    durationSec: WH_LIMIT_WINDOW_SEC,
-    // Anchored to WALL-CLOCK now, like whQueued's release timers: a fuse's last
-    // use is read against the real Date.now(), so a fixed anchor would drift
-    // until "last consumed" outran the very window it refills over.
-    lastConsumedAt: agoHours == null ? null : tsMs(Date.now() - agoHours * 3_600_000),
-  }
-}
-
-function whRow(s: WhSpec): WormholeAssetRow {
-  const big = (v: number) => BigInt(raw(v, s.decimals))
-  const issuance = big(s.issuance)
-  const burned = big(s.burned ?? 0)
-  const inflightIn = big(s.inflightIn)
-  const inflightOut = big(s.inflightOut)
-  const locked = s.locked == null ? null : big(s.locked)
-  const queued = s.queued == null ? null : big(s.queued)
-  const residual = locked == null ? null : locked - (issuance - burned) - inflightIn - inflightOut - (queued ?? 0n)
-  const usd = (v: bigint) => (Number(v) / 10 ** s.decimals) * s.price
-  const unread = s.locked == null
-  return {
-    assetId: String(s.assetId), symbol: s.symbol, decimals: s.decimals,
-    originChainId: s.chainId, originChainName: s.chainName,
-    originToken: s.originToken,
-    manager: hx(s.assetId * 7 + 11, 40),
-    mode: 'burning',
-    pausedLocal: false,
-    pausedOrigin: unread ? null : s.pausedOrigin === true,
-    peer: s.peer,
-    issuance: issuance.toString(),
-    burned: unread ? null : burned.toString(),
-    locked: locked == null ? null : locked.toString(),
-    inflightIn: unread ? null : inflightIn.toString(),
-    inflightOut: unread ? null : inflightOut.toString(),
-    inflightCount: s.inflightCount,
-    queued: queued == null ? null : queued.toString(),
-    queuedCount: s.queuedCount,
-    residual: residual == null ? null : residual.toString(),
-    // The two local legs are read whenever the origin's are, and carry the same
-    // deliberate near-infinity everywhere — the fact the page's note is built on.
-    limits: s.limits == null ? null : {
-      in: whFuse(s, s.limits.in),
-      out: whFuse(s, s.limits.out),
-      localOut: whFuse(s, [WH_LOCAL_LIMIT, WH_LOCAL_LIMIT, null], true),
-      localIn: whFuse(s, [WH_LOCAL_LIMIT, WH_LOCAL_LIMIT, null], true),
-    },
-    flows: {
-      mintedIn: big(s.mintedIn).toString(),
-      burnedOut: big(s.burnedOut).toString(),
-      nonNtt: (issuance - big(s.mintedIn) + big(s.burnedOut)).toString(),
-    },
-    issuanceUsd: usd(issuance),
-    lockedUsd: locked == null ? null : usd(locked),
-    residualUsd: residual == null ? null : usd(residual),
-    status: s.status,
-    statusDetail: s.statusDetail,
-    transfers14d: s.transfers14d,
-  }
-}
-
-// The last 25 settled transfers, alternating direction so both readings of the
-// table are exercised, newest first.
-function whTransfers(): WormholeTransferRow[] {
-  const settled = WH_SPECS.filter(s => s.status !== 'unconfigured')
-  return [0, 1, 2, 3, 4, 5].map(i => {
-    const s = settled[i % settled.length]
-    const height = TIP - 40 - i * 190
-    // Sized in dollars, so a WBTC transfer is a fraction of a coin and a USDC
-    // one is thousands of tokens — and neither exceeds the asset's own supply.
-    const amount = (i % 2 === 0 ? 2_500 : 9_100) / s.price
-    return {
-      direction: (i % 2 === 0 ? 'in' : 'out') as WormholeTransferRow['direction'],
-      assetId: String(s.assetId), symbol: s.symbol,
-      amount: raw(amount, s.decimals),
-      amountUsd: amount * s.price,
-      account: [A.fox, A.owl, A.binance][i % 3].address,
-      accountRef: [A.fox, A.owl, A.binance][i % 3],
-      counterpartyChainId: s.chainId,
-      blockHeight: height, eventIndex: 12 + i, extrinsicIndex: i % 3 === 2 ? null : 2 + i,
-      timestamp: tsAt(height),
-      sequence: String(4_100 + i * 7),
-    }
-  })
-}
-
-function whInflight(): WormholeInflightOp[] {
-  const usdc = WH_SPECS.find(s => s.symbol === 'USDC')!
-  const weth = WH_SPECS.find(s => s.symbol === 'WETH')!
-  return [
-    {
-      id: `${WH_ETHEREUM}/000000000000000000000000db5c1f8a3b6d4e2f7a90c1b2d3e4f5a6b7c8d9e0/18412`,
-      direction: 'in', assetId: String(usdc.assetId), symbol: usdc.symbol,
-      amount: raw(usdc.inflightIn, usdc.decimals), amountUsd: usdc.inflightIn * usdc.price,
-      fromChainId: WH_ETHEREUM, toChainId: WH_HYDRATION_CHAIN, sequence: '18412',
-      sentAt: tsMs(MOCK_NOW_MS - 4 * 60_000), sourceTx: hx(9_101, 64),
-    },
-    {
-      id: `${WH_HYDRATION_CHAIN}/0000000000000000000000005a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b/244`,
-      direction: 'out', assetId: String(weth.assetId), symbol: weth.symbol,
-      amount: raw(weth.inflightOut, weth.decimals), amountUsd: weth.inflightOut * weth.price,
-      fromChainId: WH_HYDRATION_CHAIN, toChainId: WH_ETHEREUM, sequence: '244',
-      sentAt: tsMs(MOCK_NOW_MS - 11 * 60_000), sourceTx: hx(9_102, 64),
-    },
-  ]
-}
-
-// Both states a queued release can be in: one whose rate-limit timer has
-// already run out (anyone can complete it) and one still counting down. Newest
-// first, and each amount is exactly the `queued` its asset row carries, so the
-// panel's rows and the assets table's in-flight cell cannot disagree.
-function whQueued(): WormholeQueuedRelease[] {
-  const usdc = WH_SPECS.find(s => s.symbol === 'USDC')!
-  const susds = WH_SPECS.find(s => s.symbol === 'sUSDS')!
-  const HOUR = 3_600_000
-  // Release timers anchor to WALL-CLOCK now rather than MOCK_NOW_MS, for the
-  // reason hdxBreakdown's unlock dates do: the panel counts them against the
-  // real Date.now(), so a fixed anchor would drift and eventually flip a
-  // still-locked release into a releasable one.
-  const at = (hours: number) => tsMs(Date.now() + hours * HOUR)
-  return [
-    {
-      digest: hx(9_201, 64),
-      assetId: String(usdc.assetId), symbol: usdc.symbol,
-      amount: raw(usdc.queued!, usdc.decimals), amountUsd: usdc.queued! * usdc.price,
-      chainId: usdc.chainId, recipient: hx(9_203, 40),
-      queuedAt: at(-20), releasableAt: at(4),
-      releasable: false,
-    },
-    {
-      digest: hx(9_202, 64),
-      assetId: String(susds.assetId), symbol: susds.symbol,
-      amount: raw(susds.queued!, susds.decimals), amountUsd: susds.queued! * susds.price,
-      chainId: susds.chainId, recipient: hx(9_204, 40),
-      queuedAt: at(-26), releasableAt: at(-2),
-      releasable: true,
-    },
-  ]
-}
-
-export function buildSecurityWormhole(): WormholeBridgeDetail {
-  const assets = WH_SPECS.map(whRow).sort((a, b) => (b.issuanceUsd ?? -1) - (a.issuanceUsd ?? -1))
-  const inflight = whInflight()
-  const queued = whQueued()
-  const sum = (pick: (r: WormholeAssetRow) => number | null) =>
-    assets.reduce<number | null>((t, r) => { const v = pick(r); return v == null ? t : (t ?? 0) + v }, null)
-  return {
-    assets,
-    inflight,
-    queued,
-    recent: whTransfers(),
-    totals: {
-      lockedUsd: sum(r => r.lockedUsd),
-      issuanceUsd: sum(r => r.issuanceUsd),
-      inflightUsd: inflight.reduce((t, o) => t + (o.amountUsd ?? 0), 0),
-      deficitUsd: assets.reduce((t, r) => t + (r.residualUsd != null && r.residualUsd < 0 ? -r.residualUsd : 0), 0),
-      surplusUsd: assets.reduce((t, r) => t + (r.residualUsd != null && r.residualUsd > 0 ? r.residualUsd : 0), 0),
-    },
-    chains: [
-      { chainId: WH_ETHEREUM, name: 'Ethereum', family: 'evm', configured: true, ok: true, asOf: WH_ASOF },
-      { chainId: WH_SOLANA, name: 'Solana', family: 'solana', configured: false, ok: false, asOf: null },
-      { chainId: WH_SUI, name: 'Sui', family: 'sui', configured: true, ok: true, asOf: WH_ASOF },
-    ],
-    scan: { configured: true, ok: true, asOf: WH_SCAN_ASOF },
-    hydrationChainId: WH_HYDRATION_CHAIN,
-    asOf: WH_ASOF,
-    indexedThrough: { block: TIP, at: tsAt(TIP) },
-  }
-}
-
-// The dashboard's summary block is folded out of the same snapshot, so the
-// overview card and the section it opens can never disagree.
-function wormholeSummary(): WormholeSummary {
-  const d = buildSecurityWormhole()
-  const worst = (['deficit', 'attention', 'unverified', 'unconfigured', 'surplus', 'ok'] as const)
-    .find(s => d.assets.some(r => r.status === s)) ?? 'ok'
-  return {
-    assets: d.assets.length,
-    lockedUsd: d.totals.lockedUsd,
-    issuanceUsd: d.totals.issuanceUsd,
-    inflightCount: d.inflight.length,
-    inflightUsd: d.totals.inflightUsd,
-    queuedCount: d.queued.length,
-    queuedUsd: d.queued.reduce((t, q) => t + (q.amountUsd ?? 0), 0),
-    worstStatus: worst,
-    deficitUsd: d.totals.deficitUsd,
-    surplusUsd: d.totals.surplusUsd,
-    asOf: d.asOf,
-  }
-}
-
-function buildHollar(): HollarDashboard {
-  const DAY = 86_400_000
-  const dayIso = (daysAgo: number) => new Date(HOLLAR_MOCK_ANCHOR - daysAgo * DAY).toISOString().slice(0, 10)
-
-  // 30d of hourly closes, ±~12bps gentle wobble around peg (matches the live
-  // peculiarity of small persistent deviations rather than a flat $1 line).
-  const hourly: HollarPegPoint[] = []
-  const startMs = HOLLAR_MOCK_ANCHOR - 30 * DAY
-  for (let i = 0; i < 720; i++) {
-    const wobble = Math.sin(i / 11) * 0.0009 + Math.sin(i / 3.7 + 1) * 0.0003
-    hourly.push({ ts: tsMs(startMs + i * 3_600_000), close: +(1 + wobble).toFixed(6) })
-  }
-  const closes = hourly.map(h => h.close)
-  const devs = closes.map(c => (c - 1) * 10000)
-  const within25bpsPct = devs.filter(dv => Math.abs(dv) <= 25).length / devs.length * 100
-  const maxDevBps = devs.reduce((worst, dv) => (Math.abs(dv) > Math.abs(worst) ? dv : worst), devs[0])
-  const price = closes[closes.length - 1]
-
-  const aUSDC: AssetRef = { assetId: 1003, symbol: 'aUSDC', name: 'Aave USDC', decimals: 6, parachainId: null }
-  const aUSDT = aref(assetById.get(1002)!)
-  const sUSDS: AssetRef = { assetId: 1000745, symbol: 'sUSDS', name: 'Savings USDS', decimals: 18, parachainId: null }
-  const sUSDe: AssetRef = { assetId: 1000625, symbol: 'sUSDe', name: 'Savings USDe', decimals: 18, parachainId: null }
-  const USDC = aref(assetById.get(22)!)
-  const USDT = aref(assetById.get(10)!)
-
-  const collaterals: HollarCollateral[] = [
-    { asset: aUSDC, poolId: 110, holdings: '0', holdingsUsd: 0, purchaseFeePct: 0.3, buyBackFeePct: 0.01, maxBuyPrice: 0.995, buybackRatePct: 0.01, maxInHolding: null, lastArbTs: '2026-07-08 14:32:00', lastArbDirection: 'out' },
-    { asset: aUSDT, poolId: 111, holdings: '0', holdingsUsd: 0, purchaseFeePct: 0.3, buyBackFeePct: 0.01, maxBuyPrice: 0.995, buybackRatePct: 0.01, maxInHolding: null, lastArbTs: '2026-07-08 09:15:00', lastArbDirection: 'in' },
-    { asset: sUSDS, poolId: 112, holdings: raw(74_000, 18), holdingsUsd: 74_000, purchaseFeePct: 0.3, buyBackFeePct: 0.01, maxBuyPrice: 0.995, buybackRatePct: 0.01, maxInHolding: raw(500_000, 18), lastArbTs: '2026-07-09 02:40:00', lastArbDirection: 'out' },
-    { asset: sUSDe, poolId: 113, holdings: raw(193_000, 18), holdingsUsd: 198_790, purchaseFeePct: 0.3, buyBackFeePct: 0.01, maxBuyPrice: 0.995, buybackRatePct: 0.01, maxInHolding: raw(750_000, 18), lastArbTs: '2026-07-08 20:05:00', lastArbDirection: 'in' },
-  ]
-  const totalHoldingsUsd = collaterals.reduce((s, c) => s + (c.holdingsUsd ?? 0), 0)
-
-  // Sparse — most days are quiet, matching the live "last arb 1.8 days ago" norm.
-  const arbitrageDaily: HollarArbDay[] = Array.from({ length: 60 }, (_, i) => {
-    const daysAgo = 59 - i
-    const isEvent = daysAgo % 9 === 2
-    return { date: dayIso(daysAgo), hollarIn: isEvent && daysAgo % 18 === 2 ? 8_400 : 0, hollarOut: isEvent && daysAgo % 18 !== 2 ? 5_100 : 0 }
-  })
-  const tradesDaily: HollarTradeDay[] = Array.from({ length: 60 }, (_, i) => {
-    const daysAgo = 59 - i
-    const quiet = daysAgo % 11 === 5
-    return { date: dayIso(daysAgo), bought: quiet ? 0 : 1_200 + (daysAgo % 7) * 340, sold: quiet ? 0 : 900 + (daysAgo % 5) * 260 }
-  })
-
-  const pools: HollarPool[] = [
-    { poolId: 110, tvlUsd: 12_056_000, hollar: { amount: 6_000_000, usd: 6_006_000 }, partners: [{ asset: aUSDC, amount: 6_050_000, usd: 6_050_000 }], hollarSharePct: 6_006_000 / 12_056_000 * 100 },
-    { poolId: 111, tvlUsd: 4_232_800, hollar: { amount: 2_100_000, usd: 2_102_800 }, partners: [{ asset: aUSDT, amount: 2_130_000, usd: 2_130_000 }], hollarSharePct: 2_102_800 / 4_232_800 * 100 },
-    { poolId: 112, tvlUsd: 955_600, hollar: { amount: 480_000, usd: 480_600 }, partners: [{ asset: sUSDS, amount: 475_000, usd: 475_000 }], hollarSharePct: 480_600 / 955_600 * 100 },
-    { poolId: 113, tvlUsd: 422_440, hollar: { amount: 210_000, usd: 210_260 }, partners: [{ asset: sUSDe, amount: 206_000, usd: 212_180 }], hollarSharePct: 210_260 / 422_440 * 100 },
-    {
-      poolId: 105, tvlUsd: 510_842.75, hollar: { amount: 255_000, usd: 255_330 },
-      partners: [{ asset: USDC, amount: 128_000, usd: 128_000 }, { asset: USDT, amount: 127_500, usd: 127_512.75 }],
-      hollarSharePct: 255_330 / 510_842.75 * 100,
-    },
-  ]
-  const inStablepools = pools.reduce((s, p) => s + p.hollar.amount, 0)
-  const inOmnipool = 410_000
-  const total = 10_300_000
-  const other = total - inStablepools - inOmnipool
-
-  return {
-    price, change24h: 0.0006, pegDeviationBps: (price - 1) * 10000,
-    peg: { hourly, within25bpsPct, maxDevBps, min30d: Math.min(...closes), max30d: Math.max(...closes) },
-    supply: { total, holders: 4_215, inStablepools, inOmnipool, other },
-    hsm: {
-      totalHoldingsUsd, collaterals, arbitrageDaily, tradesDaily,
-      lastArb: { ts: '2026-07-08 20:05:00', direction: 'in', asset: sUSDe, hollarAmount: 4_200 },
-    },
-    pools,
-    trends: (() => {
-      // 49 launch-era weeks, deterministic via the local rng like the rest.
-      const r = rng(222)
-      const N = 49
-      const week = (i: number) => { const d = new Date(Date.UTC(2025, 8, 22) + i * 7 * 86_400_000); return d.toISOString().slice(0, 10) }
-      const weeks = Array.from({ length: N }, (_, i) => week(i))
-      const ramp = (from: number, to: number, startAt = 0, jitter = 0) =>
-        weeks.map((_, i) => (i < startAt ? null : Math.round(from + (to - from) * ((i - startAt) / Math.max(1, N - 1 - startAt)) + (r() - 0.5) * jitter)))
-      return {
-        weeks,
-        composition: {
-          stableswap: ramp(2.4e6, 4.6e6, 0, 4e5).map(v => v ?? 0),
-          omnipool: ramp(0, 2.3e6, 11, 3e5).map(v => v ?? 0),
-          protocol: ramp(1.5e5, 1.66e6, 0, 1e5).map(v => v ?? 0),
-          bridged: ramp(0, 3.7e6, 10, 0).map(v => v ?? 0),
-          wallets: ramp(2e4, 3.4e5, 0, 5e4).map(v => v ?? 0),
-        },
-        holders: ramp(57, 326, 0, 8),
-        peg: {
-          close: weeks.map((_, i) => +(1 - 0.001 + 0.0008 * Math.sin(i / 5) + (r() - 0.5) * 0.0006).toFixed(6)),
-          low: weeks.map((_, i) => +(1 - 0.003 + 0.001 * Math.sin(i / 5)).toFixed(6)),
-          high: weeks.map((_, i) => +(1 + 0.0005 + 0.0004 * Math.cos(i / 4)).toFixed(6)),
-        },
-        debt: weeks.map((_, i) => Math.round(i < 12 ? 2e6 + i * 3.5e5 : i < 20 ? 6.2e6 - (i - 12) * 6e5 : 1.4e6 + (i - 20) * 4e5)),
-        borrowers: ramp(118, 281, 0, 10),
-        revenueCumUsd: ramp(1_400, 266_600, 0, 0),
-        depth: { stableswap: ramp(2.4e6, 4.6e6, 0, 3e5), omnipool: ramp(0, 2.3e6, 11, 2e5) },
-        months: Array.from({ length: 12 }, (_, i) => { const d = new Date(Date.UTC(2025, 8 + i, 1)); return d.toISOString().slice(0, 10) }),
-        stableSharePct: Array.from({ length: 12 }, (_, i) => +(5.1 + i * 2.7 + r()).toFixed(1)),
-        pegStats: { uptime50Pct: 97.9, uptime25Pct: 81.4, maxAbsDevBps: 97.5 },
-        rates: [
-          { label: 'Core market', pct: 4.402, prevPct: 4.879, since: '2026-03-03' },
-          { label: 'GIGAHDX market', pct: 8.618, prevPct: null, since: '2026-07-01' },
-        ],
-      }
-    })(),
-  }
-}
-
-// Asset-pinned activities (the unified /explorer/activity with ?asset=N). Applies
-// the same min filter the server does so filter e2e flows behave identically.
-function assetScopedActivityRows(qs: URLSearchParams): ActivityRow[] {
-  const a = assetById.get(Number(qs.get('asset'))) ?? ASSETS[0]
-  const activityType = qs.get('type') ?? 'all'; const limit = Number(qs.get('limit') ?? 40)
-  const min = qs.get('min') ? Number(qs.get('min')) : null
-  const out: ActivityRow[] = []; let h = TIP
-  const types: ActivityRow['type'][] = ['trade', 'transfer', 'xcm', 'liquidity', 'mm', 'dca']
-  while (out.length < limit && h > TIP - 1200) {
-    const r = rng(h * 2654435761 + a.assetId); const t = types[h % types.length]
-    if (activityType !== 'all' && t !== activityType) { h -= 1 + Math.floor(r() * 3); continue }
-    const other = ASSETS[Math.floor(r() * ASSETS.length)]
-    // ~1 in 4 rows is smol so the "$ from" filter has something to drop
-    const amt = r() < 0.25 ? +((0.5 + r() * 8) / a.price).toFixed(6) : +(10 + r() * 4000).toFixed(2)
-    const who = ACCS[Math.floor(r() * ACCS.length)]
-    const base = { blockHeight: h, timestamp: tsAt(h), eventIndex: h % 100, extrinsicIndex: 2 + Math.floor(r() * 3), who, to: null as AccountRef | null, asset: null as AssetRef | null, assetIn: null as AssetRef | null, assetOut: null as AssetRef | null, amount: null as string | null, amountIn: null as string | null, amountOut: null as string | null, valueUsd: amt * a.price }
-    if (min != null && base.valueUsd < min) { h -= 1 + Math.floor(r() * 3); continue }
-    if (t === 'trade' || t === 'dca') out.push({ ...base, type: t, assetIn: aref(a), assetOut: aref(other), amountIn: raw(amt, a.decimals), amountOut: raw(amt * a.price / other.price, other.decimals) })
-    else if (t === 'xcm' && h % 2 === 0) out.push({ ...base, type: t, extrinsicIndex: null, asset: aref(a), amount: raw(amt, a.decimals), xcmDir: 'in', fromChain: 'AssetHub', fromAccount: xcmExternalAccount(h) })
-    else if (t === 'transfer' || t === 'xcm') out.push({ ...base, type: t, to: ACCS[Math.floor(r() * ACCS.length)], asset: aref(a), amount: raw(amt, a.decimals), destChain: t === 'xcm' ? 'Moonbeam' : undefined, xcmDir: t === 'xcm' ? 'out' : undefined })
-    else out.push({ ...base, type: t, asset: aref(a), amount: raw(amt, a.decimals), mmAction: t === 'mm' ? (['Supply', 'Borrow', 'Repay', 'Withdraw'][Math.floor(r() * 4)]) : undefined, ...(t === 'mm' ? { mmMarketKey: 'gigahdx', mmMarket: 'GIGAHDX' } : {}) })
-    h -= 1 + Math.floor(r() * 3)
-  }
-  return out.slice(0, limit)
 }
 
 /* ---------- liquidity pools ---------- */
-// One deterministic pool world shared by the Liquidity tab, /pool/:id and
-// /omnipool, so a card and the page it links to always carry the same numbers:
-// the Omnipool holds HDX/DOT/USDT/vDOT/WETH, pool 690 is the pegged GDOT
-// stableswap (vDOT + GDOT, Bifrost-oracle peg on the vDOT leg), and one
-// HDX/DOT XYK pair.
-const XYK_LP_ID = 1000194
-const MOCK_LRNA_PRICE = 5.0
+// One deterministic pool world shared by the asset Liquidity tab, /liquidity and
+// /pool/:id, so a card and the page it links to always carry the same numbers.
+// Two real XYK pairs — vDOT/DOT (share token 690) and HDX/DOT (share token
+// 1000194) — plus a folded long tail of dust pairs.
+const XYK_LP_ID = 1_000_194
 const POOL_DAYS = 120
 const POOL_BUCKETS = Array.from({ length: POOL_DAYS }, (_, i) => new Date(MOCK_NOW_MS - (POOL_DAYS - i) * 86_400_000).toISOString().slice(0, 10))
-const OMNI_POOL_ACCOUNT = acc('0x6d6f646c6f6d6e69706f6f6c0000000000000000000000000000000000000000', '7L53bUTBUvKnCVGKLM83Ch3wm3RNFbctFCxSHQwUJgLNsGVU', '💧', { id: 'omnipool', name: 'Omnipool', color: '#57a5ec', icon: '💧' })
-const POOL_690_ACCOUNT = acc(hx(690, 64), '167UdiHenqFRhRoXHwh6MBu9YV6NPkbCJx3MC71bfz9YTdzs', '💧', { id: 'stableswap-pools', name: 'Stableswap Pool', color: '#57a5ec', icon: '💧' })
+const POOL_690_ACCOUNT = acc(hx(690, 64), '167UdiHenqFRhRoXHwh6MBu9YV6NPkbCJx3MC71bfz9YTdzs', '💧', { id: 'xyk-pools', name: 'XYK Pool', color: '#57a5ec', icon: '💧' })
 const XYK_PAIR_ACCOUNT = acc(hx(694, 64), '1XyKHdxDotPairAccountX1111111111111111111111111', '💧', { id: 'xyk-pools', name: 'XYK Pool', color: '#57a5ec', icon: '💧' })
 
-const OMNI_ASSETS: { id: number; reserve: number; capPct: number; tradable: string[] }[] = [
-  { id: 0, reserve: 48_000_000, capPct: 3.5, tradable: ['Sell', 'Buy', 'Add', 'Remove'] },
-  { id: 5, reserve: 610_000, capPct: 30, tradable: ['Sell', 'Buy', 'Add', 'Remove'] },
-  { id: 10, reserve: 1_650_000, capPct: 20, tradable: ['Sell', 'Buy', 'Add', 'Remove'] },
-  { id: 15, reserve: 92_000, capPct: 10, tradable: ['Sell', 'Buy', 'Add', 'Remove'] },
-  { id: 20, reserve: 310, capPct: 10, tradable: ['Sell'] },
-]
-const SS_690 = {
-  poolId: 690,
-  assets: [
-    { id: 15, reserve: 139_000, peg: { num: '13147', den: '10000', price: 1.3147 }, pegSource: { kind: 'oracle' as const, source: 'Bifrost', period: 'LastBlock', oracleAsset: aref(assetById.get(5)!) } },
-    { id: 5, reserve: 219_000, peg: { num: '1', den: '1', price: 1 }, pegSource: { kind: 'value' as const } },
-  ],
-  feePermill: 690, amplification: { current: 222, initial: 100, final: 222, initialBlock: TIP - 900_000, finalBlock: TIP - 880_000 },
-  maxPegUpdatePerbill: 120, issuance: 4_150_000, createdBlock: TIP - 1_000_000,
+interface MPool {
+  lpAssetId: number; name: string; account: AccountRef
+  assetA: number; reserveA: number; assetB: number; reserveB: number
+  feePermill: number; totalShares: number; createdBlock: number
 }
-const XYK_POOL = { lpAssetId: XYK_LP_ID, assetA: 0, assetB: 5, reserveA: 5_200_000, reserveB: 25_500, createdBlock: TIP - 2_000_000, totalShares: 3_100_000 }
+const POOLS: MPool[] = [
+  { lpAssetId: 690, name: 'vDOT / DOT', account: POOL_690_ACCOUNT, assetA: 15, reserveA: 139_000, assetB: 5, reserveB: 219_000, feePermill: 690, totalShares: 4_150_000, createdBlock: TIP - 1_000_000 },
+  { lpAssetId: XYK_LP_ID, name: 'HDX / DOT', account: XYK_PAIR_ACCOUNT, assetA: 0, reserveA: 5_200_000, assetB: 5, reserveB: 25_500, feePermill: 3000, totalShares: 3_100_000, createdBlock: TIP - 2_000_000 },
+]
+const poolById = new Map(POOLS.map(p => [p.lpAssetId, p]))
 
 const priceof = (id: number) => assetById.get(id)!.price
 const compEntry = (id: number, amount: number, tvlUsd: number): PoolCompositionEntry => {
@@ -2003,9 +637,8 @@ const compEntry = (id: number, amount: number, tvlUsd: number): PoolCompositionE
   const usd = amount * a.price
   return { asset: aref(a), amount: raw(amount, a.decimals), usd, sharePct: tvlUsd > 0 ? usd / tvlUsd * 100 : null }
 }
-const omniTvlUsd = () => OMNI_ASSETS.reduce((s, o) => s + o.reserve * priceof(o.id), 0)
-const ss690TvlUsd = () => SS_690.assets.reduce((s, x) => s + x.reserve * priceof(x.id), 0)
-const xykTvlUsd = () => XYK_POOL.reserveA * priceof(XYK_POOL.assetA) + XYK_POOL.reserveB * priceof(XYK_POOL.assetB)
+const poolTvlUsd = (p: MPool) => p.reserveA * priceof(p.assetA) + p.reserveB * priceof(p.assetB)
+const poolLegs = (p: MPool): [number, number][] => [[p.assetA, p.reserveA], [p.assetB, p.reserveB]]
 
 // A source's daily amount history: a gentle deterministic walk ending at the
 // current reserve, so the chart's right edge agrees with the cards above it.
@@ -2017,40 +650,19 @@ function buildAssetLiquidity(assetId: number): AssetLiquidity {
   const a = assetById.get(assetId) ?? ASSETS[0]
   const sources: AssetLiquiditySource[] = []
   const histSeries: AssetLiquidity['history']['series'] = []
-  const omni = OMNI_ASSETS.find(o => o.id === assetId)
-  if (omni) {
-    const usd = omni.reserve * a.price
+  for (const p of POOLS) {
+    const legs = poolLegs(p)
+    const leg = legs.find(([id]) => id === assetId)
+    if (!leg) continue
+    const tvl = poolTvlUsd(p)
+    const amount = leg[1]
     sources.push({
-      kind: 'omnipool', poolId: null, name: 'Omnipool', tvlUsd: omniTvlUsd(),
-      assetAmount: raw(omni.reserve, a.decimals), assetUsd: usd, assetSharePct: usd / omniTvlUsd() * 100,
-      composition: [], hasPegs: false,
-    })
-    const amounts = poolAmountSeries(assetId * 31 + 7, omni.reserve)
-    histSeries.push({ key: 'omnipool', label: 'Omnipool', amounts, usd: amounts.map(v => v * a.price) })
-  }
-  const ss = SS_690.assets.find(x => x.id === assetId)
-  if (ss) {
-    const tvl = ss690TvlUsd()
-    sources.push({
-      kind: 'stableswap', poolId: 690, name: '2-Pool-GDOT', tvlUsd: tvl,
-      assetAmount: raw(ss.reserve, a.decimals), assetUsd: ss.reserve * a.price, assetSharePct: ss.reserve * a.price / tvl * 100,
-      composition: SS_690.assets.map(x => compEntry(x.id, x.reserve, tvl)),
-      hasPegs: true,
-    })
-    const amounts = poolAmountSeries(assetId * 31 + 11, ss.reserve)
-    histSeries.push({ key: 'ss:690', label: '2-Pool-GDOT', amounts, usd: amounts.map(v => v * a.price) })
-  }
-  if (assetId === XYK_POOL.assetA || assetId === XYK_POOL.assetB) {
-    const tvl = xykTvlUsd()
-    const amount = assetId === XYK_POOL.assetA ? XYK_POOL.reserveA : XYK_POOL.reserveB
-    sources.push({
-      kind: 'xyk', poolId: XYK_LP_ID, name: 'HDX / DOT', tvlUsd: tvl,
+      kind: 'xyk', poolId: p.lpAssetId, name: p.name, tvlUsd: tvl,
       assetAmount: raw(amount, a.decimals), assetUsd: amount * a.price, assetSharePct: amount * a.price / tvl * 100,
-      composition: [compEntry(XYK_POOL.assetA, XYK_POOL.reserveA, tvl), compEntry(XYK_POOL.assetB, XYK_POOL.reserveB, tvl)],
-      hasPegs: false,
+      composition: legs.map(([id, reserve]) => compEntry(id, reserve, tvl)),
     })
-    const amounts = poolAmountSeries(assetId * 31 + 13, amount)
-    histSeries.push({ key: `xyk:${XYK_LP_ID}`, label: 'HDX / DOT', amounts, usd: amounts.map(v => v * a.price) })
+    const amounts = poolAmountSeries(assetId * 31 + p.lpAssetId, amount)
+    histSeries.push({ key: `xyk:${p.lpAssetId}`, label: p.name, amounts, usd: amounts.map(v => v * a.price) })
   }
   sources.sort((x, y) => (y.assetUsd ?? -1) - (x.assetUsd ?? -1))
   const totalAmountNum = sources.reduce((s, x) => s + Number(BigInt(x.assetAmount)) / 10 ** a.decimals, 0)
@@ -2060,96 +672,195 @@ function buildAssetLiquidity(assetId: number): AssetLiquidity {
     totalUsd: totalAmountNum * a.price,
     sources,
     // DOT keeps one former pool so the section renders deterministically.
-    former: assetId === 5 ? [{ kind: 'xyk', poolId: 1000044, name: 'DOT / GLMR', lastActiveBlock: TIP - 400_000, lastActiveAt: tsAt(TIP - 400_000) }] : [],
+    former: assetId === 5 ? [{ kind: 'xyk', poolId: 1_000_044, name: 'DOT / GLMR', lastActiveBlock: TIP - 400_000, lastActiveAt: tsAt(TIP - 400_000) }] : [],
     history: { buckets: POOL_BUCKETS, series: histSeries },
   }
 }
 
 function buildPoolDetail(poolId: number): PoolDetail | undefined {
-  if (poolId === 690) {
-    const tvl = ss690TvlUsd()
-    const share = assetById.get(690)!
-    const compAmounts = SS_690.assets.map((x, i) => poolAmountSeries(690 * 7 + i, x.reserve))
-    const pegWalk = series(69017, POOL_DAYS, SS_690.assets[0].peg.price, 0.004)
-    return {
-      kind: 'stableswap', poolId: 690, name: '2-Pool-GDOT', account: POOL_690_ACCOUNT, shareToken: aref(share),
-      createdBlock: SS_690.createdBlock, createdAt: tsAt(SS_690.createdBlock), destroyed: false,
-      tvlUsd: tvl, totalIssuance: raw(SS_690.issuance, share.decimals),
-      feePermill: SS_690.feePermill, amplification: SS_690.amplification, maxPegUpdatePerbill: SS_690.maxPegUpdatePerbill,
-      assets: SS_690.assets.map(x => ({ ...compEntry(x.id, x.reserve, tvl), peg: x.peg, pegSource: x.pegSource })),
-      paramEvents: [
-        { blockHeight: TIP - 880_000, timestamp: tsAt(TIP - 880_000), kind: 'max-peg-update', summary: 'Max peg update set to 0.000012% per block' },
-        { blockHeight: TIP - 900_000, timestamp: tsAt(TIP - 900_000), kind: 'amplification', summary: `Amplification ramping 100 → 222 over blocks ${TIP - 900_000}–${TIP - 880_000}` },
-        { blockHeight: SS_690.createdBlock, timestamp: tsAt(SS_690.createdBlock), kind: 'created', summary: 'Pool created with vDOT, GDOT — amplification 100, fee 0.069%, with price pegs' },
-      ],
-      history: {
-        buckets: POOL_BUCKETS,
-        tvlUsd: POOL_BUCKETS.map((_, i) => SS_690.assets.reduce((s, x, k) => s + compAmounts[k][i] * priceof(x.id), 0)),
-        composition: SS_690.assets.map((x, k) => ({ asset: aref(assetById.get(x.id)!), amounts: compAmounts[k], usd: compAmounts[k].map(v => v * priceof(x.id)) })),
-        pegs: [{ asset: aref(assetById.get(15)!), prices: pegWalk }],
-        issuance: poolAmountSeries(69019, SS_690.issuance),
-      },
-    }
-  }
-  if (poolId === XYK_LP_ID) {
-    const tvl = xykTvlUsd()
-    const legs = [[XYK_POOL.assetA, XYK_POOL.reserveA], [XYK_POOL.assetB, XYK_POOL.reserveB]] as const
-    const compAmounts = legs.map(([id, reserve]) => poolAmountSeries(id * 5 + 194, reserve))
-    return {
-      kind: 'xyk', poolId: XYK_LP_ID, name: 'HDX / DOT', account: XYK_PAIR_ACCOUNT,
-      shareToken: { assetId: XYK_LP_ID, symbol: 'HDX/DOT LP', name: 'HDX/DOT share token', decimals: 12, parachainId: null },
-      createdBlock: XYK_POOL.createdBlock, createdAt: tsAt(XYK_POOL.createdBlock), destroyed: false,
-      tvlUsd: tvl, totalIssuance: raw(XYK_POOL.totalShares, 12), feePermill: 3000,
-      amplification: null, maxPegUpdatePerbill: null,
-      assets: legs.map(([id, reserve]) => ({ ...compEntry(id, reserve, tvl), peg: null, pegSource: null })),
-      paramEvents: [],
-      history: {
-        buckets: POOL_BUCKETS,
-        tvlUsd: POOL_BUCKETS.map((_, i) => legs.reduce((s, [id], k) => s + compAmounts[k][i] * priceof(id), 0)),
-        composition: legs.map(([id], k) => ({ asset: aref(assetById.get(id)!), amounts: compAmounts[k], usd: compAmounts[k].map(v => v * priceof(id)) })),
-        pegs: null,
-        issuance: null,
-      },
-    }
-  }
-  return undefined
-}
-
-function buildOmnipool(): OmnipoolDetail {
-  const tvl = omniTvlUsd()
-  const rows = OMNI_ASSETS.map(o => {
-    const a = assetById.get(o.id)!
-    const usd = o.reserve * a.price
-    return {
-      asset: aref(a), reserve: raw(o.reserve, a.decimals), reserveUsd: usd,
-      hubReserve: raw(usd / MOCK_LRNA_PRICE, 12), weightPct: usd / tvl * 100, capPct: o.capPct, tradable: o.tradable,
-    }
-  }).sort((x, y) => (y.reserveUsd ?? 0) - (x.reserveUsd ?? 0))
-  const amountsById = new Map(OMNI_ASSETS.map(o => [o.id, poolAmountSeries(o.id * 31 + 7, o.reserve)]))
-  const composition = rows.map(r => ({
-    asset: r.asset,
-    usd: amountsById.get(r.asset.assetId)!.map(v => v * priceof(r.asset.assetId)),
-  }))
+  const p = poolById.get(poolId)
+  if (!p) return undefined
+  const tvl = poolTvlUsd(p)
+  const share = assetById.get(p.lpAssetId)
+  const legs = poolLegs(p)
+  const compAmounts = legs.map(([id, reserve]) => poolAmountSeries(id * 5 + p.lpAssetId, reserve))
   return {
-    account: OMNI_POOL_ACCOUNT,
-    tvlUsd: tvl, assetCount: OMNI_ASSETS.length,
-    hubReserveTotal: raw(tvl / MOCK_LRNA_PRICE, 12), lrnaPrice: MOCK_LRNA_PRICE,
-    assets: rows,
+    kind: 'xyk', poolId: p.lpAssetId, name: p.name, account: p.account,
+    shareToken: share ? aref(share) : { assetId: p.lpAssetId, symbol: `${p.name.replace(/ /g, '')} LP`, name: `${p.name} share token`, decimals: 12, parachainId: null },
+    createdBlock: p.createdBlock, createdAt: tsAt(p.createdBlock), destroyed: false,
+    tvlUsd: tvl, totalIssuance: raw(p.totalShares, share?.decimals ?? 12), feePermill: p.feePermill,
+    assets: legs.map(([id, reserve]) => compEntry(id, reserve, tvl)),
     history: {
       buckets: POOL_BUCKETS,
-      tvlUsd: POOL_BUCKETS.map((_, i) => composition.reduce((s, c) => s + (c.usd[i] ?? 0), 0)),
-      composition,
+      tvlUsd: POOL_BUCKETS.map((_, i) => legs.reduce((s, [id], k) => s + compAmounts[k][i] * priceof(id), 0)),
+      composition: legs.map(([id], k) => ({ asset: aref(assetById.get(id)!), amounts: compAmounts[k], usd: compAmounts[k].map(v => v * priceof(id)) })),
     },
   }
 }
 
-// Pools currently holding an asset (the Liquidity tab's count chip).
-function mockLiquiditySourceCount(assetId: number): number {
-  return (OMNI_ASSETS.some(o => o.id === assetId) ? 1 : 0)
-    + (SS_690.assets.some(x => x.id === assetId) ? 1 : 0)
-    + (assetId === XYK_POOL.assetA || assetId === XYK_POOL.assetB ? 1 : 0)
+// A pool's share-token holders, farm-deposited principal attributed to its owner
+// (the rows marked "farm"). Shares and value are fractions of the SAME supply and
+// TVL the pool card states, so the section reconciles with it by construction.
+function buildPoolLps(poolId: number, offset: number, limit: number): PoolLpsResponse | undefined {
+  const p = poolById.get(poolId)
+  if (!p) return undefined
+  const share = assetById.get(p.lpAssetId)
+  const dec = share?.decimals ?? 12
+  const tvl = poolTvlUsd(p)
+  const all = ACCS.map((account, i) => {
+    const shares = p.totalShares / (i + 2)
+    const farmed = i % 3 === 0 ? shares * 0.4 : null
+    return {
+      rank: i + 1, account, shares: raw(shares, dec),
+      farmedShares: farmed == null ? null : raw(farmed, dec),
+      sharePct: shares / p.totalShares * 100,
+      valueUsd: shares / p.totalShares * tvl,
+    }
+  })
+  return {
+    poolId: p.lpAssetId,
+    shareToken: share ? aref(share) : { assetId: p.lpAssetId, symbol: 'LP', name: null, decimals: dec, parachainId: null },
+    totalShares: raw(p.totalShares, dec), tvlUsd: tvl, total: all.length,
+    lps: all.slice(offset, offset + limit),
+  }
 }
 
+function buildPoolsIndex(): PoolsIndexResponse {
+  const entry = (poolId: number, name: string, legs: [number, number][]) => {
+    const composition = legs.map(([id, usd]) => ({ asset: aref(assetById.get(id) ?? ASSETS[0]), amount: raw(usd, 12), usd, sharePct: 0 }))
+    const tvlUsd = composition.reduce((s, c) => s + (c.usd ?? 0), 0)
+    for (const c of composition) c.sharePct = tvlUsd > 0 ? ((c.usd ?? 0) / tvlUsd) * 100 : 0
+    return { kind: 'xyk' as const, poolId, name, tvlUsd, sharePct: 0, composition }
+  }
+  const pools = [
+    ...POOLS.map(p => entry(p.lpAssetId, p.name, poolLegs(p).map(([id, reserve]) => [id, reserve * priceof(id)] as [number, number]))),
+    // The tail: folded behind one line until a reader asks for it.
+    ...Array.from({ length: 6 }, (_, i) => entry(1_000_100 + i, `LONGTAIL${i} / HDX`, [[0, i], [5, 0]])),
+  ]
+  const totalTvlUsd = pools.reduce((s, p) => s + (p.tvlUsd ?? 0), 0)
+  for (const p of pools) p.sharePct = totalTvlUsd > 0 ? ((p.tvlUsd ?? 0) / totalTvlUsd) * 100 : 0
+  return { totalTvlUsd, pools }
+}
+
+// Pools currently holding an asset (the Liquidity tab's count chip).
+function mockLiquiditySourceCount(assetId: number): number {
+  return POOLS.filter(p => p.assetA === assetId || p.assetB === assetId).length
+}
+
+// A pool's own activity: the swaps that happened IN it (between its member
+// assets). That is the half the share token's own activity feed can never show,
+// and its absence is what made a busy pool look idle.
+function mockPoolActivity(poolId: number, limit: number): ActivityRow[] {
+  const p = poolById.get(poolId)
+  if (!p) return []
+  const members = [p.assetA, p.assetB]
+  const rows: ActivityRow[] = []
+  for (let i = 0; i < 6 && rows.length < limit; i++) {
+    const h = TIP - i * 3
+    const [x, y] = i % 2 === 0 ? members : [...members].reverse()
+    const aIn = assetById.get(x)!, aOut = assetById.get(y)!
+    const amt = 120 + i * 37
+    rows.push({
+      type: 'trade', blockHeight: h, timestamp: tsAt(h), eventIndex: 40 + i, extrinsicIndex: 2,
+      who: ACCS[i % ACCS.length], to: null, asset: null,
+      assetIn: aref(aIn), assetOut: aref(aOut),
+      amount: null, amountIn: raw(amt, aIn.decimals), amountOut: raw(amt * aIn.price / aOut.price, aOut.decimals),
+      valueUsd: amt * aIn.price, linkBlock: h, linkIndex: 2,
+    })
+  }
+  return rows.slice(0, limit)
+}
+
+function assetScopedActivityRows(qs: URLSearchParams): ActivityRow[] {
+  const a = assetById.get(Number(qs.get('asset'))) ?? ASSETS[0]
+  const activityType = qs.get('type') ?? 'all'; const limit = Number(qs.get('limit') ?? 40)
+  const min = qs.get('min') ? Number(qs.get('min')) : null
+  const out: ActivityRow[] = []; let h = TIP
+  while (out.length < limit && h > TIP - 1200) {
+    const r = rng(h * 2654435761 + a.assetId); const t = FEED_TYPES[h % FEED_TYPES.length]
+    if (activityType !== 'all' && t !== activityType) { h -= 1 + Math.floor(r() * 3); continue }
+    const other = ASSETS[Math.floor(r() * ASSETS.length)]
+    // ~1 in 4 rows is smol so the "$ from" filter has something to drop
+    const amt = r() < 0.25 ? +((0.5 + r() * 8) / a.price).toFixed(6) : +(10 + r() * 4000).toFixed(2)
+    const who = ACCS[Math.floor(r() * ACCS.length)]
+    const base = { blockHeight: h, timestamp: tsAt(h), eventIndex: h % 100, extrinsicIndex: 2 + Math.floor(r() * 3), who, to: null as AccountRef | null, asset: null as AssetRef | null, assetIn: null as AssetRef | null, assetOut: null as AssetRef | null, amount: null as string | null, amountIn: null as string | null, amountOut: null as string | null, valueUsd: amt * a.price }
+    if (min != null && base.valueUsd < min) { h -= 1 + Math.floor(r() * 3); continue }
+    if (t === 'trade') out.push({ ...base, type: t, assetIn: aref(a), assetOut: aref(other), amountIn: raw(amt, a.decimals), amountOut: raw(amt * a.price / other.price, other.decimals) })
+    else if (t === 'xcm' && h % 2 === 0) out.push({ ...base, type: t, extrinsicIndex: null, asset: aref(a), amount: raw(amt, a.decimals), xcmDir: 'in', fromChain: 'AssetHub' })
+    else if (t === 'transfer' || t === 'xcm') out.push({ ...base, type: t, to: ACCS[Math.floor(r() * ACCS.length)], asset: aref(a), amount: raw(amt, a.decimals), destChain: t === 'xcm' ? 'Moonbeam' : undefined, destAccount: t === 'xcm' ? xcmDestAccount(h) : undefined, xcmDir: t === 'xcm' ? 'out' : undefined })
+    else out.push({ ...base, type: t, asset: aref(a), amount: raw(amt, a.decimals), liqAction: (['Add', 'Remove'] as const)[h % 2] })
+    h -= 1 + Math.floor(r() * 3)
+  }
+  return out.slice(0, limit)
+}
+
+/* ---------- governance ---------- */
+const GOV_TRACK = { id: 0, name: 'root' }
+function govReferendumRow(index: number) {
+  const h = TIP - (400 - index) * 1200
+  return {
+    pallet: 'opengov' as const, index, title: `Runtime upgrade proposal #${index}`,
+    status: index % 4 === 0 ? 'Confirmed' : index % 4 === 1 ? 'Deciding' : index % 4 === 2 ? 'Rejected' : 'Approved',
+    voters: 40 + (index % 60), blockHeight: h, timestamp: tsAt(h),
+    track: GOV_TRACK, proposer: ACCS[index % ACCS.length],
+    enactment: index % 4 === 3 ? ('ok' as const) : null,
+  }
+}
+function buildGovernance(): GovernanceOverview {
+  return {
+    active: [380, 379, 378].map(index => {
+      const row = govReferendumRow(index)
+      return {
+        index, title: row.title, status: 'Deciding', track: GOV_TRACK, proposer: row.proposer,
+        submittedAt: { blockHeight: row.blockHeight, extrinsicIndex: 2, timestamp: row.timestamp },
+        progress: null,
+        tally: { ayes: raw(2_400_000, 12), nays: raw(310_000, 12), support: raw(2_710_000, 12), source: 'snapshot' as const },
+      }
+    }),
+    counts: { opengov: 381, democracy: 264, tcMotions: 42, councilMotions: 0, tips: 17 },
+  }
+}
+function buildReferendum(pallet: 'opengov' | 'democracy', index: number): ReferendumDetail {
+  const row = govReferendumRow(index)
+  const hdx = ASSETS[0]
+  const voters = ACCS.map((account, i) => ({
+    account, kind: 'Standard' as const, side: (i % 5 === 0 ? 'Nay' : 'Aye') as 'Aye' | 'Nay',
+    conviction: MOCK_VOTE_CONVICTIONS[i % MOCK_VOTE_CONVICTIONS.length], convictionIndex: i % 6,
+    balance: raw(100_000 * (i + 1), hdx.decimals),
+    ayeBalance: i % 5 === 0 ? '0' : raw(100_000 * (i + 1), hdx.decimals),
+    nayBalance: i % 5 === 0 ? raw(100_000 * (i + 1), hdx.decimals) : '0',
+    abstainBalance: '0',
+    weightedAye: i % 5 === 0 ? '0' : raw(600_000 * (i + 1), hdx.decimals),
+    weightedNay: i % 5 === 0 ? raw(600_000 * (i + 1), hdx.decimals) : '0',
+    weighted: raw(600_000 * (i + 1), hdx.decimals),
+    valueUsd: 100_000 * (i + 1) * hdx.price,
+    blockHeight: row.blockHeight + i, eventIndex: 95, extrinsicIndex: 3,
+    timestamp: tsAt(row.blockHeight + i), removed: false,
+  }))
+  return {
+    pallet, index, title: row.title, proposer: row.proposer,
+    subsquareUrl: `https://hydration.subsquare.io/referenda/${index}`,
+    track: GOV_TRACK.id, proposalHash: hx(index * 13 + 1, 64),
+    proposalCall: { pallet: 'System', callName: 'set_code', args: { code: '0x…runtime' }, encoded: null, byteLength: 1_482_112, decodeError: null },
+    status: row.status, enactment: row.enactment,
+    submittedAt: { blockHeight: row.blockHeight, extrinsicIndex: 2, timestamp: row.timestamp },
+    concludedAt: null,
+    asset: aref(hdx),
+    onChainTally: null,
+    directTally: {
+      ayes: raw(12_600_000, 12), nays: raw(600_000, 12), rawAyes: raw(2_100_000, 12), rawNays: raw(100_000, 12),
+      support: raw(2_200_000, 12), ayeVoters: voters.length - 2, nayVoters: 2, splitVoters: 0, voters: voters.length,
+    },
+    indirectTally: null,
+    voters, votesShown: voters.length, votesTotal: voters.length,
+    timeline: [{ event: 'Submitted', blockHeight: row.blockHeight, extrinsicIndex: 2, timestamp: row.timestamp }],
+    trackInfo: { ...GOV_TRACK, preparePeriod: 1200, decisionPeriod: 100_800, confirmPeriod: 7200, minEnactmentPeriod: 14_400, decisionDeposit: raw(500_000, 12) },
+    liveTally: null,
+    progress: null,
+  }
+}
+
+/* ---------- routes ---------- */
 const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => unknown }[] = [
   { re: /^\/explorer\/stats$/, fn: () => ({ headBlock: TIP, finalizedBlock: TIP - 2, headTime: tsAt(TIP), avgBlockSec: 5.7, nominalBlockSec: 6, transfers24h: 18204, extrinsics24h: 42318, activeAccounts24h: 7120, hdxPrice: 0.02184 } satisfies ExplorerStats) },
   { re: /^\/indexer$/, fn: () => ({ blockHeight: TIP, blockTimestamp: tsAt(TIP), lagSeconds: 6, chainBlockHeight: TIP + 1, blocksBehindHead: 1 } satisfies IndexerStatus) },
@@ -2157,28 +868,10 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
   // Assets page renders, and `fields=filter`'s id/symbol/name projection in the same
   // order, which is all a token combo shows and searches.
   { re: /^\/explorer\/assets$/, fn: (_m, qs) => qs.get('fields') === 'filter' ? buildAssets().map(a => ({ assetId: a.assetId, symbol: a.symbol, name: a.name, price: a.price })) : buildAssets() },
-  // The call/event name catalogue behind the name filters and the alert form's
-  // pallet/name pickers.
+  // The call/event name catalogue behind the name filters.
   { re: /^\/explorer\/filter-names$/, fn: () => MOCK_FILTER_NAMES },
-  { re: /^\/explorer\/hdx$/, fn: () => buildHdx() },
-  { re: /^\/explorer\/hollar$/, fn: () => buildHollar() },
-  { re: /^\/explorer\/security$/, fn: () => buildSecurity() },
-  { re: /^\/explorer\/security\/wormhole$/, fn: () => buildSecurityWormhole() },
   { re: /^\/explorer\/accounts$/, fn: (_m, qs) => buildAccounts(Number(qs.get('offset') ?? 0), Number(qs.get('limit') ?? 50), qs.get('sort') ?? 'value') },
-  { re: /^\/explorer\/contracts$/, fn: (_m, qs) => buildContracts(Number(qs.get('offset') ?? 0), Number(qs.get('limit') ?? 50), qs.get('sort') ?? 'created') },
-  { re: /^\/explorer\/contract\/compiler-versions$/, fn: () => ({ versions: ['v0.8.19+commit.7dd6d404', 'v0.8.10+commit.fc410830'] }) },
-  // Artifacts exist only for the verified contract; anything else falls through
-  // to the harness 404, exactly like the real endpoints.
-  { re: /^\/explorer\/contract\/([^/]+)\/abi$/, fn: m => {
-    const address = decodeURIComponent(m[1]).toLowerCase()
-    if (address === VERIFIED_CONTRACT_ADDRESS) return MOCK_CONTRACT_ABI
-    if (address === PROXY_CONTRACT_ADDRESS) return MOCK_PROXY_ABI
-    return undefined
-  } },
-  { re: /^\/explorer\/contract\/([^/]+)\/sources$/, fn: m => decodeURIComponent(m[1]).toLowerCase() === VERIFIED_CONTRACT_ADDRESS ? MOCK_CONTRACT_SOURCES : undefined },
-  { re: /^\/explorer\/contract\/([^/]+)\/transactions$/, fn: (m, qs) => buildContractTransactions(decodeURIComponent(m[1]).toLowerCase(), Number(qs.get('offset') ?? 0), Number(qs.get('limit') ?? 25)) },
-  { re: /^\/explorer\/contract\/([^/]+)\/events$/, fn: (m, qs) => buildContractEvents(decodeURIComponent(m[1]).toLowerCase(), Number(qs.get('offset') ?? 0), Number(qs.get('limit') ?? 25)) },
-  { re: /^\/explorer\/daily\/(\w+)(?:\?.*)?$/, fn: (m) => Array.from({ length: 45 }, (_, i) => { const d = new Date(MOCK_NOW_MS - (44 - i) * 86400000); const r = rng(i + m[1].length * 7); return { date: d.toISOString().slice(0, 10), value: Math.round((m[1] === 'events' ? 60000 : m[1] === 'extrinsics' ? 12000 : 4000) * (0.5 + r())) } as DailyPoint }) },
+  { re: /^\/explorer\/daily\/(\w+)$/, fn: (m) => Array.from({ length: 45 }, (_, i) => { const d = new Date(MOCK_NOW_MS - (44 - i) * 86400000); const r = rng(i + m[1].length * 7); return { date: d.toISOString().slice(0, 10), value: Math.round((m[1] === 'events' ? 60000 : m[1] === 'extrinsics' ? 12000 : 4000) * (0.5 + r())) } as DailyPoint }) },
   { re: /^\/explorer\/accounts-daily$/, fn: () => Array.from({ length: 30 }, (_, i) => { const d = new Date(MOCK_NOW_MS - (29 - i) * 86400000); const r = rng(i * 31 + 5); return { date: d.toISOString().slice(0, 10), active: Math.round(6000 * (0.6 + r() * 0.8)), new: Math.round(350 * (0.4 + r())) } }) },
   // events is deliberately longer than MOCK_LIST_MAX_OFFSET can page, so the mock
   // reproduces the real shape: a total whose last pages the API will not serve.
@@ -2214,30 +907,21 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
         parentHash: hx(h - 1, 64), stateRoot: hx(h * 3, 64), extrinsicsRoot: hx(h * 5, 64),
         extrinsics: exts.map(x => ({ blockHeight: x.blockHeight, index: x.index, hash: x.hash, timestamp: x.timestamp, signer: x.signer, success: x.success, callName: x.callName, fee: x.fee })),
         events,
+        ...mockFinal(h),
       } satisfies BlockDetail
     },
   },
   { re: /^\/explorer\/block\/(\d+)\/activity$/, fn: (m) => mockBlockActivity(Number(m[1])) },
-  { re: /^\/explorer\/extrinsics$/, fn: (_m, qs) => {
-    const limit = Number(qs.get('limit') ?? 25)
-    const rows = recentExtrinsics(limit, qs.get('signedOnly') === '1')
-    // Page 0 leads with the pool transaction, mirroring the api's merge.
-    return Number(qs.get('offset') ?? 0) === 0 ? [mempoolExtrinsicSummary(), ...rows].slice(0, limit) : rows
-  } },
+  { re: /^\/explorer\/extrinsics$/, fn: (_m, qs) => recentExtrinsics(Number(qs.get('limit') ?? 25), qs.get('signedOnly') === '1') },
   // Past the block's last index there is no extrinsic, so the fixture answers as the
   // API does — nothing, which the callers turn into a 404. Handing back an invented
   // extrinsic would make every block look endless to anything that pages or probes.
   { re: /^\/explorer\/extrinsic-at\/(\d+)\/(\d+)$/, fn: (m) => Number(m[2]) < blockExtrinsicCount(Number(m[1])) ? { ...genExtrinsic(Number(m[1]), Number(m[2])), ...mockFinal(Number(m[1])) } : undefined },
   { re: /^\/explorer\/extrinsic-at\/(\d+)\/(\d+)\/activity$/, fn: (m) => mockExtrinsicActivity(Number(m[1]), Number(m[2])) },
-  // An Ethereum transaction hash resolves to the extrinsic that carries it — the
-  // same object /extrinsic-at/<height>/<index> answers, which is what lets the page
-  // canonicalize the URL. Ahead of the generic 64-hex rule below, which stands in
-  // for "any substrate extrinsic hash".
-  { re: /^\/explorer\/extrinsic\/(0x[0-9a-f]{64})$/, fn: (m) => m[1] === MOCK_MEMPOOL_HASH ? mempoolExtrinsicDetail() : m[1] === MOCK_EVM_TX_HASH ? genExtrinsic(MOCK_EVM_TX.height, MOCK_EVM_TX.index) : genExtrinsic(12_848_613, 4) },
-  { re: /^\/explorer\/extrinsic\/(0x[0-9a-f]{64})\/activity$/, fn: (m) => m[1] === MOCK_MEMPOOL_HASH ? [] : m[1] === MOCK_EVM_TX_HASH ? mockExtrinsicActivity(MOCK_EVM_TX.height, MOCK_EVM_TX.index) : mockExtrinsicActivity(12_848_613, 4) },
-  // Gas comes from the node, per transaction. Unknown hash → undefined → 404, the
-  // same answer the api gives when the node cannot produce a receipt.
-  { re: /^\/explorer\/evm-tx\/(0x[0-9a-f]{64})\/receipt$/, fn: (m) => m[1] === MOCK_EVM_TX_HASH ? MOCK_EVM_TX_RECEIPT : undefined },
+  // The extrinsic's SCALE bytes, fetched on demand by the "call data" copy button.
+  { re: /^\/explorer\/extrinsic-at\/(\d+)\/(\d+)\/encoded$/, fn: (m) => Number(m[2]) < blockExtrinsicCount(Number(m[1])) ? { encoded: hx(Number(m[1]) * 23 + Number(m[2]), 120) } : undefined },
+  { re: /^\/explorer\/extrinsic\/(0x[0-9a-f]+)$/, fn: () => genExtrinsic(12_848_613, 4) },
+  { re: /^\/explorer\/extrinsic\/(0x[0-9a-f]+)\/activity$/, fn: () => mockExtrinsicActivity(12_848_613, 4) },
   {
     re: /^\/explorer\/trade\/(\d+)\/(\d+)$/, fn: (m) => {
       const h = Number(m[1]), i = Number(m[2]); const r = rng(h * 7 + i + 3)
@@ -2252,10 +936,9 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
         extrinsicFee: '12000000000000',
         extrinsicTip: '3000000000000',
         route: [
-          { pool: 'Aave', poolId: null, assetIn: aref(aIn), assetOut: aref(mid), amountIn: null, amountOut: null, fee: null },
-          { pool: 'Omnipool', poolId: null, assetIn: aref(mid), assetOut: aref(aOut), amountIn: raw(amtMid, mid.decimals), amountOut: raw(amtOut, aOut.decimals), fee: { amount: raw(amtOut * 0.0025, aOut.decimals), asset: aref(aOut) } },
+          { pool: 'XYK', poolId: null, assetIn: aref(aIn), assetOut: aref(mid), amountIn: null, amountOut: null, fee: null },
+          { pool: 'XYK', poolId: XYK_LP_ID, assetIn: aref(mid), assetOut: aref(aOut), amountIn: raw(amtMid, mid.decimals), amountOut: raw(amtOut, aOut.decimals), fee: { amount: raw(amtOut * 0.0025, aOut.decimals), asset: aref(aOut) } },
         ],
-        dca: false,
       } satisfies TradeDetailResponse
     },
   },
@@ -2272,43 +955,20 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
         valueUsd: amtIn * aIn.price, executionPrice: aIn.price / aOut.price,
         limit: null, extrinsicFee: null, extrinsicTip: null,
         route: [{ pool: 'Router', poolId: null, assetIn: aref(aIn), assetOut: aref(aOut), amountIn: raw(amtIn, aIn.decimals), amountOut: raw(amtOut, aOut.decimals), fee: null }],
-        dca: false,
       } satisfies TradeDetailResponse
     },
   },
-  { re: /^\/explorer\/extrinsic\/(0x[0-9a-f]+)$/, fn: () => genExtrinsic(TIP - 3, 2) },
-  { re: /^\/explorer\/extrinsic\/(0x[0-9a-f]+)\/activity$/, fn: () => mockExtrinsicActivity(TIP - 3, 2) },
+  { re: /^\/explorer\/events$/, fn: (_m, qs) => recentEvents(Number(qs.get('limit') ?? 25)) },
   {
-    re: /^\/explorer\/transfers$/, fn: (_m, qs) => {
-      const limit = Number(qs.get('limit') ?? 25)
-      return recentExtrinsics(200, true).filter(x => /transfer/i.test(x.callName)).slice(0, limit).map((x, i) => {
-        const as = ASSETS[(x.blockHeight + i) % ASSETS.length]; const amt = +(10 + (x.blockHeight % 4000)).toFixed(2)
-        return { blockHeight: x.blockHeight, timestamp: x.timestamp, eventIndex: i, extrinsicIndex: x.index, from: x.signer ?? A.fox, to: ACCS[(i + 1) % ACCS.length], amount: raw(amt, as.decimals), asset: aref(as), valueUsd: amt * as.price } satisfies TransferRow
-      })
-    },
-  },
-  {
-    re: /^\/explorer\/events$/, fn: (_m, qs) => {
-      const limit = Number(qs.get('limit') ?? 25)
-      // Page 0 leads with the pool transaction's PROJECTED events.
-      const out: EventRow[] = Number(qs.get('offset') ?? 0) === 0 ? mempoolEventRows() : []
-      let h = TIP
-      while (out.length < limit && h > TIP - 200) {
-        const n = blockExtrinsicCount(h)
-        for (let i = n - 1; i >= 0 && out.length < limit; i--) { const x = genExtrinsic(h, i); for (const e of x.events) { out.push({ blockHeight: h, eventIndex: out.length, extrinsicIndex: x.index, timestamp: x.timestamp, name: e.name, args: e.args, decoded: !!(e as { decoded?: boolean }).decoded, ...mockFinal(h) }); if (out.length >= limit) break } }
-        h--
-      }
-      return out.slice(0, limit)
-    },
-  },
-  {
-    re: /^\/explorer\/trades$/, fn: (_m, qs) => {
-      const limit = Number(qs.get('limit') ?? 25)
-      return recentExtrinsics(200, true).filter(x => /Omnipool\.(sell|buy)|Router/i.test(x.callName)).slice(0, limit).map((x, i) => {
-        const aIn = ASSETS[(x.blockHeight) % ASSETS.length], aOut = ASSETS[(x.blockHeight + 3) % ASSETS.length]
-        const amtIn = +(10 + (x.blockHeight % 5000)).toFixed(2), usd = amtIn * aIn.price
-        return { blockHeight: x.blockHeight, timestamp: x.timestamp, eventIndex: i, extrinsicIndex: x.index, who: x.signer, assetIn: aref(aIn), assetOut: aref(aOut), amountIn: raw(amtIn, aIn.decimals), amountOut: raw(usd / aOut.price, aOut.decimals), valueUsd: usd, venue: x.callName.split('.')[0] } satisfies TradeRow
-      })
+    re: /^\/explorer\/event\/(\d+)\/(\d+)$/, fn: (m) => {
+      const h = Number(m[1]), i = Number(m[2])
+      const x = genExtrinsic(h, Math.min(i, blockExtrinsicCount(h) - 1))
+      const e = x.events[i % x.events.length]
+      return {
+        blockHeight: h, eventIndex: i, extrinsicIndex: x.index, timestamp: tsAt(h),
+        name: e.name, args: e.args, decoded: true, phase: `ApplyExtrinsic(${x.index})`,
+        extrinsic: { blockHeight: x.blockHeight, index: x.index, hash: x.hash, timestamp: x.timestamp, signer: x.signer, success: x.success, callName: x.callName, fee: x.fee },
+      } satisfies EventDetail
     },
   },
   {
@@ -2319,9 +979,6 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
       const min = qs.get('min') ? Number(qs.get('min')) : null
       let h = TIP
       if (requestedType === 'all' || requestedType === 'trade') {
-        // Ahead of everything: a transaction still in the pool — a dry-run
-        // projection, specially highlighted and non-navigable.
-        out.push(mempoolActivityRow())
         // The newest trade rides an unfinalized block: no detail link yet, the
         // row is dimmed and non-navigable until finality.
         out.push({
@@ -2343,36 +1000,14 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
         }
         return out.slice(0, limit)
       }
-      const types: ActivityRow['type'][] = ['trade', 'transfer', 'xcm', 'liquidity', 'mm', 'dca', 'otc']
       while (out.length < limit && h > TIP - 400) {
-        const r = rng(h * 2654435761 + 13); const t = types[h % types.length]
-        const aIn = ASSETS[Math.floor(r() * ASSETS.length)], aOut = ASSETS[Math.floor(r() * ASSETS.length)]
-        // ~1 in 4 rows is "smol" (< $10) so the dim treatment / smol toggle show in mock.
-        const amt = r() < 0.25 ? +((0.5 + r() * 8) / aIn.price).toFixed(6) : +(10 + r() * 4000).toFixed(2)
-        const who = ACCS[Math.floor(r() * ACCS.length)]
-        const base = { blockHeight: h, timestamp: tsAt(h), eventIndex: h % 100, extrinsicIndex: 2 + Math.floor(r() * 3), who, to: null as AccountRef | null, asset: null as AssetRef | null, assetIn: null as AssetRef | null, assetOut: null as AssetRef | null, amount: null as string | null, amountIn: null as string | null, amountOut: null as string | null, valueUsd: amt * aIn.price }
-        const skip = min != null && base.valueUsd < min   // mirrors the server-side min filter
-        // otc folds under the trade filter (mirrors the real API's family merge).
-        const typeMatches = requestedType === 'all' || requestedType === t || (requestedType === 'trade' && (t === 'dca' || t === 'otc'))
-        if (skip || !typeMatches) { /* filtered out */ }
-        else if (t === 'trade' || t === 'dca') out.push({ ...base, type: t, assetIn: aref(aIn), assetOut: aref(aOut), amountIn: raw(amt, aIn.decimals), amountOut: raw(amt * aIn.price / aOut.price, aOut.decimals), ...(t === 'dca' ? { dca: true, dcaScheduleId: 33546 } : {}) })
-        else if (t === 'otc') {
-          const f = otcFields(h, aIn, aOut, amt)
-          if (f.action === 'Pull') out.push({ ...base, type: t, valueUsd: null, otcAction: f.action, otcOrderId: f.orderId })
-          else out.push({ ...base, type: t, assetIn: aref(aIn), assetOut: aref(aOut), amountIn: raw(amt, aIn.decimals), amountOut: raw(amt * aIn.price / aOut.price, aOut.decimals), otcAction: f.action, otcOrderId: f.orderId, otcPartiallyFillable: f.partiallyFillable, otcPartial: f.partial, otcFee: f.fee })
-        }
-        else if (t === 'xcm' && h % 2 === 0) out.push({ ...base, type: t, extrinsicIndex: null, asset: aref(aIn), amount: raw(amt, aIn.decimals), xcmDir: 'in', fromChain: 'AssetHub', fromAccount: xcmExternalAccount(h) })
-        else if (t === 'transfer' || t === 'xcm') out.push({ ...base, type: t, to: ACCS[Math.floor(r() * ACCS.length)], asset: aref(aIn), amount: raw(amt, aIn.decimals), destChain: t === 'xcm' ? 'Moonbeam' : undefined, xcmDir: t === 'xcm' ? 'out' : undefined })
-        else out.push({ ...base, type: t, asset: aref(aIn), amount: raw(amt, aIn.decimals), mmAction: t === 'mm' ? (['Supply', 'Borrow', 'Repay', 'Withdraw'][Math.floor(r() * 4)]) : undefined, ...(t === 'mm' ? { mmMarketKey: 'gigahdx', mmMarket: 'GIGAHDX' } : {}) })
+        const r = rng(h * 2654435761 + 13)
+        const row = activityRowAtHeight(h)
+        const skip = min != null && (row.valueUsd ?? 0) < min   // mirrors the server-side min filter
+        if (!skip && (requestedType === 'all' || requestedType === row.type)) out.push(row)
         h -= 1 + Math.floor(r() * 3)
       }
       return out.slice(0, limit)
-    },
-  },
-  {
-    re: /^\/explorer\/money-market$/, fn: () => {
-      const positions = [A.krakenEvm, A.binance, A.fox].map(a => { const mm = mmFor(a.accountId.length * 7); return { account: a, supplyUsd: mm.supply, debtUsd: mm.debt, netWorthUsd: mm.supply - mm.debt, healthFactor: mm.debt > 0 ? BigInt(Math.round(mm.hf * 1e18)).toString() : 'inf', blockHeight: TIP - 8 } })
-      return { totalSupplyUsd: positions.reduce((s, p) => s + p.supplyUsd, 0), totalDebtUsd: positions.reduce((s, p) => s + p.debtUsd, 0), positions } satisfies MoneyMarketResponse
     },
   },
   {
@@ -2381,66 +1016,21 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
       const totalUsd = ACCS.reduce((s, _ac, i) => s + (i + 1) * 12000, 0)
       const priceSeries = series(a.assetId * 13 + 1, 180, a.price)
       const priceDates = priceSeries.map((_, i) => new Date(MOCK_NOW_MS - (priceSeries.length - 1 - i) * 86_400_000).toISOString().slice(0, 10))
-      const days = mockLiquidationDays(a, priceDates)
       return {
         asset: { ...aref(a), price: a.price, change24h: a.ch / 100, change7d: a.ch7d / 100, type: a.type, amountUsd: totalUsd },
         holderCount: ACCS.length, totalUsd, priceSeries, priceDates,
-        liquidations: MOCK_MM_RESERVES.has(a.assetId) ? { decimals: a.decimals, days, total: mockLiquidationTotal(days) } : null,
         liquiditySourceCount: mockLiquiditySourceCount(a.assetId),
       } satisfies AssetDetail
     },
   },
   { re: /^\/explorer\/asset\/(\d+)\/liquidity$/, fn: m => buildAssetLiquidity(Number(m[1])) },
-  // Unknown pool ids fall through to the harness 404, like the real endpoint.
   // The /liquidity index: every pool largest first, including the long tail of
   // XYK dust the page folds away by default.
-  { re: /^\/explorer\/pools$/, fn: () => {
-    const entry = (kind: 'omnipool' | 'stableswap' | 'xyk', poolId: number | null, name: string, legs: [number, number][], hasPegs = false) => {
-      const composition = legs.map(([id, usd]) => ({ asset: aref(assetById.get(id) ?? ASSETS[0]), amount: raw(usd, 12), usd, sharePct: 0 }))
-      const tvlUsd = composition.reduce((s, c) => s + (c.usd ?? 0), 0)
-      for (const c of composition) c.sharePct = tvlUsd > 0 ? ((c.usd ?? 0) / tvlUsd) * 100 : 0
-      return { kind, poolId, name, tvlUsd, sharePct: 0, composition, hasPegs }
-    }
-    const pools = [
-      entry('omnipool', null, 'Omnipool', [[0, 4_100_000], [5, 3_300_000], [20, 2_600_000], [10, 1_200_000], [222, 900_000]]),
-      entry('stableswap', 690, '2-Pool-GDOT', [[15, 2_517_611], [5, 1_141_173]], true),
-      entry('stableswap', 102, '2-Pool-HUSDT', [[222, 1_242_632], [10, 976_354]]),
-      entry('xyk', 1_000_081, 'HDX / DOT', [[0, 41_205], [5, 39_884]]),
-      // The tail: folded behind one line until a reader asks for it.
-      ...Array.from({ length: 6 }, (_, i) => entry('xyk', 1_000_100 + i, `LONGTAIL${i} / HDX`, [[0, i], [5, 0]])),
-    ]
-    const totalTvlUsd = pools.reduce((s, p) => s + (p.tvlUsd ?? 0), 0)
-    for (const p of pools) p.sharePct = totalTvlUsd > 0 ? ((p.tvlUsd ?? 0) / totalTvlUsd) * 100 : 0
-    return { totalTvlUsd, pools }
-  } },
+  { re: /^\/explorer\/pools$/, fn: () => buildPoolsIndex() },
+  // Unknown pool ids fall through to the harness 404, like the real endpoint.
   { re: /^\/explorer\/pool\/(\d+)$/, fn: m => buildPoolDetail(Number(m[1])) },
-  // A pool's own activity: the swaps that happened IN it (between its member
-  // assets) ahead of what its share token did. The member-asset swaps are the
-  // half the share token's own activity feed can never show, and their absence
-  // is what made a busy pool look idle.
-  { re: /^\/explorer\/pool\/(\d+)\/activity$/, fn: (m, qs) => {
-    const poolId = Number(m[1])
-    const detail = buildPoolDetail(poolId)
-    if (!detail) return []
-    const limit = Number(qs.get('limit') ?? 25)
-    const members = detail.assets.map(a => a.asset.assetId)
-    const rows: ActivityRow[] = []
-    for (let i = 0; i < 6 && rows.length < limit; i++) {
-      const h = TIP - i * 3
-      const [a, b] = i % 2 === 0 ? members : [...members].reverse()
-      const aIn = assetById.get(a)!, aOut = assetById.get(b)!
-      const amt = 120 + i * 37
-      rows.push({
-        type: 'trade', blockHeight: h, timestamp: tsAt(h), eventIndex: 40 + i, extrinsicIndex: 2,
-        who: ACCS[i % ACCS.length], to: null, asset: null,
-        assetIn: aref(aIn), assetOut: aref(aOut),
-        amount: null, amountIn: raw(amt, aIn.decimals), amountOut: raw(amt * aIn.price / aOut.price, aOut.decimals),
-        valueUsd: amt * aIn.price, linkBlock: h, linkIndex: 2,
-      })
-    }
-    return rows.slice(0, limit)
-  } },
-  { re: /^\/explorer\/omnipool$/, fn: () => buildOmnipool() },
+  { re: /^\/explorer\/pool\/(\d+)\/activity$/, fn: (m, qs) => mockPoolActivity(Number(m[1]), Number(qs.get('limit') ?? 25)) },
+  { re: /^\/explorer\/pool\/(\d+)\/lps$/, fn: (m, qs) => buildPoolLps(Number(m[1]), Number(qs.get('offset') ?? 0), Number(qs.get('limit') ?? 10)) },
   {
     re: /^\/explorer\/holders\/(\d+)$/, fn: (m, qs) => {
       const a = assetById.get(Number(m[1])) ?? ASSETS[0]
@@ -2463,29 +1053,16 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
   // fixture cannot advertise a page the mocked feed does not hold.
   { re: /^\/explorer\/address\/(.+)\/list-count$/, fn: (m, qs) => ({ total: mockListTotal(qs, () => accountActivityRows(m[1])) }) },
   { re: /^\/explorer\/address\/(.+)\/extrinsics$/, fn: (_m, qs) => recentExtrinsics(Number(qs.get('limit') ?? 25), true) },
-  {
-    re: /^\/explorer\/address\/(.+)\/events$/, fn: (_m, qs) => {
-      const limit = Number(qs.get('limit') ?? 25); const out: EventRow[] = []
-      let h = TIP
-      while (out.length < limit && h > TIP - 200) {
-        const n = blockExtrinsicCount(h)
-        for (let i = n - 1; i >= 0 && out.length < limit; i--) { const x = genExtrinsic(h, i); for (const e of x.events) { out.push({ blockHeight: h, eventIndex: out.length, extrinsicIndex: x.index, timestamp: x.timestamp, name: e.name, args: e.args, decoded: !!(e as { decoded?: boolean }).decoded }); if (out.length >= limit) break } }
-        h--
-      }
-      return out.slice(0, limit)
-    },
-  },
-  { re: /^\/explorer\/address\/(.+)\/counts$/, fn: () => ({ extrinsics: 1451, extrinsicsOnBehalf: 0, events: 26787, votes: 0 }) },
+  { re: /^\/explorer\/address\/(.+)\/events$/, fn: (_m, qs) => recentEvents(Number(qs.get('limit') ?? 25)) },
+  { re: /^\/explorer\/address\/(.+)\/votes$/, fn: (m, qs) => mockVoteRows(ACCS.find(a => a.accountId === decodeURIComponent(m[1]) || a.address.toLowerCase() === decodeURIComponent(m[1]).toLowerCase()) ?? A.fox, Number(qs.get('limit') ?? 25)) },
+  { re: /^\/explorer\/address\/(.+)\/value-events$/, fn: (m) => mockValueEvents(accountActivityRows(m[1])) },
+  { re: /^\/explorer\/address\/(.+)\/counts$/, fn: () => ({ extrinsics: 1451, extrinsicsOnBehalf: 0, events: 26787, votes: 25 }) },
   // Per-account balance/portfolio history. Must sit before the generic address
   // route below, whose greedy `(.+)` would otherwise swallow this sub-path and
   // fall back to the default account — leaking one account's history onto another.
   // `series=1` is the Overview's shape: the value series without the per-asset
   // history the Balances treemap reads (98-99% of the real payload).
-  { re: /^\/explorer\/address\/(.+)\/history$/, fn: (m, qs) => { const built = buildAddress(decodeURIComponent(m[1])); return { portfolioSeries: built.portfolioSeries ?? [], portfolioDates: built.portfolioDates ?? [], balanceHistory: qs.get('series') === '1' ? [] : built.balanceHistory ?? [] } } },
-  // Public lists that list this address as owner or tagged member — must
-  // also sit before the generic address route's greedy `(.+)`.
-  { re: /^\/explorer\/address\/(.+)\/lists$/, fn: (m) => addressLists(m[1]) },
-  { re: /^\/explorer\/address\/(.+)\/tagged-in$/, fn: (m) => addressTaggedIn(m[1]) },
+  { re: /^\/explorer\/address\/(.+)\/history$/, fn: (m, qs) => { const built = buildAddress(decodeURIComponent(m[1])); return { portfolioSeries: built.portfolioSeries ?? [], portfolioDates: built.portfolioDates ?? [], balanceHistory: qs.get('series') === '1' ? [] : built.balanceHistory ?? [] } satisfies AccountHistoryResponse } },
   {
     re: /^\/explorer\/address\/(.+)\/close-accounts$/, fn: () => ({
       accounts: [
@@ -2511,76 +1088,8 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
       disclaimer: 'Behavioral signals are not proof of common ownership. System and high-volume protocol accounts are excluded.',
     } satisfies CloseAccountsResponse),
   },
-  { re: /^\/explorer\/dca-at\/(\d+)\/(\d+)/, fn: () => ({ scheduleId: 33546 }) },
-  {
-    // One DCA execution attempt by its event: the failed-attempt rows of the
-    // cancelled schedule (33573) live at TIP-20/TIP-40 — same identity as its
-    // schedule-page rows; other eventIndex-4 addresses are executed 33546 rows.
-    // Anything else 404s (legacy event-form links must fall back to the
-    // schedule resolver, mirroring the real API).
-    re: /^\/explorer\/dca\/exec\/(\d+)\/(\d+)$/, fn: (m) => {
-      const h = Number(m[1]), i = Number(m[2])
-      if (i !== 4) return undefined
-      const failed = h === TIP - 20 || h === TIP - 40
-      if (failed) {
-        const assetIn = aref(assetById.get(5)!), assetOut = aref(assetById.get(10)!)
-        return {
-          scheduleId: 33573, status: 'failed', who: A.fox,
-          blockHeight: h, timestamp: tsAt(h), eventIndex: i, extrinsicIndex: null,
-          assetIn, assetOut, amountIn: raw(975, assetIn.decimals), amountOut: null,
-          valueUsd: 975, executionPrice: null, period: 6,
-          failureReason: { label: 'pool trade limit reached', docs: 'The trade exceeds the pool trade volume limit for this block.' },
-        }
-      }
-      const assetIn = aref(assetById.get(5)!), assetOut = aref(assetById.get(0)!)
-      return {
-        scheduleId: 33546, status: 'executed', who: A.fox,
-        blockHeight: h, timestamp: tsAt(h), eventIndex: i, extrinsicIndex: null,
-        assetIn, assetOut, amountIn: raw(12.5, 10), amountOut: raw(12.5 * 4.4422 / 0.02184, 12),
-        valueUsd: 55.5, executionPrice: 4.4422 / 0.02184, period: 300,
-        failureReason: null,
-      }
-    },
-  },
-  {
-    re: /^\/explorer\/dca\/(\d+)/, fn: (m) => {
-      const scheduleId = Number(m[1])
-      if (scheduleId === 33573) {
-        const assetIn = aref(assetById.get(5)!), assetOut = aref(assetById.get(10)!)
-        const rows = [20, 40].map((ago) => ({
-          type: 'dca', blockHeight: TIP - ago, timestamp: tsAt(TIP - ago), eventIndex: 4, extrinsicIndex: null,
-          who: A.fox, to: null, asset: null, assetIn, assetOut,
-          amount: null, amountIn: raw(975, assetIn.decimals), amountOut: null, valueUsd: 975,
-          dca: true, dcaStatus: 'failed', dcaScheduleId: scheduleId, linkBlock: TIP - ago, linkIndex: null,
-        })) as ActivityRow[]
-        return {
-          scheduleId, who: A.fox,
-          createdAt: { blockHeight: TIP - 60, timestamp: tsAt(TIP - 60), extrinsicIndex: 2 },
-          assetIn, assetOut, direction: 'Sell', amountPer: raw(975, assetIn.decimals), totalAmount: raw(3900, assetIn.decimals), period: 6, maxRetries: 0,
-          status: 'cancelled', statusAt: tsAt(TIP - 1),
-          executions: { count: 0, failed: 2, attempts: 2, totalIn: '0', totalOut: '0' }, rows,
-        }
-      }
-      const execs = Array.from({ length: 25 }, (_, i) => ({
-        type: 'dca', blockHeight: TIP - 300 - i * 100, timestamp: tsAt(TIP - 300 - i * 100), eventIndex: 4, extrinsicIndex: null,
-        who: A.fox, to: null, asset: null, assetIn: aref(assetById.get(5)!), assetOut: aref(assetById.get(0)!),
-        amount: null, amountIn: raw(12.5, 10), amountOut: raw(12.5 * 4.4422 / 0.02184, 12),
-        valueUsd: 55.5, dca: true, dcaScheduleId: scheduleId, linkBlock: TIP - 300 - i * 100, linkIndex: null,
-      })) as ActivityRow[]
-      return {
-        scheduleId,
-        who: A.fox,
-        createdAt: { blockHeight: TIP - 40000, timestamp: tsAt(TIP - 40000), extrinsicIndex: 2 },
-        assetIn: aref(assetById.get(5)!), assetOut: aref(assetById.get(0)!),
-        direction: 'Sell', amountPer: raw(12.5, 10), totalAmount: raw(5000, 10), period: 300, maxRetries: 3,
-        status: 'active', statusAt: null,
-        executions: { count: 132, failed: 0, attempts: 132, totalIn: raw(1650, 10), totalOut: raw(1650 * 4.4422 / 0.02184, 12) },
-        rows: execs,
-      }
-    },
-  },
   { re: /^\/explorer\/address\/(.+)$/, fn: (m) => buildAddress(decodeURIComponent(m[1])) },
-  { re: /^\/explorer\/tag\/(.+)\/counts$/, fn: () => ({ extrinsics: 1451, extrinsicsOnBehalf: 0, events: 26787, votes: 0 }) },
+  { re: /^\/explorer\/tag\/(.+)\/counts$/, fn: () => ({ extrinsics: 1451, extrinsicsOnBehalf: 0, events: 26787, votes: 25 }) },
   {
     re: /^\/explorer\/tag\/(.+)\/close-accounts$/, fn: () => ({
       accounts: [
@@ -2615,24 +1124,29 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
   },
   { re: /^\/explorer\/tag\/(.+)\/list-count$/, fn: (_m, qs) => ({ total: mockListTotal(qs, tagActivityRows) }) },
   { re: /^\/explorer\/tag\/(.+)\/extrinsics$/, fn: (_m, qs) => recentExtrinsics(Number(qs.get('limit') ?? 25), true) },
+  { re: /^\/explorer\/tag\/(.+)\/events$/, fn: (_m, qs) => recentEvents(Number(qs.get('limit') ?? 25)) },
+  { re: /^\/explorer\/tag\/(.+)\/votes$/, fn: (_m, qs) => mockVoteRows(null, Number(qs.get('limit') ?? 25)) },
+  // Grouped mode of the votes tab: one row per referendum, members combined.
   {
-    re: /^\/explorer\/tag\/(.+)\/events$/, fn: (_m, qs) => {
-      const limit = Number(qs.get('limit') ?? 25); const out: EventRow[] = []
-      let h = TIP
-      while (out.length < limit && h > TIP - 200) {
-        const n = blockExtrinsicCount(h)
-        for (let i = n - 1; i >= 0 && out.length < limit; i--) { const x = genExtrinsic(h, i); for (const e of x.events) { out.push({ blockHeight: h, eventIndex: out.length, extrinsicIndex: x.index, timestamp: x.timestamp, name: e.name, args: e.args, decoded: !!(e as { decoded?: boolean }).decoded }); if (out.length >= limit) break } }
-        h--
-      }
-      return out.slice(0, limit)
+    re: /^\/explorer\/tag\/(.+)\/votes-by-referendum$/, fn: (_m, qs) => {
+      const limit = Number(qs.get('limit') ?? 25)
+      const hdx = ASSETS[0]
+      const rows: VoteGroupRow[] = mockVoteRows(null, limit).map(v => ({
+        pallet: v.pallet, referendum: v.referendum, voteRefPallet: v.voteRefPallet, voteRefTitle: v.voteRefTitle,
+        side: v.side, voters: 2, weighted: v.weighted ?? null, amount: v.amount,
+        blockHeight: v.blockHeight, timestamp: v.timestamp, eventIndex: v.eventIndex, extrinsicIndex: v.extrinsicIndex,
+        asset: aref(hdx), valueUsd: v.valueUsd,
+      }))
+      return { rows, total: rows.length, complete: true } satisfies VotesByReferendumPage
     },
   },
+  { re: /^\/explorer\/tag\/(.+)\/value-events$/, fn: () => mockValueEvents(tagActivityRows()) },
   // A tag's members as DIRECTORY rows: the same shape /explorer/accounts
   // returns, one row per member and never folded under the tag itself.
   { re: /^\/explorer\/tag\/(.+)\/members$/, fn: () => {
     const { rows } = buildAccounts(0, 50, 'value')
     const members = rows.filter(r => r.account).slice(0, 3).map(r => ({ ...r, tag: null }))
-    return { rows: members, total: members.length }
+    return { rows: members, total: members.length } satisfies AccountsPage
   } },
   {
     re: /^\/explorer\/tag\/(.+)$/, fn: () => {
@@ -2648,28 +1162,77 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
       })
       const portfolioUsd = balances.reduce((s, b) => s + (b.valueUsd ?? 0), 0)
       const built = buildAddress(A.krakenEvm.accountId)
-      const moneyMarket = built.moneyMarket.map(p => p.role === 'primary' ? { ...p, simAccount: A.krakenEvm.address } : p)
-      return { tagId: 'kraken', name: 'Kraken', color: '#7b6cf6', note: 'Exchange — hot + deposit wallets', icon: '/tag-icons/kraken.jpg', members, balances, portfolioUsd, tradingVolumeUsd: portfolioUsd * 24, liquidationVolumeUsd: portfolioUsd * 0.08, moneyMarket, liquidityPositions: built.liquidityPositions ?? [], activeDcas: built.activeDcas ?? [], portfolioSeries: series(77, 52, portfolioUsd), balanceHistory: built.balanceHistory ?? [] } satisfies TagDetail
+      return {
+        tagId: 'kraken', name: 'Kraken', color: '#7b6cf6', note: 'Exchange — hot + deposit wallets', icon: '/tag-icons/kraken.jpg',
+        members, balances,
+        topAssets: balances.slice(0, 4).map(b => ({ asset: b.asset, valueUsd: b.valueUsd ?? 0 })),
+        portfolioUsd, tradingVolumeUsd: portfolioUsd * 24,
+        liquidityPositions: built.liquidityPositions ?? [],
+        portfolioSeries: series(77, 52, portfolioUsd), balanceHistory: built.balanceHistory ?? [],
+      } satisfies TagDetail
     },
   },
+  { re: /^\/explorer\/governance$/, fn: () => buildGovernance() },
+  {
+    re: /^\/explorer\/governance\/referenda$/, fn: (_m, qs) => {
+      const offset = Number(qs.get('offset') ?? 0), limit = Number(qs.get('limit') ?? 25)
+      const all = Array.from({ length: 60 }, (_, i) => govReferendumRow(380 - i))
+      return { total: all.length, rows: all.slice(offset, offset + limit) } satisfies GovernanceReferendaPage
+    },
+  },
+  {
+    re: /^\/explorer\/governance\/motions$/, fn: (_m, qs) => {
+      const limit = Number(qs.get('limit') ?? 25)
+      const rows = Array.from({ length: Math.min(limit, 8) }, (_, i) => {
+        const h = TIP - (i + 1) * 9_000
+        return {
+          index: 42 - i, hash: hx(i * 7 + 5, 64), proposer: ACCS[i % ACCS.length], threshold: 3,
+          ayes: 3 - (i % 2), nays: i % 2, call: 'Referenda.cancel',
+          status: (i % 3 === 0 ? 'executed' : i % 3 === 1 ? 'open' : 'approved') as 'executed' | 'open' | 'approved',
+          proposedAt: { blockHeight: h, extrinsicIndex: 2, timestamp: tsAt(h) },
+          closedAt: i % 3 === 1 ? null : { blockHeight: h + 400, extrinsicIndex: 2, timestamp: tsAt(h + 400) },
+        }
+      })
+      return { total: 42, rows } satisfies CollectiveMotionsPage
+    },
+  },
+  {
+    re: /^\/explorer\/governance\/tips$/, fn: (_m, qs) => {
+      const limit = Number(qs.get('limit') ?? 25)
+      const rows = Array.from({ length: Math.min(limit, 6) }, (_, i) => {
+        const h = TIP - (i + 1) * 21_000
+        return {
+          hash: hx(i * 11 + 3, 64), reason: `Community contribution #${i + 1}`, beneficiary: ACCS[i % ACCS.length],
+          payout: raw(12_000 * (i + 1), 12),
+          status: (i === 0 ? 'open' : 'closed') as 'open' | 'closed',
+          openedAt: { blockHeight: h, extrinsicIndex: 2, timestamp: tsAt(h) },
+          closedAt: i === 0 ? null : { blockHeight: h + 7200, extrinsicIndex: 2, timestamp: tsAt(h + 7200) },
+        }
+      })
+      return { total: 17, rows } satisfies TreasuryTipsPage
+    },
+  },
+  { re: /^\/explorer\/referendum\/(opengov|democracy)\/(\d+)$/, fn: (m) => buildReferendum(m[1] as 'opengov' | 'democracy', Number(m[2])) },
   {
     re: /^\/explorer\/search$/, fn: (_m, qs) => {
       const q = (qs.get('q') ?? '').trim(); const out: SearchResult[] = []
       if (/^\d+$/.test(q)) out.push({ type: 'block', value: q })
       if (/^\d+-\d+$/.test(q)) out.push({ type: 'extrinsic', value: q })
-      // An EVM transaction hash offers the extrinsic and NOTHING else: it is 64-hex
-      // like an AccountId32, and the fallback that reads it as one offered a
-      // fabricated account page (see searchUncached's hash branch).
-      if (q.toLowerCase() === MOCK_EVM_TX_HASH) out.push({ type: 'extrinsic', value: MOCK_EVM_TX_HASH })
       const sym = ASSETS.find(a => a.symbol.toLowerCase() === q.toLowerCase()); if (sym) out.push({ type: 'asset', value: String(sym.assetId), label: sym.symbol })
       if (/kraken/i.test(q)) out.push({ type: 'tag', value: 'kraken', label: 'Kraken', icon: '/tag-icons/kraken.jpg', color: '#7b6cf6' })
-      const acc = ACCS.find(a => a.address.toLowerCase() === q.toLowerCase() || a.accountId.toLowerCase() === q.toLowerCase()); if (acc) out.push({ type: 'address', value: acc.accountId, label: acc.address, emoji: acc.emoji, identity: acc.identity })
-      if (/^0x[0-9a-f]{40}$/i.test(q) && !acc) out.push({ type: 'address', value: q, label: q })
+      const acct = ACCS.find(a => a.address.toLowerCase() === q.toLowerCase() || a.accountId.toLowerCase() === q.toLowerCase()); if (acct) out.push({ type: 'address', value: acct.accountId, label: acct.address, emoji: acct.emoji, identity: acct.identity })
+      if (/^0x[0-9a-f]{40}$/i.test(q) && !acct) out.push({ type: 'address', value: q, label: q })
       // identity-name substring match
       if (/[a-z]/i.test(q)) {
         for (const a of ACCS) {
-          if (a === acc || !a.identity?.display) continue
+          if (a === acct || !a.identity?.display) continue
           if (a.identity.display.toLowerCase().includes(q.toLowerCase())) out.push({ type: 'address', value: a.accountId, label: a.address, emoji: a.emoji, identity: a.identity })
+        }
+      }
+      // A pool by its name or share-token id.
+      for (const p of POOLS) {
+        if (String(p.lpAssetId) === q || p.name.toLowerCase().includes(q.toLowerCase())) {
+          out.push({ type: 'pool', value: String(p.lpAssetId), label: p.name, poolKind: 'xyk', tvlUsd: poolTvlUsd(p), asset: aref(assetById.get(p.assetA)!) })
         }
       }
       // Referendum index or title, e.g. "263" or "treasury spend" — mirrors the
@@ -2679,52 +1242,7 @@ const ROUTES: { re: RegExp; fn: (m: RegExpMatchArray, qs: URLSearchParams) => un
       return out
     },
   },
-  {
-    re: /^\/explorer\/tags$/, fn: () => mockTags,
-  },
-  { re: /^\/explorer\/lists$/, fn: () => MOCK_LISTS },
-  // Public detail of another user's list carries only the statistics —
-  // tag names/members stay with the owner (mirrors listDetailResponse).
-  { re: /^\/explorer\/list\/(.+)$/, fn: (m) => { const d = MOCK_LIST_DETAILS[decodeURIComponent(m[1])]; return d ? { ...d, tags: [] } : d } },
-  // Connect-dialog display refs: echo known fixture accounts (matched on either
-  // form), null for anything unknown — same contract as the real endpoint.
-  {
-    re: /^\/explorer\/account-refs$/,
-    fn: (_m, qs) => (qs.get('addresses') ?? '').split(',').filter(Boolean).map(addr =>
-      ACCS.find(a => a.address === addr || a.accountId === addr) ?? null),
-  },
-  // Authed detail — same objects as the public endpoint above (the mock has no
-  // private-only list, so there is nothing the anonymous route wouldn't see).
-  { re: /^\/user\/lists\/(.+)$/, fn: (m) => MOCK_LIST_DETAILS[decodeURIComponent(m[1])] },
-  { re: /^\/user\/me$/, fn: () => MOCK_ME },
-  // Notifications. GET-only here, like every other mockSync route — the
-  // stateful create/patch/delete surface lives in the Playwright userMock
-  // (e2e/fixtures/test.ts), which owns /user/** for specs that mutate.
-  { re: /^\/user\/notifications\/overview$/, fn: () => MOCK_NOTIFICATIONS_OVERVIEW },
-  { re: /^\/user\/notifications\/inbox$/, fn: (_m, qs) => {
-    const limit = Number(qs.get('limit') ?? 50)
-    const offset = Number(qs.get('offset') ?? 0)
-    return { rows: MOCK_NOTIFICATION_INBOX.slice(offset, offset + limit), unread: MOCK_NOTIFICATION_UNREAD, total: MOCK_NOTIFICATION_INBOX.length }
-  } },
-  { re: /^\/user\/tag-map$/, fn: () => MOCK_TAG_MAP },
-  { re: /^\/user\/invites$/, fn: () => MOCK_INVITES },
-  // A list tag's own aggregate page. Feeds answer empty (deterministic, and
-  // enough for the page to render its header + empty tables); the detail carries
-  // the same tag the tag-map's 'personal-watch' entry resolves pills to, so a
-  // pill and its own aggregate page agree on name/color/icon.
-  { re: /^\/user\/list-tag\/[^/]+\/[^/]+\/members$/, fn: () => {
-    const { rows } = buildAccounts(0, 50, 'value')
-    const members = rows.filter(r => r.account).slice(0, 2).map(r => ({ ...r, tag: null }))
-    return { rows: members, total: members.length }
-  } },
-  { re: /^\/user\/list-tag\/[^/]+\/[^/]+\/counts$/, fn: () => ({ extrinsics: 0, extrinsicsOnBehalf: 0, events: 0, votes: 0 }) },
-  { re: /^\/user\/list-tag\/[^/]+\/[^/]+\/list-count$/, fn: () => ({ total: 0, complete: true }) },
-  { re: /^\/user\/list-tag\/[^/]+\/[^/]+\/activity$/, fn: () => [] as ActivityRow[] },
-  { re: /^\/user\/list-tag\/[^/]+\/[^/]+\/extrinsics$/, fn: () => [] as ExtrinsicSummary[] },
-  { re: /^\/user\/list-tag\/[^/]+\/[^/]+\/events$/, fn: () => [] as EventRow[] },
-  { re: /^\/user\/list-tag\/[^/]+\/[^/]+\/votes$/, fn: () => [] },
-  { re: /^\/user\/list-tag\/[^/]+\/[^/]+\/value-events$/, fn: () => [] as ValueEvent[] },
-  { re: /^\/user\/list-tag\/([^/]+)\/([^/]+)$/, fn: (m) => decodeURIComponent(m[2]) === MOCK_LIST_TAG_DETAIL.tagId ? MOCK_LIST_TAG_DETAIL : undefined },
+  { re: /^\/explorer\/tags$/, fn: () => mockTags },
 ]
 
 const mockTags: Tag[] = [

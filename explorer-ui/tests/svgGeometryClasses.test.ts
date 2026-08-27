@@ -7,10 +7,9 @@ import { describe, expect, it } from 'vitest'
 // resizes the shape.
 //
 // This is not hypothetical: /liquidity's composition bar was `.liq-bar`
-// (`width: 100%; height: 10px`), the same class the GIGAHDX liquidation
-// histogram puts on every <rect>. All 14 of its bars became 860 x 10px — one
-// flat line where a distribution had been, on a page nothing in that change
-// touched.
+// (`width: 100%; height: 10px`), a name a histogram also put on every <rect>.
+// All 14 of its bars became 860 x 10px — one flat line where a distribution had
+// been, on a page nothing in that change touched.
 
 const SRC = new URL('../src/', import.meta.url)
 const GEOMETRY = ['rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'path']

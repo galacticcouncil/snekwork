@@ -64,7 +64,7 @@ function PoolRow({ p }: { p: PoolListEntry }) {
           <span className="liq-name">
             <span className="liq-title">{p.name}</span>
             <span className="liq-sub">
-              <PoolBadge pool={p.kind === 'omnipool' ? 'Omnipool' : p.kind === 'stableswap' ? 'Stableswap' : 'XYK'} />
+              <PoolBadge pool="XYK" />
             </span>
           </span>
         </div>
@@ -102,7 +102,7 @@ export function Liquidity() {
           <tbody>
             {isLoading ? <TableSkeleton cols={4} rows={12} />
               : !rows.length ? <EmptyRow cols={4}>No pools</EmptyRow>
-                : rows.map(p => <PoolRow key={`${p.kind}:${p.poolId ?? 'omnipool'}`} p={p} />)}
+                : rows.map((p, i) => <PoolRow key={`${p.kind}:${p.poolId ?? i}`} p={p} />)}
           </tbody>
         </table>
       </div>

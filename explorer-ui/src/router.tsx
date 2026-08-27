@@ -103,8 +103,7 @@ export function parseRoute(loc: string): Route {
       return parts[1] && isSafeId(parts[1]) ? { name: 'asset', assetId: Number(parts[1]) } : { name: 'assets' }
     case 'holders':
       return parts[1] && isSafeId(parts[1]) ? { name: 'holders', assetId: Number(parts[1]) } : { name: 'assets' }
-    // /pool/<shareAssetId> — stableswap pools and XYK pairs are both addressed
-    // by their share/LP token id; the Omnipool has its own page.
+    // /pool/<shareAssetId> — an XYK pair is addressed by its share/LP token id.
     case 'pool':
       return parts[1] && isSafeId(parts[1]) ? { name: 'pool', poolId: Number(parts[1]) } : { name: 'assets' }
     case 'liquidity': return { name: 'liquidity' }

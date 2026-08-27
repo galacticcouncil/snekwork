@@ -7,9 +7,6 @@ import { Link, paths, navigate, redirect } from '../router'
 import { Crumbs, F, AddrPill, CallPill, FeeAmount, StatusBadge, FinalizedBadge, FailureReasonRow, Copy, CopyTextButton, JsonView, ParamsTable, SkeletonRows } from '../components/ui'
 import { api } from '../api/explorer'
 import { ActivityTable } from '../components/ActivityTable'
-import { EvmCallCard, EvmLogView } from '../components/EvmDecoded'
-import { evmTransactionEnvelope } from '../utils/evmDecoded'
-import type { EvmTransactionFacts } from '../types'
 
 // Copies the extrinsic's SCALE bytes, fetched on demand: extrinsics are stored decoded,
 // so the encoded form comes from the chain (see extrinsicBytes.ts — re-encoding from
@@ -24,44 +21,6 @@ function CallDataCopy({ height, index }: { height: number; index: number }) {
   })
   if (!data?.encoded) return null
   return <CopyTextButton label="call data" text={data.encoded} />
-}
-
-// The Ethereum-native facts of an EVM transaction, on the extrinsic page that IS
-// that transaction's page (the contract Transactions tab already links every
-// transaction here, and a hash resolves to the same extrinsic id). The substrate
-// `Extrinsic hash` row above stays exactly where it is: both hashes are real and
-// name different things, so the page labels them rather than choosing.
-//
-// Gas is not indexed and has no receipt to read here, so the page states what the
-// extrinsic itself carries and nothing more.
-function EvmTxRows({ tx, callArgs }: { tx?: EvmTransactionFacts; callArgs: unknown }) {
-  const envelope = evmTransactionEnvelope(callArgs)
-  return <>
-    {tx && <>
-      <div className="dt">EVM tx hash</div>
-      <div className="dd mono wrap-anywhere">{tx.txHash} <Copy text={tx.txHash} /></div>
-    </>}
-    {envelope?.kind && <><div className="dt">Tx type</div><div className="dd mono">{envelope.kind}</div></>}
-    {envelope?.nonce != null && <><div className="dt">Nonce</div><div className="dd mono">{F.preciseAmount(envelope.nonce, 0)}</div></>}
-    {envelope?.value != null && <>
-      <div className="dt">Value</div>
-      {/* Named, not bare: the EVM's native currency here is WETH (asset 20, 18
-          decimals), verified against every non-zero-value transaction in the
-          chain's history — all 68 move currency 20 in exactly these raw units.
-          An unlabelled figure reads as HDX, which is both the wrong asset and
-          12-decimal, so the number would be misread by six orders of magnitude. */}
-      <div className="dd mono" title={F.preciseAmount(envelope.value, 18)}>{F.amount(envelope.value, 18)} WETH</div>
-    </>}
-    {tx?.exitKind && <>
-      <div className="dt">Exit</div>
-      <div className="dd mono wrap-anywhere">
-        {tx.exitKind}{tx.exitDetail && ` · ${tx.exitDetail}`}
-        {/* Returned data — on a revert this is the reason the contract gave, which
-            no other explorer surface carries. */}
-        {tx.extraData && <> <span className="muted">returned</span> {tx.extraData} <Copy text={tx.extraData} /></>}
-      </div>
-    </>}
-  </>
 }
 
 export function ExtrinsicDetail({ id }: { id: string }) {
@@ -126,7 +85,6 @@ export function ExtrinsicDetail({ id }: { id: string }) {
                   <div className="dt">Fee</div><div className="dd mono"><FeeAmount payment={data.feePayment} hdxRaw={data.fee} /></div>
                   <div className="dt">Tip</div><div className="dd mono"><FeeAmount payment={data.feePayment} hdxRaw={data.tip} part="tip" /></div></>
                 : <><div className="dt">Type</div><div className="dd"><span className="badge pending" style={{ background: 'var(--panel)', color: 'var(--text-medium)' }}>Inherent</span></div></>}
-              {data.callName === 'Ethereum.transact' && <EvmTxRows tx={data.evmTx} callArgs={data.callArgs} />}
             </div></div>
 
             <div className="tabs">
@@ -138,12 +96,7 @@ export function ExtrinsicDetail({ id }: { id: string }) {
 
             {tab === 'activity' && <ActivityTable rows={activityRows} now={now} loading={activity.isFetching && !activityRows.length} />}
 
-            {tab === 'params' && (
-              <>
-                {data.evmCalls?.map((c, i) => <EvmCallCard key={`${c.target}-${i}`} decoded={c} />)}
-                <ParamsTable args={args} />
-              </>
-            )}
+            {tab === 'params' && <ParamsTable args={args} />}
 
             {tab === 'events' && (
               <div className="panel">
@@ -152,9 +105,7 @@ export function ExtrinsicDetail({ id }: { id: string }) {
                     <div className="ei"><Link to={paths.eventAt(data.blockHeight, e.eventIndex)} className="hash">{e.eventIndex}</Link></div>
                     <div className="ec">
                       <div className="row gap6"><Link to={paths.eventAt(data.blockHeight, e.eventIndex)} className="hash"><CallPill name={e.name} /></Link>{e.decoded && <span className="badge" style={{ background: 'color-mix(in srgb, var(--neutral) 15%, transparent)', color: 'var(--neutral)' }}>decoded</span>}</div>
-                      {e.evmDecoded
-                        ? <EvmLogView decoded={e.evmDecoded} />
-                        : e.args != null && typeof e.args === 'object' && Object.keys(e.args).length > 0 && <JsonView value={e.args} />}
+                      {e.args != null && typeof e.args === 'object' && Object.keys(e.args).length > 0 && <JsonView value={e.args} />}
                     </div>
                   </div>
                 ))}

@@ -13,7 +13,7 @@ import { useAssetColors } from '../utils/iconColor'
 // come from /explorer/asset/:id/liquidity — the same loaders the pool pages
 // read, so a card and the page it links to always agree.
 
-const KIND_LABEL: Record<AssetLiquiditySource['kind'], string> = { omnipool: 'Omnipool', stableswap: 'Stableswap', xyk: 'XYK' }
+const KIND_LABEL: Record<AssetLiquiditySource['kind'], string> = { xyk: 'XYK' }
 
 // Fixed ordinal palette for the history's source bands (identity per series
 // position — the API orders by peak size and folds the tail into Other, which
@@ -25,29 +25,21 @@ function poolPath(s: { poolId: number | null }): string | null {
   return s.poolId != null ? paths.pool(s.poolId) : null
 }
 
-// One current source as a composition card. The Omnipool card has no inline
-// per-asset breakdown (40 assets live on /omnipool) — its bar shows the
-// asset's slice of the whole pool instead.
+// One current source as a composition card.
 function SourceCard({ s, asset }: { s: AssetLiquiditySource; asset: AssetRef }) {
   const colorFor = useAssetColors([asset, ...s.composition.map(c => c.asset)])
-  const segments: ShareSegment[] = s.kind === 'omnipool'
-    ? (s.assetUsd != null && s.tvlUsd != null && s.tvlUsd >= s.assetUsd ? [
-        { key: 'self', label: asset.symbol, color: colorFor(asset), value: s.assetUsd, tip: <><span className="t-d">{asset.symbol}</span><span className="t-row">{F.usd(s.assetUsd)}</span></> },
-        { key: 'rest', label: 'Rest of Omnipool', color: OTHER_COLOR, value: s.tvlUsd - s.assetUsd, tip: <><span className="t-d">Rest of Omnipool</span><span className="t-row">{F.usd(s.tvlUsd - s.assetUsd)}</span></> },
-      ] : [])
-    : s.tvlUsd != null
-      ? s.composition.map((c, i) => ({
-          key: `${c.asset.assetId}:${i}`, label: c.asset.symbol, color: colorFor(c.asset), value: c.usd ?? 0,
-          tip: <><span className="t-d">{c.asset.symbol}</span><span className="t-row">{F.amount(c.amount, c.asset.decimals)} {c.asset.symbol}</span><span className="t-row">{F.usd(c.usd)}</span></>,
-        }))
-      : []
+  const segments: ShareSegment[] = s.tvlUsd != null
+    ? s.composition.map((c, i) => ({
+        key: `${c.asset.assetId}:${i}`, label: c.asset.symbol, color: colorFor(c.asset), value: c.usd ?? 0,
+        tip: <><span className="t-d">{c.asset.symbol}</span><span className="t-row">{F.amount(c.amount, c.asset.decimals)} {c.asset.symbol}</span><span className="t-row">{F.usd(c.usd)}</span></>,
+      }))
+    : []
   const to = poolPath(s)
   const body = (
     <>
       <div className="hk" style={{ flexWrap: 'wrap', rowGap: 2 }}>
         <span>{s.name}</span>
         <PoolBadge pool={KIND_LABEL[s.kind]} />
-        {s.hasPegs && <span className="badge" title="This pool trades around drifting price pegs" style={{ background: 'var(--lavender-soft)', color: 'var(--lavender-deep)' }}>pegs</span>}
         <span className="cap" style={{ marginLeft: 'auto' }}>{s.tvlUsd != null ? `${F.usd(s.tvlUsd)} TVL` : 'TVL —'}</span>
       </div>
       {segments.length > 0 && <ShareBar segments={segments} h={26} />}
@@ -78,9 +70,9 @@ export function AssetLiquidityTab({ asset }: { asset: AssetRef }) {
   }
 
   // Cards for every source that arrived with an inline breakdown (the API
-  // populates composition for the largest holdings; the Omnipool card renders
-  // its asset-vs-rest bar without one). Everything else is a compact row.
-  const isCard = (s: AssetLiquiditySource) => s.composition.length > 0 || s.kind === 'omnipool'
+  // populates composition for the largest holdings). Everything else is a
+  // compact row.
+  const isCard = (s: AssetLiquiditySource) => s.composition.length > 0
   const cards = data.sources.filter(isCard)
   const rest = data.sources.filter(s => !isCard(s))
   const history = data.history
@@ -105,7 +97,7 @@ export function AssetLiquidityTab({ asset }: { asset: AssetRef }) {
             <span style={{ color: 'var(--text-low)', textTransform: 'none', letterSpacing: 0 }}> · {F.amount(data.totalAmount, asset.decimals)} {asset.symbol} pooled across {data.sources.length} {data.sources.length === 1 ? 'pool' : 'pools'} · {F.usd(data.totalUsd)}</span>
           </div>
           <div className="hdx-cards pool-cards" style={{ marginTop: 0 }}>
-            {cards.map((s, i) => <SourceCard key={`${s.kind}:${s.poolId ?? 'omni'}:${i}`} s={s} asset={asset} />)}
+            {cards.map((s, i) => <SourceCard key={`${s.kind}:${s.poolId ?? i}`} s={s} asset={asset} />)}
           </div>
           {rest.length > 0 && (
             <div className="panel" style={{ marginTop: 14 }}><table className="tbl">
@@ -128,10 +120,6 @@ export function AssetLiquidityTab({ asset }: { asset: AssetRef }) {
           )}
         </>
       )}
-
-      {/* The asset's Omnipool LP ranking, right after the Omnipool breakdown
-          above. H2O (asset 1) is the hub — it has no position NFTs, so no LP
-          list exists for it. */}
 
       {history.buckets.length > 1 && (
         <>

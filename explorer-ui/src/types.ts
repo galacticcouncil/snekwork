@@ -32,8 +32,6 @@ export interface AccountRef {
   emojiUrl?: string      // custom image icon (e.g. a Discord avatar) — render in place of the emoji char
   tag: TagRef | null
   identity?: AccountIdentity | null   // on-chain Identity.IdentityOf display + judgement status
-  isContract?: boolean                // deployed EVM smart contract — pills wear the </> glyph
-  contractName?: string               // verified source's contract name — the pill's label, like an identity display
 }
 
 export interface ExplorerStats {
@@ -86,7 +84,6 @@ export interface TopAccountRow {
   // False when that total is a floor the feed could only be counted to in part.
   activityCountComplete?: boolean
   tradingVolumeUsd?: number
-  liquidationVolumeUsd?: number
   // Up to 4 largest holdings (> $10, highest USD first) → icon cluster after value.
   topAssets?: { asset: AssetRef; valueUsd: number }[]
   // Further holdings over $10 the four icons leave out.
@@ -99,30 +96,6 @@ export interface AccountsPage {
   total: number
 }
 
-// Request-time verified-ABI decoding on detail surfaces (§9). `hashed` marks an
-// indexed dynamic event param whose preimage only exists on chain as its hash.
-export interface EvmDecodedParam {
-  name: string
-  type: string
-  value: unknown
-  indexed?: boolean
-  hashed?: boolean
-}
-export interface EvmLogDecode {
-  decoded: true
-  name: string
-  signature: string
-  params: EvmDecodedParam[]
-  decodedBy: 'verified-abi'
-}
-export type EvmCallDecode =
-  | { decoded: true; name: string; signature: string; selector: string; params: EvmDecodedParam[] }
-  | { decoded: false; selector: string | null }
-export interface DecodedEvmCall {
-  target: string
-  contractName: string | null
-  call: EvmCallDecode
-}
 // trade detail
 export interface TradeHop {
   pool: string
@@ -212,7 +185,7 @@ export interface ExtrinsicSummary {
   errorReason?: FailureReason | null
 }
 
-export interface BlockEvent { eventIndex: number; extrinsicIndex: number | null; name: string; args: unknown; evmDecoded?: EvmLogDecode }
+export interface BlockEvent { eventIndex: number; extrinsicIndex: number | null; name: string; args: unknown }
 export interface BlockDetail extends BlockSummary {
   parentHash: string
   stateRoot: string | null
@@ -224,17 +197,7 @@ export interface BlockDetail extends BlockSummary {
   eventsShown?: number
 }
 
-// What the Ethereum.Executed event states about the transaction an
-// `Ethereum.transact` extrinsic submitted: the hash it is known by off-chain
-// (never the substrate extrinsic hash — both are real and name different things),
-// how the EVM exited, and the data it returned (the revert selector on a failure).
-export interface EvmTransactionFacts {
-  txHash: string
-  exitKind: string
-  exitDetail: string | null
-  extraData: string | null
-}
-export interface ExtrinsicEvent { eventIndex: number; name: string; args: unknown; decoded?: boolean; evmDecoded?: EvmLogDecode }
+export interface ExtrinsicEvent { eventIndex: number; name: string; args: unknown; decoded?: boolean }
 // What the fee actually cost, when the signer's fee currency is not HDX (or when
 // there is no HDX figure at all — an EVM transaction). `fee`/`tip` still carry
 // the HDX-equivalent the chain computed; a surface holding this shows it INSTEAD.
@@ -252,11 +215,6 @@ export interface ExtrinsicDetail extends ExtrinsicSummary {
   error: unknown
   errorReason: FailureReason | null
   events: ExtrinsicEvent[]
-  // Verified-ABI decodes of the extrinsic's EVM calls (top-level and nested in
-  // wrapper call trees); absent when no target has a verified ABI.
-  evmCalls?: DecodedEvmCall[]
-  // Present only on `Ethereum.transact`.
-  evmTx?: EvmTransactionFacts
 }
 
 export interface TransferRow {
@@ -274,10 +232,8 @@ export interface TransferRow {
 export interface HolderRow {
   rank: number
   account: AccountRef | null
-  // `userTagId`/`listId`: same additive convention as TopAccountRow — set only
-  // when this group folded under the viewer's own tag (served from
-  // /user/holders). `memberCount` counts members holding this asset.
-  tag: { tagId: string; name: string; color: string; icon: string; memberCount: number; userTagId?: string; listId?: string } | null
+  // `memberCount` counts members holding this asset.
+  tag: { tagId: string; name: string; color: string; icon: string; memberCount: number } | null
   balance: string
   lastBlock: number
   valueUsd?: number | null
@@ -303,13 +259,6 @@ export interface BalanceUnlockSlice { state: 'releasable' | 'scheduled' | 'activ
 // across the account set for tags).
 export interface AddressBalance { asset: AssetRef; total: string; free: string; reserved: string; frozen?: string; breakdown?: BalanceLockComponent[]; timeline?: BalanceUnlockSlice[]; lastBlock: number; valueUsd: number | null }
 export interface LpPosition { positionId: string; asset: AssetRef; amount: string; hubAmount?: string; shares: string; valueUsd: number | null; venue: string }
-export interface AddressAlias {
-  accountId: string | null
-  evmAddress: string | null
-  primaryProfile: string
-  relationship: string
-  confidence: number
-}
 // Proxy & multisig relations (accounts resolved to displayable refs).
 export interface ProxyRelation { account: AccountRef; proxyType: string; delay: number }
 export interface AccountProxyInfo {
@@ -334,14 +283,12 @@ export interface AddressDetail {
   tag: TagRef | null
   identity: AccountIdentity | null
   relatedAccountIds: string[]
-  aliases: AddressAlias[]
   balances: AddressBalance[]
   // Up to 4 largest holdings (> $10 and ≥ 10% of held value) — shared by the
   // accounts list icons and the hover card.
   topAssets: { asset: AssetRef; valueUsd: number }[]
   portfolioUsd: number
   tradingVolumeUsd?: number
-  liquidationVolumeUsd?: number
   liquidityPositions?: LpPosition[]
   proxy?: AccountProxyInfo | null
   multisig?: MultisigInfo | null
@@ -421,8 +368,8 @@ export interface SearchResult {
   index?: number
   status?: string
   // Pool-type results: the venue and current TVL for the caption; `value` is
-  // the pool id ('omnipool' for the Omnipool itself), `asset` the icon.
-  poolKind?: 'omnipool' | 'stableswap' | 'xyk'
+  // the pool id, `asset` the icon.
+  poolKind?: 'xyk'
   tvlUsd?: number | null
 }
 
@@ -458,7 +405,6 @@ export interface EventRow {
   name: string
   args: unknown
   decoded: boolean
-  evmDecoded?: EvmLogDecode
 }
 
 export interface EventDetail {
@@ -469,7 +415,6 @@ export interface EventDetail {
   name: string
   args: unknown
   decoded: boolean
-  evmDecoded?: EvmLogDecode
   phase: string
   extrinsic: ExtrinsicSummary | null
 }
@@ -521,8 +466,6 @@ export interface ActivityRow {
     emoji?: string; emojiName?: string; emojiUrl?: string
     tag?: TagRef | null
     identity?: { display: string; verified: boolean } | null
-    isContract?: boolean
-    contractName?: string
   }
   xcmDir?: 'in' | 'out'      // xcm: transfer direction relative to the chain
   fromChain?: string         // xcm inbound: origin chain name
@@ -581,34 +524,19 @@ export interface VoteGroupRow {
 // ceiling, so rows cover only the newest part of it.
 export interface VotesByReferendumPage { rows: VoteGroupRow[]; total: number; complete: boolean }
 
-// One day of collateral seized from borrowers in the primary money market:
-// `amount` is the raw token amount, `valueUsd` its value at the time it happened.
-export interface AssetLiquidationDay { date: string; valueUsd: number; amount: string; count: number }
-export interface AssetLiquidationTotal { valueUsd: number; amount: string; count: number }
-export interface AssetLiquidations {
-  // The basis every `amount` here is expressed in — not necessarily the page
-  // asset's own, since the reserve can be a pool-share token with different
-  // decimals (2-Pool-PRIME 18 vs PRIME 6). Format amounts with THIS.
-  decimals: number
-  days: AssetLiquidationDay[]
-  total: AssetLiquidationTotal
-}
-
 export interface AssetDetail {
   asset: AssetListItem
   holderCount: number
   totalUsd: number
   priceSeries: number[]
   priceDates?: string[]
-  // Absent/null unless the asset is or has been a primary money-market reserve.
-  liquidations?: AssetLiquidations | null
   // Number of pools currently holding this asset (the Liquidity tab badge).
   liquiditySourceCount?: number
 }
 
 // liquidity pools (asset Liquidity tab, pool detail)
 
-export type PoolKind = 'omnipool' | 'stableswap' | 'xyk'
+export type PoolKind = 'xyk'
 export interface PoolCompositionEntry { asset: AssetRef; amount: string; usd: number | null; sharePct: number | null }
 // Every pool on the chain, largest first (the /liquidity index). A pool is a
 // mixture, so each entry carries its own composition and the page draws it.
@@ -619,7 +547,6 @@ export interface PoolListEntry {
   tvlUsd: number | null
   sharePct: number | null
   composition: PoolCompositionEntry[]
-  hasPegs: boolean
 }
 export interface PoolsIndexResponse {
   totalTvlUsd: number | null
@@ -628,7 +555,7 @@ export interface PoolsIndexResponse {
 
 export interface AssetLiquiditySource {
   kind: PoolKind
-  poolId: number | null            // share/LP asset id; null for the Omnipool
+  poolId: number | null            // share/LP asset id
   name: string
   tvlUsd: number | null
   assetAmount: string              // raw units of the page's asset in this pool
@@ -637,7 +564,6 @@ export interface AssetLiquiditySource {
   // Full per-asset breakdown for the card grid; compact rows below the card
   // limit arrive with an empty composition (the pool page has the full one).
   composition: PoolCompositionEntry[]
-  hasPegs: boolean
 }
 export interface FormerLiquiditySource {
   kind: PoolKind
@@ -656,23 +582,14 @@ export interface AssetLiquidity {
   history: { buckets: string[]; series: AssetLiquiditySeries[] }
 }
 
-export interface PegSourceInfo { kind: 'value' | 'oracle' | 'mmOracle'; source?: string; period?: string; oracleAsset?: AssetRef; address?: string }
 export interface PoolDetailAsset {
   asset: AssetRef
   amount: string
   usd: number | null
   sharePct: number | null
-  peg: { num: string; den: string; price: number } | null
-  pegSource: PegSourceInfo | null
-}
-export interface PoolParamEvent {
-  blockHeight: number
-  timestamp: string
-  kind: 'created' | 'amplification' | 'fee' | 'peg-source' | 'max-peg-update' | 'destroyed'
-  summary: string
 }
 export interface PoolDetail {
-  kind: 'stableswap' | 'xyk'
+  kind: PoolKind
   poolId: number
   name: string
   account: AccountRef
@@ -683,21 +600,16 @@ export interface PoolDetail {
   tvlUsd: number | null
   totalIssuance: string
   feePermill: number | null
-  amplification: { current: number; initial: number; final: number; initialBlock: number; finalBlock: number } | null
-  maxPegUpdatePerbill: number | null
   assets: PoolDetailAsset[]
-  paramEvents: PoolParamEvent[]
   history: {
     buckets: string[]
     tvlUsd: (number | null)[]
     composition: { asset: AssetRef; amounts: (number | null)[]; usd: (number | null)[] }[]
-    pegs: { asset: AssetRef; prices: (number | null)[] }[] | null
-    issuance: (number | null)[] | null
   }
 }
 
-// A stableswap/XYK pool's liquidity providers: holders of its share token,
-// largest first, with XYK farm-deposited principal attributed to its owners.
+// An XYK pool's liquidity providers: holders of its share token, largest first,
+// with farm-deposited principal attributed to its owners.
 export interface PoolLpRow {
   rank: number
   account: AccountRef
@@ -727,7 +639,6 @@ export interface TagDetail {
   topAssets: { asset: AssetRef; valueUsd: number }[]
   portfolioUsd: number
   tradingVolumeUsd?: number
-  liquidationVolumeUsd?: number
   liquidityPositions?: LpPosition[]
   portfolioSeries: number[]
   portfolioDates?: string[]

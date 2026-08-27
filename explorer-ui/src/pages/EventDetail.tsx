@@ -3,7 +3,6 @@ import { useNow } from '../hooks/useNow'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { Link, paths } from '../router'
 import { Crumbs, AddrPill, CallPill, StatusBadge, FinalizedBadge, MomentLink, ParamsTable, SkeletonRows } from '../components/ui'
-import { EvmLogView } from '../components/EvmDecoded'
 
 export function EventDetail({ id }: { id: string }) {
   useDocumentTitle(`Event ${id}`)
@@ -46,7 +45,7 @@ export function EventDetail({ id }: { id: string }) {
             </div></div>
 
             <div className="sec-title">Attributes</div>
-            {data.evmDecoded ? <EvmLogView decoded={data.evmDecoded} /> : <ParamsTable args={args} />}
+            <ParamsTable args={args} />
           </>
         )}
     </div>

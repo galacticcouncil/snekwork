@@ -3,8 +3,8 @@ import { expect, test } from './fixtures/test'
 // Overlapped asset icons read as one holding rather than a list of things, and
 // hovering fans them apart enough to count. The fan must be a transform: as a
 // margin it changed the cell's width, which reflowed every column in the table
-// — hovering /liquidity's Omnipool row grew its icon box 90 -> 110px and slid
-// TVL and Share out from under the cursor.
+// — hovering /liquidity's largest pool row grew its icon box 90 -> 110px and
+// slid TVL and Share out from under the cursor.
 
 async function columnWidths(page: import('@playwright/test').Page, table: string) {
   return page.locator(`${table} thead th`).evaluateAll(ths => ths.map(th => Math.round(th.getBoundingClientRect().width)))

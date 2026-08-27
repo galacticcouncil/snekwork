@@ -113,18 +113,16 @@ export function Account({ address }: { address: string }) {
                     </div>
                   )}
                 </div>
-                <ProfileStats tradingVolumeUsd={data.tradingVolumeUsd} liquidationVolumeUsd={data.liquidationVolumeUsd} valueUsd={data.portfolioUsd} />
+                <ProfileStats tradingVolumeUsd={data.tradingVolumeUsd} valueUsd={data.portfolioUsd} />
               </div>
 
               <DetailTabs tabs={tabs} active={activeView} onChange={k => setQuery({ view: k === 'overview' ? null : k })} />
 
               {activeView === 'overview' && (<>
               {(() => {
-                // Identity rows beyond what the header already shows: on-chain identity
-                // fields, plus the account's OTHER address form — the bound SS58 for an
-                // EVM account, the observed H160 (if any) for a substrate account. The
-                // header's primary address, and the raw account id, are never repeated.
-                const observedEvm = !data.evmAddress ? data.aliases.find(a => a.evmAddress)?.evmAddress : null
+                // Identity rows beyond what the header already shows: the on-chain
+                // identity fields. The header's primary address, and the raw account
+                // id, are never repeated.
                 const rows: { dt: string; dd: React.ReactNode }[] = []
                 if (data.identity?.display) rows.push({
                   dt: 'On-chain identity',
@@ -139,7 +137,6 @@ export function Account({ address }: { address: string }) {
                   rows.push({ dt: 'X', dd: <span className="mono"><a href={`https://x.com/${handle}`} target="_blank" rel="noopener">@{handle}</a></span> })
                 }
                 if (data.evmAddress && data.ss58Polkadot) rows.push({ dt: 'Polkadot (SS58)', dd: <span className="mono"><ShortAddr addr={data.ss58Polkadot} full /> <Copy text={data.ss58Polkadot} /></span> })
-                if (observedEvm) rows.push({ dt: 'EVM (H160)', dd: <span className="mono"><ShortAddr addr={observedEvm} full /> <Copy text={observedEvm} /></span> })
                 if (!rows.length) return null
                 return (
                   <div className="id-card">

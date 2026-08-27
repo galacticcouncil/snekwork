@@ -265,7 +265,7 @@ export function BalanceBreakdown({ balance }: { balance: AddressBalance }) {
       })
     }
   })
-  // Static rows lead with the reason itself (OTC / DCA / deposits); the
+  // Static rows lead with the reason itself (deposits, orders); the
   // duration description is just "until pulled/cancelled/cleared".
   const staticRows: ScheduleRow[] = mergeStatics(statics).map((m, i) => ({
     key: `s${i}`, cause: m.label, amount: m.amount, desc: m.detail, color: m.color,

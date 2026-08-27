@@ -115,7 +115,7 @@ describe('ProposalCall folding', () => {
 
   it('calls a capped list of plain values entries, not calls', () => {
     const assets = batch([{
-      __kind: 'Stableswap',
+      __kind: 'XYK',
       value: { __kind: 'create_pool', assets: Array.from({ length: CALL_LIST_CAP + 3 }, (_, i) => i) },
     }])
     const html = renderToStaticMarkup(<ProposalCall call={assets} hash="0x12" />)

@@ -75,13 +75,12 @@ export function SearchResultBody({ r }: { r: Hit }) {
     )
   }
   if (r.type === 'pool') {
-    const venue = r.poolKind === 'omnipool' ? 'Omnipool' : r.poolKind === 'stableswap' ? 'Stableswap' : 'Isolated pool'
     return (
       <span className="sr-acct">
         {r.asset && <AssetIcon assetId={r.asset.assetId} iconAssetId={r.asset.iconAssetId} symbol={r.asset.symbol} size={20} parachainId={r.asset.parachainId} origin={r.asset.origin} />}
         <span className="sr-acct-name">
           <span className="mono">{r.label || r.value}</span>
-          <span className="sr-desc">{venue}{r.tvlUsd != null ? ` · ${F.usd(r.tvlUsd)} TVL` : ''}</span>
+          <span className="sr-desc">Isolated pool{r.tvlUsd != null ? ` · ${F.usd(r.tvlUsd)} TVL` : ''}</span>
         </span>
       </span>
     )

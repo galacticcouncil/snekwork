@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components -- activity table exports slug/id/label helpers alongside its components */
 import { Link, paths } from '../router'
 import type { ActivitySlug } from '../router'
-import { F, AddrPill, AssetChip, rowNav, Ago, AccountEmoji, ShortAddr, TagIcon, tagMemberSuffix, VoteSideBadge, TableSkeleton, Dash, EmptyRow, ErrorRow, pendingRows, LiveAnchor, ContractGlyph } from './ui'
+import { F, AddrPill, AssetChip, rowNav, Ago, AccountEmoji, ShortAddr, TagIcon, tagMemberSuffix, VoteSideBadge, TableSkeleton, Dash, EmptyRow, ErrorRow, pendingRows, LiveAnchor } from './ui'
 import { useNewRows } from '../hooks/useNewRows'
 import { activityBadge } from './activityColors'
 import { resolveTag } from '../userTags'
@@ -86,17 +86,12 @@ export function ExternalAccountPill({ account }: { account: NonNullable<Activity
         <span className="tag">{identity.display}</span>
         {identity.verified && <span className="id-verified" title="Verified identity">✓</span>}
       </>
-      // A verified contract's name, with the address tail that says which of
-      // the same-named contracts this is — mirroring AddrPill exactly.
-      : account.contractName
-        ? <><span className="tag">{account.contractName}</span><span className="tag-member-suffix mono">·{account.address.slice(-3)}</span></>
-        : null
+      : null
   const body = <>
     {resolved
       ? <TagIcon icon={resolved.icon} title={resolved.name} />
       : <AccountEmoji account={{ accountId: iconSeed, emoji: account.emoji, emojiName: account.emojiName, emojiUrl: account.emojiUrl }} />}
     {name ?? <span className="a mono"><ShortAddr addr={account.address} /></span>}
-    <ContractGlyph show={account.isContract} />
   </>
   if (!account.subscanUrl) return <span className="addr-pill" title={account.address}>{body}</span>
   const site = explorerSiteName(account.subscanUrl)
@@ -152,7 +147,7 @@ export function canonicalTarget(row: ActivityRow, slug: ActivitySlug, id: string
 
 // Where an event that is NOT an activity of its own belongs: the activity whose
 // extrinsic it is part of. The transfer legs and fee withdrawals of an OTC fill, a
-// swap or a money-market call are that action's plumbing — real events, deliberately
+// swap are that action's plumbing — real events, deliberately
 // not rendered as rows — so an id naming one resolves to no row at all.
 //
 // Only an extrinsic with exactly ONE activity hands over unambiguously. A batch

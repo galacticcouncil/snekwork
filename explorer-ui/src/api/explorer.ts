@@ -116,13 +116,12 @@ export const api = {
   poolActivity: (poolId: number, limit = 25, signal?: AbortSignal) =>
     getJson<ActivityRow[]>(withQuery(`/explorer/pool/${poolId}/activity`, { limit }), signal),
   // A pool's liquidity providers (share-token holders, farm principal
-  // attributed), and one omnipool asset's LP ranking (position owners plus the
-  // protocol's own shares). Both paged server-side over the full ranking.
+  // attributed), paged server-side over the full ranking.
   poolLps: (poolId: number, offset = 0, limit = 10, signal?: AbortSignal) =>
     getJson<PoolLpsResponse>(withQuery(`/explorer/pool/${poolId}/lps`, { offset, limit }), signal),
   holders: (assetId: number, offset = 0, limit = 100, signal?: AbortSignal) => getJson<HoldersResponse>(withQuery(`/explorer/holders/${assetId}`, { offset, limit }), signal),
   address: (address: string, signal?: AbortSignal) => getJson<AddressDetail>(`/explorer/address/${encodeURIComponent(address)}`, signal),
-  // Lightweight variant for the hover card: the API skips LP/DCA/proxy/multisig so
+  // Lightweight variant for the hover card: the API skips LP/proxy/multisig so
   // the preview loads fast (the card only shows name, value, holdings, volumes).
   addressSummary: (address: string, signal?: AbortSignal) => getJson<AddressDetail>(withQuery(`/explorer/address/${encodeURIComponent(address)}`, { summary: '1' }), signal),
   addressHistory: (address: string, signal?: AbortSignal) => getJson<AccountHistoryResponse>(`/explorer/address/${encodeURIComponent(address)}/history`, signal),
@@ -146,7 +145,7 @@ export const api = {
   // pages that total can number. `total: null` = no countable prefix at all.
   accountListCount: (address: string, query: ListCountQuery, signal?: AbortSignal) =>
     getJson<ListCount>(withQuery(`/explorer/address/${encodeURIComponent(address)}/list-count`, { ...query }), signal),
-  // Largest value-changing events (big transfers/swaps/liquidations) for the
+  // Largest value-changing events (big transfers and swaps) for the
   // value-history chart's markers; defaults to the account's full indexed range.
   accountValueEvents: (address: string, from?: string, to?: string, signal?: AbortSignal) =>
     getJson<ValueEvent[]>(withQuery(`/explorer/address/${encodeURIComponent(address)}/value-events`, { from, to }), signal),

@@ -121,19 +121,6 @@ export function stackSeries(series: AreaSeries[]): { tops: number[][]; max: numb
   return { tops, max }
 }
 
-// Contiguous non-null index runs of a series — a line breaks where data is
-// absent (a destroyed pool, a pre-listing gap) instead of bridging the hole.
-export function lineRuns(values: (number | null)[]): [number, number][] {
-  const runs: [number, number][] = []
-  let start: number | null = null
-  for (let i = 0; i <= values.length; i++) {
-    const has = i < values.length && values[i] != null
-    if (has && start == null) start = i
-    if (!has && start != null) { runs.push([start, i - 1]); start = null }
-  }
-  return runs
-}
-
 const monthTick = (d: string) => {
   const t = Date.parse(`${d}T00:00:00Z`)
   return Number.isFinite(t) ? new Date(t).toLocaleDateString('en-US', { month: 'short', year: '2-digit', timeZone: 'UTC' }).replace(' ', ' ’') : d
@@ -219,74 +206,6 @@ export function StackedAreaChart({ buckets, series, h = 220, yFmt = fmtHdx, show
             <span key={s.key} className="t-row"><i style={{ background: s.color }} />{s.label}
               <span className="tv">{yFmt(s.values[hover]!)}{showShare && hoverTotal > 0 && <span className="muted"> · {(s.values[hover]! / hoverTotal * 100).toFixed(1)}%</span>}</span>
             </span>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/* ============ multi-line (peg drift) ============ */
-// Sparse multi-line chart for slow-moving rates (stableswap peg drift). One
-// shared axis zoomed to the data (pegs sit at 1.05–1.65, a zero base would
-// flatten the drift that is the whole story); the unit peg 1.0 gets a dashed
-// reference line only when it is in view. Lines break at nulls.
-// `floorZero` clamps the axis floor at 0 — a price or share axis must not pad
-// into negative territory when the data sits near its floor.
-export function MultiLineChart({ buckets, series, h = 190, yFmt = (v: number) => v.toFixed(4), floorZero }: {
-  buckets: string[]; series: AreaSeries[]; h?: number; yFmt?: (v: number) => string; floorZero?: boolean
-}) {
-  const [hover, setHover] = useState<number | null>(null)
-  const wrapRef = useClearOnOutsidePointer(() => setHover(null), hover != null)
-  const n = buckets.length
-  const flat = series.flatMap(s => s.values).filter((v): v is number => v != null)
-  if (n < 2 || !flat.length) return <div className="muted" style={{ padding: '24px 0', fontFamily: 'GeistMono', fontSize: 12 }}>Not enough history.</div>
-  const lo = Math.min(...flat), hi = Math.max(...flat)
-  const pad = Math.max((hi - lo) * 0.08, hi * 0.0005)
-  const min = floorZero ? Math.max(0, lo - pad) : lo - pad, max = hi + pad
-  const W = 860, padL = 56, padR = 6, padT = 12, padB = 18
-  const plotW = W - padL - padR, plotH = h - padT - padB
-  const sx = (i: number) => padL + (i / (n - 1)) * plotW
-  const sy = (v: number) => padT + (1 - (v - min) / ((max - min) || 1)) * plotH
-  function onMove(e: React.PointerEvent) {
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    if (!r.width) return
-    const x = ((e.clientX - r.left) / r.width) * W
-    const i = Math.round(((x - padL) / plotW) * (n - 1))
-    setHover(Math.min(n - 1, Math.max(0, i)))
-  }
-  return (
-    <div ref={wrapRef} className="hdx-chart-wrap apx-wrap" onPointerDown={onMove} onPointerMove={onMove}
-      onPointerLeave={e => { if (e.pointerType === 'mouse') setHover(null) }}>
-      <svg className="day-chart" viewBox={`0 0 ${W} ${h}`}>
-        {[0, 0.5, 1].map(t => {
-          const v = min + (max - min) * t
-          return (
-            <g key={t}>
-              <line x1={padL} x2={W - padR} y1={sy(v).toFixed(1)} y2={sy(v).toFixed(1)} stroke="var(--separator)" strokeWidth="1" />
-              <text className="hdx-ax" x={padL - 8} y={(sy(v) + 3).toFixed(1)} textAnchor="end">{yFmt(v)}</text>
-            </g>
-          )
-        })}
-        {min < 1 && max > 1 && <line x1={padL} x2={W - padR} y1={sy(1).toFixed(1)} y2={sy(1).toFixed(1)} stroke="var(--text-low)" strokeDasharray="3 4" strokeOpacity="0.6" />}
-        {series.map(s => (
-          <g key={s.key}>
-            {lineRuns(s.values).map(([a, b]) => a === b
-              ? <circle key={a} cx={sx(a).toFixed(1)} cy={sy(s.values[a]!).toFixed(1)} r="2.5" fill={s.color} />
-              : <path key={a} d={s.values.slice(a, b + 1).map((v, j) => `${j ? 'L' : 'M'} ${sx(a + j).toFixed(1)} ${sy(v!).toFixed(1)}`).join(' ')}
-                  fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />)}
-          </g>
-        ))}
-        {dateTicks(n).map(i => (
-          <text key={i} className="hdx-ax" x={sx(i).toFixed(1)} y={h - 4} textAnchor={i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}>{monthTick(buckets[i])}</text>
-        ))}
-        {hover != null && <line x1={sx(hover).toFixed(1)} x2={sx(hover).toFixed(1)} y1={padT} y2={h - padB} stroke="var(--text-medium)" strokeOpacity="0.55" />}
-      </svg>
-      {hover != null && (
-        <div className="hdx-tip" style={{ left: tipLeft(sx(hover) / W * 100), top: 2 }}>
-          <span className="t-d">{buckets[hover]}</span>
-          {series.map(s => s.values[hover] != null && (
-            <span key={s.key} className="t-row"><i style={{ background: s.color }} />{s.label} <span className="tv">{yFmt(s.values[hover]!)}</span></span>
           ))}
         </div>
       )}

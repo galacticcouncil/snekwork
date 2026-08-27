@@ -33,18 +33,13 @@ export function activityFilterFields(type: string, assets: AssetFilterItem[], in
     IDENTITY_FIELD,
     ...DATE_FIELDS,
     { kind: 'number', key: 'min', placeholder: '$ from' },
-    // What the PROTOCOL earned on the row's extrinsic, which is a different question
-    // from the row's own value: a $13.7k liquidation earned $458 while a $13.7k
-    // stablecoin swap earns cents. Always USD — there is no token denomination to
-    // pick — so it deliberately ignores the unit toggle.
-    { kind: 'number', key: 'minRevenue', placeholder: '$ revenue from' },
   ]
 }
 
 // The call/event name fields are combos over the indexed name catalogue
 // (/explorer/filter-names) rather than blind text boxes — the names are neither
 // guessable nor memorable, and the list is what makes them discoverable. They stay
-// free-text: the filter matches partially and case-insensitively (so "omnipool"
+// free-text: the filter matches partially and case-insensitively (so "xyk"
 // filters a whole pallet), and a name too new for the catalogue's window must
 // still be typeable. With no catalogue yet the field is simply a text box with a
 // dropdown that has nothing in it.
@@ -66,7 +61,7 @@ const splitName = (full: string): [string, string] => {
   return dot < 0 ? [full, ''] : [full.slice(0, dot), full.slice(dot + 1)]
 }
 
-// `noun` names what the count counts, so a row reads "Omnipool — 12 calls"
+// `noun` names what the count counts, so a row reads "XYK — 12 calls"
 // rather than an unlabelled number.
 export function palletOptions(names: readonly string[], noun = 'name'): ComboOption[] {
   const counts = new Map<string, number>()
@@ -80,7 +75,7 @@ export function palletOptions(names: readonly string[], noun = 'name'): ComboOpt
 }
 
 // The names inside one pallet. Matched case-insensitively, because a pallet typed
-// by hand ("omnipool") names the same pallet the catalogue spells "Omnipool" —
+// by hand ("xyk") names the same pallet the catalogue spells "XYK" —
 // exactly as the server matches it.
 export function nameOptionsInPallet(names: readonly string[], pallet: string): ComboOption[] {
   const want = pallet.trim().toLowerCase()

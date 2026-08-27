@@ -9,8 +9,8 @@ import type { ExplorerStats, ReferendumProgress, ReferendumTimelineEntry, Refere
 // threshold gauges (approval and support against the track's decaying curves).
 //
 // Every future moment here is a BLOCK the runtime will act on, so it is shown
-// the way the DCA page shows its next execution: estimateBlockCountdown against
-// the live head, at the chain's measured pace. Durations of whole track periods
+// with estimateBlockCountdown against the live head, at the chain's measured
+// pace. Durations of whole track periods
 // (a 100,800-block decision period) are runtime constants derived from the
 // nominal slot time, so those convert through blockSeconds' nominal fallback.
 

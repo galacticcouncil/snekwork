@@ -5,7 +5,6 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { Link, paths, navigate } from '../router'
 import { Crumbs, F, AddrPill, CallPill, StatusBadge, FinalizedBadge, JsonView, SkeletonRows, EmptyRow, Dash } from '../components/ui'
 import { ActivityTable } from '../components/ActivityTable'
-import { EvmLogView } from '../components/EvmDecoded'
 import { estimateBlockCountdown } from '../utils/blockCountdown'
 import { blockSeconds } from '../utils/blockTime'
 
@@ -127,9 +126,7 @@ export function BlockDetail({ height }: { height: number }) {
                       <div className="ei"><Link to={paths.eventAt(data.height, e.eventIndex)} className="hash">{e.eventIndex}</Link></div>
                       <div className="ec">
                         <div className="row gap6"><Link to={paths.eventAt(data.height, e.eventIndex)} className="hash"><CallPill name={e.name} /></Link>{e.extrinsicIndex != null && <span className="muted mono" style={{ fontSize: 11 }}>extrinsic {data.height}-{e.extrinsicIndex}</span>}</div>
-                        {e.evmDecoded
-                          ? <EvmLogView decoded={e.evmDecoded} />
-                          : e.args != null && typeof e.args === 'object' && Object.keys(e.args).length > 0 && <JsonView value={e.args} />}
+                        {e.args != null && typeof e.args === 'object' && Object.keys(e.args).length > 0 && <JsonView value={e.args} />}
                       </div>
                     </div>
                   ))}

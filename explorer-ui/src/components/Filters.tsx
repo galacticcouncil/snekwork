@@ -87,7 +87,7 @@ export function tokenFilterOptions(assets: AssetFilterItem[]): ComboOption[] {
 // same typing-settled debounce a free-form filter input uses, and immediately on
 // Enter, on picking the "use this" row, or on blur. Needed wherever the catalogue
 // behind the list is a snapshot of what has been INDEXED rather than the set of
-// legal values — call/event names, whose filters match partially ("omnipool" is a
+// legal values — call/event names, whose filters match partially ("xyk" is a
 // whole pallet) and whose newest members may not be in the window's catalogue yet.
 export function Combo({ value, placeholder, label, width, options, onChange, freeText, inputId }: { value: string; placeholder?: string; label?: string; width?: number; options: ComboOption[]; onChange: (v: string) => void; freeText?: boolean; inputId?: string }) {
   const [open, setOpen] = useState(false)

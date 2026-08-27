@@ -109,8 +109,8 @@ function valueEventMarker(ev: ValueEvent): ChartMarker {
 // card (portfolio minus any borrowed debt); the series carries no dates of its
 // own, so we borrow the first asset's balance-history point timestamps when the
 // lengths line up (else a value-only tooltip). `valueEvents` (scope-agnostic —
-// the parent fetches per account or tag) flag the largest transfers/swaps/
-// liquidations as clickable markers on the chart's time axis.
+// the parent fetches per account or tag) flag the largest transfers and swaps
+// as clickable markers on the chart's time axis.
 export function PortfolioChart({ title, netUsd, series, dates: datesProp, balanceHistory, loading, valueEvents }: {
   title: string; netUsd: number; series: number[]; dates?: string[]; balanceHistory?: AssetBalanceHistory[]; loading?: boolean; valueEvents?: ValueEvent[] | null
 }) {
@@ -178,22 +178,16 @@ export function profileTabs(
   ]
 }
 
-export function ProfileStats({ tradingVolumeUsd, liquidationVolumeUsd, valueUsd }: {
+export function ProfileStats({ tradingVolumeUsd, valueUsd }: {
   tradingVolumeUsd?: number | null
-  liquidationVolumeUsd?: number | null
   valueUsd: number
 }) {
   const trading = tradingVolumeUsd ?? 0
-  const liquidation = liquidationVolumeUsd ?? 0
   return (
     <div className="acct-stats">
       {trading > 0 && <div className="acct-bal subtle">
         <div className="lab">Trading</div>
         <div className="amt">{F.usd(trading)}</div>
-      </div>}
-      {liquidation > 0 && <div className="acct-bal subtle">
-        <div className="lab">Liquidation</div>
-        <div className="amt">{F.usd(liquidation)}</div>
       </div>}
       <div className="acct-bal">
         <div className="lab">Value</div>
@@ -203,11 +197,11 @@ export function ProfileStats({ tradingVolumeUsd, liquidationVolumeUsd, valueUsd 
   )
 }
 
-// Venue → badge colour, so the LP products read apart at a glance: NFT-held
-// Omnipool positions (bare / farmed) vs wallet-held stableswap pool shares. All
-// three are liquidity, so they stay inside that family's blues rather than
-// borrowing a hue that means something else elsewhere.
-const LP_VENUE_COLORS: Record<string, string> = { Omnipool: CAT.liquidity, 'Omnipool Farm': CAT.liquidityCreate, Stablepool: 'var(--sky-deep)' }
+// Venue → badge colour, so wallet-held pool shares read apart from the same
+// shares deposited in a liquidity-mining farm. Both are liquidity, so they stay
+// inside that family's blues rather than borrowing a hue that means something
+// else elsewhere.
+const LP_VENUE_COLORS: Record<string, string> = { XYK: CAT.liquidity, 'XYK Farm': CAT.liquidityCreate }
 
 export function LiquidityPositionsTable({ positions }: { positions: LpPosition[] }) {
   if (!positions.length) return null
@@ -226,7 +220,7 @@ export function LiquidityPositionsTable({ positions }: { positions: LpPosition[]
                 <td data-label="Pool asset">
                   <div className="asset-row">
                     <AssetIcon assetId={p.asset.assetId} iconAssetId={p.asset.iconAssetId} symbol={p.asset.symbol} size={30} parachainId={p.asset.parachainId} origin={p.asset.origin} />
-                    <div className="ar-meta"><span className="ar-sym">{p.asset.symbol}</span><span className="ar-name">{p.venue === 'Stablepool' ? 'Pool shares' : `Position #${p.positionId}`}</span></div>
+                    <div className="ar-meta"><span className="ar-sym">{p.asset.symbol}</span><span className="ar-name">Pool shares</span></div>
                   </div>
                 </td>
                 <td data-label="Venue"><span className="badge" style={{ background: `color-mix(in srgb, ${col} 14%, transparent)`, color: col }}>{p.venue}</span></td>

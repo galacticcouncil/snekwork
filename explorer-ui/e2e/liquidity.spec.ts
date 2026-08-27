@@ -1,58 +1,49 @@
 import { expect, test } from './fixtures/test'
 
-// Liquidity surfaces: the asset detail's Liquidity tab, the pool detail page
-// (including drifting pegs) and the Omnipool page, plus their navigation glue.
+// Liquidity surfaces: the asset detail's Liquidity tab and the pool detail
+// page, plus their navigation glue.
 
 test('asset Liquidity tab lists sources by value and links to the pool page', async ({ page }) => {
   await page.goto('/asset/5?tab=liquidity')
   const cards = page.locator('.pool-cards .hdx-card')
   await expect(cards.first()).toBeVisible()
 
-  // DOT sits in the Omnipool, the GDOT stableswap and the HDX/DOT pair; the
-  // fixture's largest DOT holding is the Omnipool.
-  await expect(cards).toHaveCount(3)
-  await expect(cards.first()).toContainText('Omnipool')
-  // The pegged stableswap card wears its pegs marker.
-  await expect(page.locator('.pool-cards .hdx-card', { hasText: '2-Pool-GDOT' }).locator('.badge', { hasText: 'pegs' })).toBeVisible()
+  // DOT sits in both mock pairs, and the fixture's largest DOT holding is the
+  // vDOT/DOT pair.
+  await expect(cards).toHaveCount(2)
+  await expect(cards.first()).toContainText('vDOT / DOT')
   // Former pools render with their last-active moment.
   await expect(page.locator('table.tbl tr', { hasText: 'DOT / GLMR' })).toBeVisible()
   // History chart present with its unit toggle.
   await expect(page.locator('.liq-toggle')).toBeVisible()
 
-  await page.locator('.pool-cards .hdx-card', { hasText: '2-Pool-GDOT' }).click()
+  await page.locator('.pool-cards .hdx-card', { hasText: 'vDOT / DOT' }).click()
   await expect(page).toHaveURL(/\/pool\/690$/)
 })
 
 test('the Liquidity tab chip counts the asset\'s current pools', async ({ page }) => {
   await page.goto('/asset/5')
-  await expect(page.locator('.tabs button', { hasText: 'Liquidity' }).locator('.cnt')).toHaveText('3')
+  await expect(page.locator('.tabs button', { hasText: 'Liquidity' }).locator('.cnt')).toHaveText('2')
 })
 
-test('pool detail shows composition, pegs and parameter history', async ({ page }) => {
+test('pool detail shows the pool card, its composition and its LPs', async ({ page }) => {
   await page.goto('/pool/690')
-  await expect(page.locator('.page-title')).toContainText('2-Pool-GDOT')
+  await expect(page.locator('.page-title')).toContainText('vDOT / DOT')
 
-  // Detail card facts: fee, amplification, drift limit, LP supply.
+  // Detail card facts: venue, fee, share token, LP supply.
   await expect(page.locator('.detail-card')).toContainText('Trade fee')
-  await expect(page.locator('.detail-card')).toContainText('Amplification')
-  await expect(page.locator('.detail-card')).toContainText('Max peg drift')
-
-  // Pegged pool: composition table carries the Peg and Peg source columns and
-  // the drift chart section exists.
-  await expect(page.locator('th', { hasText: 'Peg source' })).toBeVisible()
-  await expect(page.getByText('Bifrost · DOT · LastBlock')).toBeVisible()
-  await expect(page.locator('.sec-title', { hasText: 'Peg drift' })).toBeVisible()
-  await expect(page.locator('.sec-title', { hasText: 'Parameter changes' })).toBeVisible()
+  await expect(page.locator('.detail-card')).toContainText('Share token')
+  await expect(page.locator('.detail-card')).toContainText('LP supply')
 
   // Composition rows navigate to the asset pages.
   await expect(page.locator('table.tbl tr', { hasText: 'vDOT' }).first()).toBeVisible()
+  await expect(page.locator('.sec-title', { hasText: 'Liquidity providers' })).toBeVisible()
 })
 
-test('an XYK pool renders without peg sections and an unknown pool 404s', async ({ page }) => {
+test('a second pool renders the same way, and an unknown pool 404s', async ({ page }) => {
   await page.goto('/pool/1000194')
   await expect(page.locator('.page-title')).toContainText('HDX / DOT')
   await expect(page.locator('.detail-card')).toContainText('Trade fee')
-  await expect(page.locator('.sec-title', { hasText: 'Peg drift' })).toHaveCount(0)
 
   await page.goto('/pool/424242')
   await expect(page.getByText('Pool not found')).toBeVisible()

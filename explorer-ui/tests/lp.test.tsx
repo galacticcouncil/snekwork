@@ -10,19 +10,21 @@ const pos = (venue: string, positionId: string, symbol: string): LpPosition => (
 })
 
 describe('LiquidityPositionsTable — venue-aware rows', () => {
-  it('labels NFT-held Omnipool positions with their position id', () => {
-    const html = renderToStaticMarkup(<LiquidityPositionsTable positions={[pos('Omnipool', '71061', 'GSOL')]} />)
-    expect(html).toContain('Position #71061')
-    expect(html).toContain('Omnipool')
-  })
-  it('labels wallet-held stableswap shares as pool shares, not a position id', () => {
-    const html = renderToStaticMarkup(<LiquidityPositionsTable positions={[pos('Stablepool', 'share-690', '2-Pool-GDOT')]} />)
+  it('labels wallet-held pool shares as pool shares, never an internal position id', () => {
+    const html = renderToStaticMarkup(<LiquidityPositionsTable positions={[pos('XYK', 'xyk:690:direct', 'HDX/DOT')]} />)
     expect(html).toContain('Pool shares')
-    expect(html).not.toContain('Position #')
-    expect(html).toContain('Stablepool')
+    expect(html).not.toContain('xyk:690:direct')
+    expect(html).toContain('XYK')
+  })
+  it('separates farm-deposited shares from wallet-held ones by venue badge', () => {
+    const direct = renderToStaticMarkup(<LiquidityPositionsTable positions={[pos('XYK', 'xyk:690:direct', 'HDX/DOT')]} />)
+    const farmed = renderToStaticMarkup(<LiquidityPositionsTable positions={[pos('XYK Farm', 'xyk:690:farm', 'HDX/DOT')]} />)
+    expect(farmed).toContain('XYK Farm')
+    // Different venues must not collapse onto the same badge colour.
+    expect(farmed).not.toBe(direct)
   })
   it('carries the distinguishing section sub-label', () => {
-    const html = renderToStaticMarkup(<LiquidityPositionsTable positions={[pos('Omnipool', '1', 'DOT')]} />)
+    const html = renderToStaticMarkup(<LiquidityPositionsTable positions={[pos('XYK', 'xyk:690:direct', 'HDX/DOT')]} />)
     expect(html).toContain('provided to pools')
   })
 })

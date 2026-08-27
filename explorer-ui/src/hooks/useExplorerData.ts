@@ -187,7 +187,7 @@ export function useAssetActivity(assetId: number | null, type = 'all', offset = 
 export function useAddress(address: string | null) {
   return useQuery({ queryKey: ['address', address], queryFn: ({ signal }) => api.address(address as string, signal), enabled: !!address, refetchInterval: useInterval(DETAIL_POLL_MS), staleTime: BLOCK_STALE_MS })
 }
-// Hover-card variant: the API omits LP/DCA/proxy/multisig so the preview loads fast.
+// Hover-card variant: the API omits LP/proxy/multisig so the preview loads fast.
 export function useAddressSummary(address: string | null) {
   return useQuery({ queryKey: ['address-summary', address], queryFn: ({ signal }) => api.addressSummary(address as string, signal), enabled: !!address, staleTime: 30_000 })
 }
@@ -319,8 +319,8 @@ export function useTagListCount(tagId: string | null, query: ListCountQuery | nu
     staleTime: 120_000,
   })
 }
-// Value-history chart markers: the account/tag's largest transfers, swaps and
-// liquidations. Server-cached top-N; no live polling — the set moves slowly.
+// Value-history chart markers: the account/tag's largest transfers and swaps.
+// Server-cached top-N; no live polling — the set moves slowly.
 export function useAddressValueEvents(address: string | null) {
   return useQuery({ queryKey: ['address-value-events', address], queryFn: ({ signal }) => api.accountValueEvents(address as string, undefined, undefined, signal), enabled: !!address, staleTime: 600_000 })
 }
