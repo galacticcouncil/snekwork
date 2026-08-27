@@ -24,10 +24,14 @@ describe('swap_actor — the model behind a hook swap\'s account', () => {
   it('is fed row-wise from the Broadcast event, so it needs no join and no backfill job', () => {
     const mv = views.match(/CREATE MATERIALIZED VIEW IF NOT EXISTS price_data\.swap_actor_mv ([^;]+);/)?.[0]
     expect(mv).toBeTruthy()
-    // All three generations of the event carry swapper + operationStack.
-    for (const name of ['Broadcast.Swapped', 'Broadcast.Swapped2', 'Broadcast.Swapped3']) {
+    // Both generations Basilisk ever emitted carry swapper + operationStack:
+    // `Swapped` from spec 124 and `Swapped3` from spec 128. No Basilisk runtime
+    // shipped the intermediate `Swapped2`, so admitting it could only ever match
+    // a mis-paired chain — see src/registry/swapEvents.ts.
+    for (const name of ['Broadcast.Swapped', 'Broadcast.Swapped3']) {
       expect(mv).toContain(`'${name}'`)
     }
+    expect(mv).not.toContain("'Broadcast.Swapped2'")
     // Only the Router entry identifies the swap event; Batch/Omnipool/DCA entries
     // would collide across sibling swaps in the same operation.
     expect(mv).toMatch(/JSONExtractString\(x, '__kind'\) = 'Router'/)

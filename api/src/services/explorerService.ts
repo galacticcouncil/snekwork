@@ -650,6 +650,15 @@ export const LIQUIDITY_AMOUNT_ARG: Record<string, string> = {
   'XYK.LiquidityRemoved': '',                              // shares vs assetA
   'XYK.PoolCreated': '',                                   // initialSharesAmount vs assetA
   'XYK.PoolDestroyed': '',                                 // no amount field; see AMOUNTLESS_LIQUIDITY_EVENTS
+  // Seeding and draining an LBP: both carry amountA/amountB against assetA/assetB,
+  // exactly like XYK.LiquidityAdded, so both stay empty for the same reason —
+  // amountA is assetA's leg, not the row's displayed denomination. Basilisk's LBPs
+  // are real history (first pool block 1,972,469), and neither this map nor
+  // liquidity_activity_mv carried them before: the Hydration codebase this forked
+  // from never plumbed LBP liquidity at all, so this is new admission, not a
+  // restored trim.
+  'LBP.LiquidityAdded': '',                                // amountA/amountB vs assetA
+  'LBP.LiquidityRemoved': '',                              // amountA/amountB vs assetA
   'XYKLiquidityMining.RewardClaimed': 'claimed',           // claimed + rewardCurrency
 }
 
@@ -13052,7 +13061,7 @@ const TRANSFER_EVENTS = ['Balances.Transfer', 'Tokens.Transfer', 'Currencies.Tra
 // This list, LIQUIDITY_AMOUNT_ARG and HISTOGRAM_SWAP_EVENTS_SQL mirror the event
 // sets clickhouse/schema/003_materialized_views.sql ingests, and the parity is
 // pinned by tests: they are trimmed together with the schema, never here alone.
-const LIQUIDITY_EVENTS = ['XYK.LiquidityAdded', 'XYK.LiquidityRemoved', 'XYK.PoolCreated', 'XYK.PoolDestroyed', 'XYKLiquidityMining.RewardClaimed']
+const LIQUIDITY_EVENTS = ['XYK.LiquidityAdded', 'XYK.LiquidityRemoved', 'XYK.PoolCreated', 'XYK.PoolDestroyed', 'LBP.LiquidityAdded', 'LBP.LiquidityRemoved', 'XYKLiquidityMining.RewardClaimed']
 // Every event the vote CATEGORY renders: the capital-locking conviction/Democracy
 // votes plus the collective (Council / Technical Committee) ones the feed merges
 // in. Used for the daily histogram's name set and for transfer subordination (a

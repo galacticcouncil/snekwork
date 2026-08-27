@@ -15,6 +15,7 @@ import type { PriceMap, AssetDecimals } from '../price/types.js';
 import type { PriceRow, TradeVolumeRow } from '../db/schema.js';
 import { isSwapEvent } from '../registry/swapEvents.js';
 import * as xyk from '../types/xyk/events.js';
+import * as lbp from '../types/lbp/events.js';
 import * as broadcast from '../types/broadcast/events.js';
 import { aggregateTradeVolumeRows, sumBigIntStrings, sumDecimal128Strings, sumVolumeFields } from './volumeMath.js';
 
@@ -260,62 +261,174 @@ function tradeToVolumeRows(
 }
 
 /**
- * Decode a legacy XYK swap event using version-guarded typegen codecs
+ * How one per-pallet *Executed event names its two legs.
  *
- * Field mapping:
- * - XYK.SellExecuted: amount -> amountIn, salePrice -> amountOut
- * - XYK.BuyExecuted: buyPrice -> amountIn, amount -> amountOut
+ * Both AMMs report a fill the same way in every era: the asset ids first, then
+ * the amount of the leg the caller FIXED and the amount the pool worked out.
+ * A sell fixes the input (`amount` in, `salePrice` out); a buy fixes the output
+ * (`amount` out, `buyPrice` in) — which is why the buy variants list `assetOut`
+ * before `assetIn`, in the struct fields and in the tuple positions alike.
+ *
+ * FEES. Both legs are the POOL's two legs, and neither is adjusted for the
+ * separate `feeAsset`/`feeAmount` pair, because the fee sits outside them in
+ * every era — verified against the token transfers of 9,937 XYK and LBP fills in
+ * blocks 1,400,000..2,144,141:
+ *   - an XYK sell keeps its fee inside the pool, so both legs equal the transfers;
+ *   - an XYK buy has the trader send `buyPrice + feeAmount`, so the input leg is
+ *     the pool's share of a larger transfer;
+ *   - an LBP fill pays its fee as a third transfer to the pool's feeCollector, so
+ *     again both legs equal their own transfers.
+ * In all three the traded volume is the pool leg, which is what these fields hold.
+ */
+type LegacySwapShape = 'sell' | 'buy';
+
+interface LegacySwapFields {
+  who: unknown;
+  assetIn: number;
+  assetOut: number;
+  amountIn: bigint;
+  amountOut: bigint;
+}
+
+interface LegacyCodec {
+  is(event: EventLike): boolean;
+  decode(event: EventLike): unknown;
+}
+
+/**
+ * Named-struct eras (v55 onward): the field names say everything.
+ */
+function fieldsFromStruct(shape: LegacySwapShape, decoded: Record<string, unknown>): LegacySwapFields {
+  return shape === 'sell'
+    ? {
+        who: decoded.who,
+        assetIn: Number(decoded.assetIn),
+        assetOut: Number(decoded.assetOut),
+        amountIn: BigInt(decoded.amount as bigint),
+        amountOut: BigInt(decoded.salePrice as bigint),
+      }
+    : {
+        who: decoded.who,
+        assetIn: Number(decoded.assetIn),
+        assetOut: Number(decoded.assetOut),
+        amountIn: BigInt(decoded.buyPrice as bigint),
+        amountOut: BigInt(decoded.amount as bigint),
+      };
+}
+
+/**
+ * Positional-tuple eras (XYK v16/v19, LBP v16). The runtime's own doc comments
+ * give the order, and the two differ in the ASSET pair only:
+ *   SellExecuted [who, asset in,  asset out, amount, sale price, fee asset, fee amount, (pool)]
+ *   BuyExecuted  [who, asset out, asset in,  amount, buy price,  fee asset, fee amount, (pool)]
+ * XYK's v19 tuple appends the pool account; LBP never grew one. The trailing
+ * element is irrelevant to volume, so both tuple lengths read identically here.
+ */
+function fieldsFromTuple(shape: LegacySwapShape, decoded: readonly unknown[]): LegacySwapFields {
+  const [who, firstAsset, secondAsset, amount, price] = decoded;
+  return shape === 'sell'
+    ? {
+        who,
+        assetIn: Number(firstAsset),
+        assetOut: Number(secondAsset),
+        amountIn: BigInt(amount as bigint),
+        amountOut: BigInt(price as bigint),
+      }
+    : {
+        who,
+        assetIn: Number(secondAsset),
+        assetOut: Number(firstAsset),
+        amountIn: BigInt(price as bigint),
+        amountOut: BigInt(amount as bigint),
+      };
+}
+
+/**
+ * Every per-pallet swap codec, newest shape first. Selection is by `.is(event)`,
+ * which probes the block's own metadata — the ordering only decides which of two
+ * genuinely-matching shapes wins, and no two of these ever match the same block.
+ *
+ * The tuple entries have never fired on Basilisk: the first XYK pool is created
+ * at spec 65 and the first LBP pool at spec 76, both long after v55 turned these
+ * events into named structs (see BASILISK_FIRST_SEEN in src/chainEras.ts). They
+ * are decoded anyway because the metadata of blocks 0..1,322,822 declares them,
+ * and the alternative to decoding a shape a block may legally carry is dropping
+ * a trade on the floor.
+ */
+const LEGACY_SWAP_CODECS: Record<string, Array<{ codec: LegacyCodec; shape: LegacySwapShape; tuple: boolean }>> = {
+  'XYK.SellExecuted': [
+    { codec: xyk.sellExecuted.v55, shape: 'sell', tuple: false },
+    { codec: xyk.sellExecuted.v19, shape: 'sell', tuple: true },
+    { codec: xyk.sellExecuted.v16, shape: 'sell', tuple: true },
+  ],
+  'XYK.BuyExecuted': [
+    { codec: xyk.buyExecuted.v55, shape: 'buy', tuple: false },
+    { codec: xyk.buyExecuted.v19, shape: 'buy', tuple: true },
+    { codec: xyk.buyExecuted.v16, shape: 'buy', tuple: true },
+  ],
+  'LBP.SellExecuted': [
+    { codec: lbp.sellExecuted.v55, shape: 'sell', tuple: false },
+    { codec: lbp.sellExecuted.v16, shape: 'sell', tuple: true },
+  ],
+  'LBP.BuyExecuted': [
+    { codec: lbp.buyExecuted.v55, shape: 'buy', tuple: false },
+    { codec: lbp.buyExecuted.v16, shape: 'buy', tuple: true },
+  ],
+};
+
+/**
+ * The one event whose two amounts are reported against the wrong legs.
+ *
+ * pallet-lbp's `buy` emits BuyExecuted with the amount PAID where the amount
+ * BOUGHT belongs and vice versa. Every one of the 104 LBP.BuyExecuted events in
+ * blocks 1,400,000..2,144,141 reads that way against the transfers of its own
+ * extrinsic; e.g. block 1,974,221 reports assetIn 1, assetOut 6, amount
+ * 91,758,683,241, buyPrice 1,000,000,000,000, while the transfers move
+ * 91,758,683,241 of asset 1 from trader to pool and 1,000,000,000,000 of asset 6
+ * back — a round 1e12 target, which is what a `buy` call names. Its sibling
+ * LBP.SellExecuted (1,329 fills) and both XYK events (8,504 fills) are reported
+ * correctly, so this is one emit site, not a family trait.
+ *
+ * This is the same inversion Broadcast reports for exact-out XYK/LBP fills (see
+ * correctedBroadcastTrade), which is unsurprising: an LBP buy IS an exact-out
+ * fill. The two corrections stay separate because they sit on different events —
+ * post-spec-124 blocks route through Broadcast and never reach this table.
+ */
+const AMOUNT_INVERTED_LEGACY_EVENTS = new Set(['LBP.BuyExecuted']);
+
+/**
+ * Decode a per-pallet XYK or LBP swap event using version-guarded typegen codecs.
  *
  * @param event - Event-like object with name, block, and args
  * @returns DecodedSwap or null if event is not a swap or decoding fails
  */
 function decodeSwapEvent(event: EventLike): DecodedSwap | null {
-  const { name } = event;
-  const isLegacySwapName =
-    name === 'XYK.SellExecuted' ||
-    name === 'XYK.BuyExecuted';
-
-  if (!isLegacySwapName) {
+  const bindings = LEGACY_SWAP_CODECS[event.name];
+  if (bindings == null) {
     return null;
   }
 
   try {
-    // XYK.SellExecuted
-    if (name === 'XYK.SellExecuted') {
-      if (xyk.sellExecuted.v55.is(event)) {
-        const decoded = xyk.sellExecuted.v55.decode(event);
-        return {
-          trader: normalizeAccount(decoded.who),
-          assetIn: decoded.assetIn,
-          assetOut: decoded.assetOut,
-          amountIn: decoded.amount,      // XYK: amount -> amountIn
-          amountOut: decoded.salePrice,  // XYK: salePrice -> amountOut
-        };
-      }
+    for (const { codec, shape, tuple } of bindings) {
+      if (!codec.is(event)) continue;
+      const decoded = codec.decode(event);
+      const fields = tuple
+        ? fieldsFromTuple(shape, decoded as readonly unknown[])
+        : fieldsFromStruct(shape, decoded as Record<string, unknown>);
+      const inverted = AMOUNT_INVERTED_LEGACY_EVENTS.has(event.name);
+      return {
+        trader: normalizeAccount(fields.who),
+        assetIn: fields.assetIn,
+        assetOut: fields.assetOut,
+        amountIn: inverted ? fields.amountOut : fields.amountIn,
+        amountOut: inverted ? fields.amountIn : fields.amountOut,
+      };
     }
 
-    // XYK.BuyExecuted
-    if (name === 'XYK.BuyExecuted') {
-      if (xyk.buyExecuted.v55.is(event)) {
-        const decoded = xyk.buyExecuted.v55.decode(event);
-        return {
-          trader: normalizeAccount(decoded.who),
-          assetIn: decoded.assetIn,
-          assetOut: decoded.assetOut,
-          amountIn: decoded.buyPrice,    // XYK: buyPrice -> amountIn
-          amountOut: decoded.amount,     // XYK: amount -> amountOut
-        };
-      }
-    }
-
-    // Basilisk's pre-spec-55 XYK events are positional tuples (v16 and v19) and
-    // its genesis-era AMM was the `Exchange` pallet entirely. Neither is decoded
-    // yet — the legacy-decode phase adds them. Skipping is safe: the block still
-    // yields prices from pool reserves, it just carries no volume.
-    console.warn(`[extractVolume] Unable to decode swap event: ${name} (no matching version)`);
+    console.warn(`[extractVolume] Unable to decode swap event: ${event.name} (no matching version)`);
     return null;
   } catch (error) {
-    console.warn(`[extractVolume] Error decoding swap event ${name}:`, error);
+    console.warn(`[extractVolume] Error decoding swap event ${event.name}:`, error);
     return null;
   }
 }

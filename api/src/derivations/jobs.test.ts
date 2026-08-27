@@ -137,6 +137,27 @@ describe('swap_source_partition_watermarks projection', () => {
     expect(bare(mv)).toContain(bare(swapEventFilterSql()))
   })
 
+  // Containment alone lets the MV admit MORE than the netting reads, so the two
+  // facts the era split turns on are pinned outright.
+  it('splits the eras at the first Broadcast block, not at the Swapped3 rename', () => {
+    // Spec 124 (block 8,374,452) is where pallet-broadcast arrived and legacy
+    // *Executed events stopped being the swap of record. Spec 128's rename to
+    // Swapped3 (block 12,663,601) changed a name, not an era, and pinning the
+    // split there counted four million blocks of Broadcast.Swapped off the legacy
+    // leg while the indexer counted them off the unified one.
+    expect(swapEventFilterSql()).toContain('8374452')
+    expect(swapEventFilterSql()).not.toContain('12663601')
+    expect(mv).toContain('8374452')
+    expect(mv).not.toContain('12663601')
+  })
+
+  it('never admits Broadcast.Swapped2, which no Basilisk runtime emitted', () => {
+    // Basilisk renamed Swapped straight to Swapped3; a Swapped2 row can only come
+    // from a mis-paired chain. See src/registry/swapEvents.ts.
+    expect(swapEventFilterSql()).not.toContain('Swapped2')
+    expect(mv).not.toContain('Swapped2')
+  })
+
   it('keys the watermarks on the derived table partition expression', () => {
     expect(mv).toContain('toYYYYMM(toDateTime(block_height * 12))')
   })

@@ -29,6 +29,12 @@ export const processor = new SubstrateBatchProcessor()
       'Tokens.Transfer',
       'XYK.SellExecuted',
       'XYK.BuyExecuted',
+      // LBP fills are trades and carry volume, but LBP pools never enter the
+      // price graph: their weights ramp with time, so a spot ratio off their
+      // reserves is not a price. Subscribed for volume only — no LBP pool
+      // composition is read, and none of these invalidate the pool cache.
+      'LBP.SellExecuted',
+      'LBP.BuyExecuted',
       // Basilisk's Broadcast pallet emits Swapped (spec 124+) then Swapped3
       // (spec 128+). It never had a Swapped2.
       'Broadcast.Swapped',

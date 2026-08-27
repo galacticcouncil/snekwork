@@ -23,6 +23,24 @@ import type { OldTypesBundle } from '@subsquid/substrate-runtime/lib/metadata/in
  *
  * Chain-wide type names cannot express that difference; `typesAlias` scopes the
  * name to one pallet, which is exactly what it is for.
+ *
+ * FIELD ORDER OF `OrmlAccountData`. The shipped bundle declares
+ * {free, frozen, reserved}; every self-describing Basilisk runtime — specs 25
+ * through 134, i.e. the whole V14 era — declares the SAME three u128s in the
+ * order {free, reserved, frozen} (read straight off each spec's metadata in
+ * `typegen/basiliskVersions.jsonl`). Only the V13 span, specs 16 and 19 (blocks
+ * 0-395,663), is decoded by the order below, and nothing on chain can decide it:
+ * those 395,664 blocks contain no Tokens, Currencies or Balances event at all —
+ * Basilisk shipped with transfers disabled — so Tokens.Accounts is empty for the
+ * entire V13 span and every read there resolves to the all-zero storage default.
+ *
+ * That makes the disagreement unobservable rather than resolved, so the shipped
+ * order is kept as-is instead of being "corrected" on an inference. It is also
+ * harmless: `free` is the first field in BOTH orders, and `free` is the only
+ * field this indexer ever reads (see TokensAccountsCodec in src/chainEras.ts).
+ * A future reader who needs `reserved` or `frozen` inside the V13 span must
+ * settle the order first — tests/basiliskTypesBundle.test.ts pins both halves of
+ * this finding so the question cannot be answered by accident.
  */
 const shippedBundle = getOldTypesBundle('basilisk')
 if (shippedBundle == null) {

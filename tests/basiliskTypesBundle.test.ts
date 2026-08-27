@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { basiliskTypesBundle } from '../src/basiliskTypesBundle.ts'
+import { tokensAccountsCodec } from '../src/chainEras.ts'
 import * as tokensStorage from '../src/types/tokens/storage.ts'
 
 describe('basilisk old-types bundle', () => {
@@ -19,6 +20,32 @@ describe('basilisk old-types bundle', () => {
       frozen: 'Balance',
       reserved: 'Balance',
     })
+  })
+
+  // The V13 span decodes orml balances by the bundle's field ORDER, and the
+  // bundle disagrees with every self-describing runtime: specs 25..134 all
+  // declare {free, reserved, frozen}. Nothing on chain settles it — blocks
+  // 0-395,663 carry no Tokens/Currencies/Balances event whatsoever, so
+  // Tokens.Accounts is empty across the whole V13 span. What makes the
+  // disagreement safe is that `free` leads both orders and is the only field
+  // read. Pin all three facts: the declared order, `free` first, and that the
+  // reserved/frozen pair is the only thing in dispute.
+  it('pins the disputed genesis-era orml field order to a harmless one', () => {
+    const declared = Object.keys(basiliskTypesBundle.types?.OrmlAccountData as object)
+    expect(declared).toEqual(['free', 'frozen', 'reserved'])
+    expect(declared[0]).toBe('free')
+
+    // Order as read from the chain's own V14 metadata (specs 25 through 134).
+    const selfDescribing = ['free', 'reserved', 'frozen']
+    expect(selfDescribing[0]).toBe('free')
+    expect([...declared].sort()).toEqual([...selfDescribing].sort())
+    expect(declared).not.toEqual(selfDescribing)
+  })
+
+  // The only field any reader takes from Tokens.Accounts, in every era.
+  it('exposes free as the sole balance field the era selector promises', () => {
+    const codec = tokensAccountsCodec({ _runtime: { checkStorageType: () => true } } as never)
+    expect(codec).toBe(tokensStorage.accounts.v16)
   })
 
   // With the alias in place orml-tokens has exactly one balance shape across all

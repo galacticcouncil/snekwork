@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { LIQUIDITY_AMOUNT_ARG, liquidityAmountFromArgs } from '../src/services/explorerService.ts'
+import { LIQUIDITY_AMOUNT_ARG, liquidityAmountFromArgs, liquidityActionEventNames } from '../src/services/explorerService.ts'
 
 const schema = readFileSync(new URL('../../clickhouse/schema/003_materialized_views.sql', import.meta.url), 'utf8')
 
@@ -35,6 +35,13 @@ describe('liquidity display amount pairing', () => {
     expect(Object.keys(LIQUIDITY_AMOUNT_ARG).sort()).toEqual(names)
   })
 
+  // The arg map was pinned to the view, and the view to the arg map, but the LIST
+  // the feed actually selects on sat outside the loop: a name could be added to
+  // two of the three and still render. Close it — all three carry one set.
+  it('selects exactly the events it decides an amount for', () => {
+    expect(liquidityActionEventNames().sort()).toEqual(Object.keys(LIQUIDITY_AMOUNT_ARG).sort())
+  })
+
   // Arg shapes as emitted on chain — one per liquidity event name.
   it('reads only the arg denominated in the row\'s displayed asset', () => {
     const cases: [string, Record<string, unknown>, string][] = [
@@ -42,6 +49,11 @@ describe('liquidity display amount pairing', () => {
       ['XYK.LiquidityRemoved', { who: 'x', assetA: 1000085, assetB: 5, shares: '21174522741' }, ''],
       ['XYK.PoolCreated', { who: 'x', assetA: 0, assetB: 5, initialSharesAmount: '500', shareToken: 9, pool: 'p' }, ''],
       ['XYK.PoolDestroyed', { who: 'x', assetA: 222, assetB: 0, shareToken: 1001296, pool: 'p' }, ''],
+      // Basilisk block 1,972,469 seeded its first LBP and 1,994,210 drained it;
+      // both carry amountA/amountB against assetA/assetB, so like XYK's add there
+      // is no arg in the row's own denomination and the amount stays empty.
+      ['LBP.LiquidityAdded', { who: 'x', assetA: 1, assetB: 6, amountA: '1000000000000000', amountB: '380250000000000000' }, ''],
+      ['LBP.LiquidityRemoved', { who: 'x', assetA: 1, assetB: 6, amountA: '3984504060182772', amountB: '173639750351813024' }, ''],
       ['XYKLiquidityMining.RewardClaimed', { who: 'x', claimed: '400', rewardCurrency: 0, depositId: '1' }, '400'],
     ]
 

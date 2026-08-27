@@ -11,15 +11,26 @@
 import { allExplorerAssets, PRICE_ALIAS_ID, SHARE_TOKEN_UNDERLYING_ID, priceAssetId } from './explorerAssets.ts'
 
 // First block emitting Broadcast.Swapped (the unified swap-event era) — the first
-// Basilisk block of runtime spec 128, where pallet-broadcast arrived. At/above
+// Basilisk block of runtime spec 124, where pallet-broadcast arrived. At/above
 // this height a swap's hops are Broadcast.Swapped* events (grouped by their
 // operationStack Router id); below it, legacy pallet *Executed events (grouped by
 // extrinsic index). Mirrored by swap_source_partition_watermarks_mv in
 // clickhouse/schema/003_materialized_views.sql (parity asserted in jobs.test.ts).
-const BROADCAST_MIN_BLOCK = 12_663_601
+//
+// 12,663,601 — spec 128, where `Broadcast.Swapped` was RENAMED to
+// `Broadcast.Swapped3` — is the wrong boundary and was what this constant held.
+// Blocks 8,374,452..12,663,600 emit `Broadcast.Swapped` beside the XYK/LBP
+// *Executed events they supersede, so pinning the split at the rename counted
+// those four million blocks off the legacy leg while the indexer's own
+// isSwapEvent (src/registry/swapEvents.ts) already counted them off the unified
+// one — the two layers netting the same fill from different events.
+const BROADCAST_MIN_BLOCK = 8_374_452
 const EVENT_ANCHOR_OFFSET = 1_099_511_627_776n // 2^40 — event-index anchors clear of real router ids
 const LEGACY_EVENTS = "'XYK.SellExecuted','XYK.BuyExecuted','LBP.SellExecuted','LBP.BuyExecuted'"
-const BROADCAST_EVENTS = "'Broadcast.Swapped','Broadcast.Swapped2','Broadcast.Swapped3'"
+// Basilisk went straight from `Swapped` (spec 124) to `Swapped3` (spec 128); no
+// runtime ever emitted `Swapped2`, so admitting it would only ever match a
+// mis-paired chain. See src/registry/swapEvents.ts.
+const BROADCAST_EVENTS = "'Broadcast.Swapped','Broadcast.Swapped3'"
 
 // Source for per-account trading volume: the de-duped net-trade model, whose
 // derivations job keeps every partition covered. One summable USD column per

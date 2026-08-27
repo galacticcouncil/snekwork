@@ -4,6 +4,7 @@ import type { PriceRow, TradeVolumeRow } from '../db/schema.js'
 import { rebuildOHLCForTimeRange } from '../ohlc/repair.js'
 import { ALL_SWAP_EVENT_NAMES, BROADCAST_SWAP_EVENT_NAMES, LEGACY_SWAP_EVENT_NAMES, decodeRawTrade, type DecodedRawTrade, type RawTradeEventRow, type TradeAssetAmount } from './tradeEventDecoder.js'
 import { aggregateTradeVolumeRows, decimalToScaledBigInt, formatDecimal128, sumBigIntStrings, sumDecimal128Strings, sumVolumeFields } from '../blocks/volumeMath.js'
+import { BASILISK_ERAS } from '../chainEras.js'
 export { decimalToScaledBigInt, formatDecimal128 } from '../blocks/volumeMath.js'
 const DEFAULT_CHUNK_SIZE = 5_000
 const DEFAULT_SAFETY_LAG_BLOCKS = 100
@@ -443,9 +444,16 @@ export function buildRepairedPriceRows(existingRows: ExistingPriceRow[], correct
   })
 }
 
+// The first block whose swaps are reported by the Broadcast pallet rather than
+// by each AMM's own *Executed event. Read from the chain's own upgrade log rather
+// than hardcoded, so a replayed history dates the cutover from what it ingested.
+// The spec number is Basilisk's — 124, where pallet-broadcast arrived (block
+// 8,374,452) — NOT the 282 this file inherited from the Hydration fork, which no
+// Basilisk runtime ever reaches and which made every repair run abort.
 async function getUnifiedSwapFromBlock(client: ClickHouseClient): Promise<number> {
   const result = await client.query({
-    query: `SELECT min(block_height) AS block_height FROM price_data.runtime_upgrades WHERE spec_version >= 282`,
+    query: `SELECT min(block_height) AS block_height FROM price_data.runtime_upgrades WHERE spec_version >= {spec:UInt32}`,
+    query_params: { spec: BASILISK_ERAS.BROADCAST_SWAPPED.specVersion },
     format: 'JSONEachRow',
   })
   const rows = await result.json<{ block_height: number }>()

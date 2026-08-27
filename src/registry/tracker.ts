@@ -80,17 +80,61 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
     : null
 }
 
-function locationJunctions(location: unknown): Record<string, unknown>[] {
+const JUNCTION_LEVELS = new Set(['X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7', 'X8'])
+
+/**
+ * One shape for every XCM version an AssetLocation has been stored in.
+ *
+ * V1 and later (spec 19 onward) split a location into `{parents, interior}`.
+ * XCM V0 — the genesis shape, specs 16..18 — has no `parents` at all: the whole
+ * location IS the junction enum (`{__kind: 'X2', value: [...]}`), and going up
+ * is spelled as leading `Parent` junctions. So V0's
+ *   X2(Parent, Parachain(2000))
+ * is V1's
+ *   {parents: 1, interior: X1(Parachain(2000))}
+ * and every reader below wants the same two facts out of both: how many levels
+ * up, and which junctions are left once those are stripped.
+ *
+ * Basilisk registered no asset location at all while V0 was live — AssetLocations
+ * is empty at block 129,696 and still empty at 1,000,000, filling in only once
+ * V1 was in place — so this arm has no historic rows to resolve. It is here so a
+ * genesis-era read resolves an origin instead of silently returning null, which
+ * is what `parents !== 1` did to every V0 shape before.
+ */
+function normalizedLocation(location: unknown): { parents: number; junctions: Record<string, unknown>[] } | null {
   const locationRecord = objectRecord(location)
-  const interior = objectRecord(locationRecord?.interior)
-  if (interior == null || interior.__kind === 'Here') return []
-  const valueRecord = objectRecord(interior.value)
-  const values = Array.isArray(interior.value)
-    ? interior.value
-    : interior.__kind === 'X1'
-      ? [interior.value]
-      : valueRecord == null ? [] : Object.values(valueRecord)
-  return values.map(objectRecord).filter((v): v is Record<string, unknown> => v != null)
+  if (locationRecord == null) return null
+
+  const junctionsOf = (level: Record<string, unknown>): unknown[] => {
+    if (level.__kind === 'Here') return []
+    const valueRecord = objectRecord(level.value)
+    return Array.isArray(level.value)
+      ? level.value
+      : level.__kind === 'X1'
+        ? [level.value]
+        : valueRecord == null ? [] : Object.values(valueRecord)
+  }
+
+  // XCM V0: no `parents` key, the location itself is the junction level.
+  const kind = typeof locationRecord.__kind === 'string' ? locationRecord.__kind : null
+  if (locationRecord.parents === undefined && kind != null && (kind === 'Here' || JUNCTION_LEVELS.has(kind))) {
+    const all = junctionsOf(locationRecord).map(objectRecord).filter((v): v is Record<string, unknown> => v != null)
+    let parents = 0
+    while (parents < all.length && all[parents].__kind === 'Parent') parents++
+    return { parents, junctions: all.slice(parents) }
+  }
+
+  // XCM V1 and later.
+  const interior = objectRecord(locationRecord.interior)
+  if (interior == null) return null
+  return {
+    parents: typeof locationRecord.parents === 'number' ? locationRecord.parents : 0,
+    junctions: junctionsOf(interior).map(objectRecord).filter((v): v is Record<string, unknown> => v != null),
+  }
+}
+
+function locationJunctions(location: unknown): Record<string, unknown>[] {
+  return normalizedLocation(location)?.junctions ?? []
 }
 
 function junctionPayload(junction: Record<string, unknown>): Record<string, unknown> | null {
@@ -159,32 +203,18 @@ export function extractAssetOrigin(location: unknown): AssetOrigin | null {
 
 /**
  * Extract parachainId from an AssetLocation.
- * Matches: { parents: 1, interior: X1(Parachain(id)) } or X2(Parachain(id), ...)
+ * Matches: { parents: 1, interior: X1(Parachain(id)) } or X2(Parachain(id), ...),
+ * and the equivalent XCM V0 shapes, where "one level up" is a leading `Parent`
+ * junction instead of a `parents` field: X2(Parent, Parachain(id)) and up.
  * Native Basilisk assets have no location -> returns null.
  */
 export function extractParachainId(location: unknown): number | null {
-  const locationRecord = objectRecord(location)
-  if (locationRecord?.parents !== 1) return null
-  const interior = objectRecord(locationRecord.interior)
-  if (interior == null || interior.__kind === 'Here') return null
+  const normalized = normalizedLocation(location)
+  if (normalized == null || normalized.parents !== 1) return null
+  const { junctions } = normalized
+  if (junctions.length === 0) return null
 
-  // Normalize junctions: V5 uses arrays, V3 may use single value
-  let junctions: unknown[]
-  if (interior.__kind === 'X1') {
-    junctions = Array.isArray(interior.value) ? interior.value : [interior.value]
-  } else {
-    // X2, X3, etc. — value is an array or tuple-like object
-    const valueRecord = objectRecord(interior.value)
-    junctions = Array.isArray(interior.value)
-      ? interior.value
-      : valueRecord == null
-        ? []
-        : Object.values(valueRecord)
-  }
-
-  const parachainJunction = junctions
-    .map(objectRecord)
-    .find(junction => junction?.__kind === 'Parachain')
+  const parachainJunction = junctions.find(junction => junction.__kind === 'Parachain')
   if (!parachainJunction) return null
 
   // If the only junction is Parachain, this is a native token of that chain — not bridged
@@ -199,9 +229,9 @@ export function extractParachainId(location: unknown): number | null {
 
 // AssetRegistry.AssetLocations, newest shape first. The XCM version the location
 // is stored in moved with the runtime: V0 junctions with no `parents` at genesis
-// (v16), V1 from spec 19, V3 from spec 101, V5 from spec 128. extractParachainId
-// requires `parents === 1`, so the genesis-era v16 shape yields no origin —
-// resolving those is part of the legacy-decode phase.
+// (v16), V1 from spec 19, V3 from spec 101, V5 from spec 128. normalizedLocation
+// reads all four, mapping V0's leading `Parent` junctions onto the `parents`
+// count the later shapes carry as a field.
 interface AssetLocationsCodec {
   getMany(block: Block, keys: number[]): Promise<unknown[]>
 }

@@ -1,6 +1,12 @@
+// Every per-pallet swap event a pre-Broadcast block reports its volume with.
+// Must stay identical to the SWAP-classified entries of the catalogue in
+// src/registry/swapEvents.ts — a name here that isSwapEvent rejects (or the
+// reverse) is a repair that restates live ingestion.
 export const LEGACY_SWAP_EVENT_NAMES = [
   'XYK.SellExecuted',
   'XYK.BuyExecuted',
+  'LBP.SellExecuted',
+  'LBP.BuyExecuted',
 ] as const
 
 // Basilisk's Broadcast pallet emits `Swapped` from spec 124 and `Swapped3` from
@@ -49,40 +55,91 @@ function parseAssetAmounts(value: unknown): TradeAssetAmount[] {
   })
 }
 
+/**
+ * The two legs of a per-pallet XYK or LBP fill, whichever era wrote the row.
+ *
+ * `raw_events.args_json` is the decoder's output verbatim, so its SHAPE follows
+ * the runtime: a named struct from spec 55 on, a positional tuple (a JSON array)
+ * before it. This is the repair-side twin of LEGACY_SWAP_CODECS in
+ * src/blocks/extractVolume.ts and reads the same positions:
+ *   SellExecuted [who, asset in,  asset out, amount, sale price, fee asset, fee amount, (pool)]
+ *   BuyExecuted  [who, asset out, asset in,  amount, buy price,  fee asset, fee amount, (pool)]
+ * A sell fixes its input, a buy fixes its output — hence the flipped asset pair.
+ * `feeAsset`/`feeAmount` describe a separate pool→collector transfer and are not
+ * carved out of either leg, in any era.
+ *
+ * pallet-lbp's `buy` reports its two amounts against the WRONG legs — the amount
+ * paid sits where the amount bought belongs — for all 104 LBP.BuyExecuted events
+ * in blocks 1,400,000..2,144,141, checked against each one's own transfers. The
+ * correction below must stay identical to AMOUNT_INVERTED_LEGACY_EVENTS in
+ * src/blocks/extractVolume.ts, or a volume repair would restate live ingestion.
+ *
+ * No Basilisk block has ever carried a tuple-shaped swap row (the first XYK pool
+ * post-dates the v55 rename by ten specs, and the first LBP pool by twenty-one),
+ * so that arm restates nothing today. It exists because the runtimes of blocks
+ * 0..1,322,822 can legally emit one.
+ */
+function legacySwapLegs(eventName: string, args: unknown): DecodedRawTrade | null {
+  const sell = eventName === 'XYK.SellExecuted' || eventName === 'LBP.SellExecuted'
+  const buy = eventName === 'XYK.BuyExecuted' || eventName === 'LBP.BuyExecuted'
+  if (!sell && !buy) return null
+  const inverted = eventName === 'LBP.BuyExecuted'
+
+  const legs = (
+    account: string | null,
+    input: TradeAssetAmount,
+    output: TradeAssetAmount,
+  ): DecodedRawTrade => (inverted
+    ? { account, inputs: [{ assetId: input.assetId, amount: output.amount }], outputs: [{ assetId: output.assetId, amount: input.amount }] }
+    : { account, inputs: [input], outputs: [output] })
+
+  if (Array.isArray(args)) {
+    const [who, firstAsset, secondAsset, amount, price] = args as unknown[]
+    const fixed = { assetId: Number(firstAsset), amount: BigInt(amount as string) }
+    const derived = { assetId: Number(secondAsset), amount: BigInt(price as string) }
+    return sell
+      ? legs(normalizeAccount(who), fixed, derived)
+      : legs(normalizeAccount(who), derived, fixed)
+  }
+
+  const named = args as Record<string, unknown>
+  const assetIn = Number(named.assetIn)
+  const assetOut = Number(named.assetOut)
+  return sell
+    ? legs(
+        normalizeAccount(named.who),
+        { assetId: assetIn, amount: BigInt(named.amount as string) },
+        { assetId: assetOut, amount: BigInt(named.salePrice as string) },
+      )
+    : legs(
+        normalizeAccount(named.who),
+        { assetId: assetIn, amount: BigInt(named.buyPrice as string) },
+        { assetId: assetOut, amount: BigInt(named.amount as string) },
+      )
+}
+
 export function decodeRawTrade(row: RawTradeEventRow): DecodedRawTrade | null {
-  const args = JSON.parse(row.args_json) as Record<string, unknown>
+  const args = JSON.parse(row.args_json) as unknown
 
-  if (row.event_name === 'XYK.SellExecuted') {
-    return {
-      account: normalizeAccount(args.who),
-      inputs: [{ assetId: Number(args.assetIn), amount: BigInt(args.amount as string) }],
-      outputs: [{ assetId: Number(args.assetOut), amount: BigInt(args.salePrice as string) }],
-    }
-  }
-
-  if (row.event_name === 'XYK.BuyExecuted') {
-    return {
-      account: normalizeAccount(args.who),
-      inputs: [{ assetId: Number(args.assetIn), amount: BigInt(args.buyPrice as string) }],
-      outputs: [{ assetId: Number(args.assetOut), amount: BigInt(args.amount as string) }],
-    }
-  }
+  const legacy = legacySwapLegs(row.event_name, args)
+  if (legacy) return legacy
 
   if (!row.event_name.startsWith('Broadcast.Swapped')) return null
 
-  const inputs = parseAssetAmounts(args.inputs)
-  const outputs = parseAssetAmounts(args.outputs)
-  const fillerType = (args.fillerType as { __kind?: string } | undefined)?.__kind
-  const operation = (args.operation as { __kind?: string } | undefined)?.__kind
+  const named = args as Record<string, unknown>
+  const inputs = parseAssetAmounts(named.inputs)
+  const outputs = parseAssetAmounts(named.outputs)
+  const fillerType = (named.fillerType as { __kind?: string } | undefined)?.__kind
+  const operation = (named.operation as { __kind?: string } | undefined)?.__kind
   // Both Basilisk Broadcast events report exact-out XYK/LBP fills with the two
   // amounts against the wrong legs. This must stay identical to the correction in
   // src/blocks/extractVolume.ts, or a volume repair would restate live ingestion.
   if (operation === 'ExactOut' && (fillerType === 'XYK' || fillerType === 'LBP') && inputs.length === 1 && outputs.length === 1) {
     return {
-      account: normalizeAccount(args.swapper),
+      account: normalizeAccount(named.swapper),
       inputs: [{ assetId: inputs[0].assetId, amount: outputs[0].amount }],
       outputs: [{ assetId: outputs[0].assetId, amount: inputs[0].amount }],
     }
   }
-  return { account: normalizeAccount(args.swapper), inputs, outputs }
+  return { account: normalizeAccount(named.swapper), inputs, outputs }
 }
