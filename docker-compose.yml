@@ -1,11 +1,11 @@
-name: hydration-neckwork
+name: snekwork
 
 services:
   clickhouse:
     build:
       context: ./clickhouse
       dockerfile: Dockerfile
-    container_name: hydration-neckwork-clickhouse
+    container_name: snekwork-clickhouse
     ports:
       - "127.0.0.1:18123:8123"
       - "127.0.0.1:19000:9000"
@@ -31,8 +31,8 @@ services:
     build:
       context: ./api
       dockerfile: Dockerfile
-    image: hydration-neckwork-api
-    container_name: hydration-neckwork-schema-bootstrap
+    image: snekwork-api
+    container_name: snekwork-schema-bootstrap
     restart: "no"
     command: ["./node_modules/.bin/tsx", "src/db/schemaBootstrap.ts", "--apply"]
     volumes:
@@ -48,9 +48,9 @@ services:
       - neckwork
 
   indexer:
-    image: hydration-neckwork-indexer:latest
+    image: snekwork-indexer:latest
     build: .
-    container_name: hydration-neckwork-indexer
+    container_name: snekwork-indexer
     profiles:
       - worker
     restart: unless-stopped
@@ -76,9 +76,9 @@ services:
       - neckwork
 
   raw-indexer:
-    image: hydration-neckwork-indexer:latest
+    image: snekwork-indexer:latest
     build: .
-    container_name: hydration-neckwork-raw-indexer
+    container_name: snekwork-raw-indexer
     profiles:
       - worker
     restart: unless-stopped
@@ -116,9 +116,9 @@ services:
       - neckwork
 
   raw-live:
-    image: hydration-neckwork-indexer:latest
+    image: snekwork-indexer:latest
     build: .
-    container_name: hydration-neckwork-raw-live
+    container_name: snekwork-raw-live
     restart: unless-stopped
     depends_on:
       clickhouse:
@@ -159,9 +159,9 @@ services:
   # on startup and then hourly. Self-seeding so a fresh `docker compose up` gets
   # identities with no manual step.
   identity-snapshot:
-    image: hydration-neckwork-indexer:latest
+    image: snekwork-indexer:latest
     build: .
-    container_name: hydration-neckwork-identity-snapshot
+    container_name: snekwork-identity-snapshot
     restart: unless-stopped
     depends_on:
       clickhouse:
@@ -184,9 +184,9 @@ services:
   # hence an indexer-side decoder rather than API-side. A hash IS its content, so a
   # decoded proposal is never revisited and this goes quiet once caught up.
   referendum-proposals:
-    image: hydration-neckwork-indexer:latest
+    image: snekwork-indexer:latest
     build: .
-    container_name: hydration-neckwork-referendum-proposals
+    container_name: snekwork-referendum-proposals
     restart: unless-stopped
     depends_on:
       clickhouse:
@@ -213,9 +213,9 @@ services:
   # open); concluded ones are fetched once and then never requested again, which is
   # what keeps the 576 settled referenda from being re-crawled every cycle.
   referendum-titles:
-    image: hydration-neckwork-indexer:latest
+    image: snekwork-indexer:latest
     build: .
-    container_name: hydration-neckwork-referendum-titles
+    container_name: snekwork-referendum-titles
     restart: unless-stopped
     depends_on:
       clickhouse:
@@ -237,9 +237,9 @@ services:
   # Seed current balances for every account, including dormant accounts with no
   # events in the indexed range, and refresh them on an interval.
   balance-snapshot:
-    image: hydration-neckwork-indexer:latest
+    image: snekwork-indexer:latest
     build: .
-    container_name: hydration-neckwork-balance-snapshot
+    container_name: snekwork-balance-snapshot
     restart: unless-stopped
     depends_on:
       clickhouse:
@@ -258,7 +258,7 @@ services:
     build:
       context: .
       dockerfile: ops/supervisor.Dockerfile
-    container_name: hydration-neckwork-ingestion-supervisor
+    container_name: snekwork-ingestion-supervisor
     restart: unless-stopped
     depends_on:
       clickhouse:
@@ -268,8 +268,8 @@ services:
       schema-bootstrap:
         condition: service_completed_successfully
     environment:
-      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-hydration-neckwork}
-      - ROOT_DIR=/etc/hydration-neckwork
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-snekwork}
+      - ROOT_DIR=/etc/snekwork
       - CLICKHOUSE_DATABASE=price_data
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-dev}
       - RAW_RPC_URL=${RAW_RPC_URL:-}
@@ -294,7 +294,7 @@ services:
       - MAIN_RATE_LIMIT=${MAIN_RATE_LIMIT:-40}
       - MAIN_CAPACITY=${MAIN_CAPACITY:-8}
       - LIVE_MAIN_ENABLED=${LIVE_MAIN_ENABLED:-true}
-      - LIVE_MAIN_NAME=${LIVE_MAIN_NAME:-hydration-neckwork-main-live}
+      - LIVE_MAIN_NAME=${LIVE_MAIN_NAME:-snekwork-main-live}
       - LIVE_MAIN_PIPELINE_ID=${LIVE_MAIN_PIPELINE_ID:-main-live}
       - LIVE_MAIN_RPC_URL=${LIVE_MAIN_RPC_URL:-https://hydration-rpc.neckwork.net}
       - LIVE_MAIN_RATE_LIMIT=${LIVE_MAIN_RATE_LIMIT:-100}
@@ -302,7 +302,7 @@ services:
       - LIVE_MAIN_BATCH_SIZE=${LIVE_MAIN_BATCH_SIZE:-50000}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    working_dir: /etc/hydration-neckwork
+    working_dir: /etc/snekwork
     networks:
       - neckwork
 
@@ -310,7 +310,7 @@ services:
     build:
       context: ./api
       dockerfile: Dockerfile
-    container_name: hydration-neckwork-api
+    container_name: snekwork-api
     restart: unless-stopped
     depends_on:
       clickhouse:
@@ -333,8 +333,8 @@ services:
     build:
       context: ./api
       dockerfile: Dockerfile
-    image: hydration-neckwork-api
-    container_name: hydration-neckwork-derivations
+    image: snekwork-api
+    container_name: snekwork-derivations
     restart: unless-stopped
     depends_on:
       schema-bootstrap:
@@ -350,7 +350,7 @@ services:
     build:
       context: ./explorer-ui
       dockerfile: Dockerfile
-    container_name: hydration-neckwork-explorer-ui
+    container_name: snekwork-explorer-ui
     depends_on:
       - api
     ports:
@@ -360,9 +360,9 @@ services:
 
 volumes:
   clickhouse_data:
-    name: ${CLICKHOUSE_VOLUME_NAME:-hydration-neckwork-clickhouse-data}
+    name: ${CLICKHOUSE_VOLUME_NAME:-snekwork-clickhouse-data}
 
 networks:
   neckwork:
-    name: hydration-neckwork-network
+    name: snekwork-network
     driver: bridge

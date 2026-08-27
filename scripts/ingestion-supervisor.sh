@@ -23,8 +23,8 @@ RAW_FAILED_RETRY_LIMIT="${RAW_FAILED_RETRY_LIMIT:-3}"
 # not stall the historical frontier forever.
 RAW_BLOCKED_RETRY_AFTER_SECONDS="${RAW_BLOCKED_RETRY_AFTER_SECONDS:-21600}"
 
-RAW_PREFIX="${RAW_PREFIX:-hydration-neckwork-raw-backfill-}"
-MAIN_PREFIX="${MAIN_PREFIX:-hydration-neckwork-main-backfill-}"
+RAW_PREFIX="${RAW_PREFIX:-snekwork-raw-backfill-}"
+MAIN_PREFIX="${MAIN_PREFIX:-snekwork-main-backfill-}"
 
 RAW_RATE_LIMIT="${RAW_RATE_LIMIT:-50}"
 RAW_CAPACITY="${RAW_CAPACITY:-10}"
@@ -39,7 +39,7 @@ MAIN_RATE_LIMIT="${MAIN_RATE_LIMIT:-10}"
 MAIN_CAPACITY="${MAIN_CAPACITY:-3}"
 
 LIVE_MAIN_ENABLED="${LIVE_MAIN_ENABLED:-true}"
-LIVE_MAIN_NAME="${LIVE_MAIN_NAME:-hydration-neckwork-main-live}"
+LIVE_MAIN_NAME="${LIVE_MAIN_NAME:-snekwork-main-live}"
 LIVE_MAIN_PIPELINE_ID="${LIVE_MAIN_PIPELINE_ID:-main-live}"
 LIVE_MAIN_RPC_URL="${LIVE_MAIN_RPC_URL:-https://hydration-rpc.neckwork.net}"
 LIVE_MAIN_RATE_LIMIT="${LIVE_MAIN_RATE_LIMIT:-100}"

@@ -1,7 +1,7 @@
 {
-  "name": "hydration-neckwork",
+  "name": "snekwork",
   "version": "1.0.0",
-  "description": "Hydration Neckwork explorer and Preis data platform",
+  "description": "Snekwork Basilisk explorer data platform",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,13 +19,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/1xGiraffe/hydration-neckwork.git"
+    "url": "git+https://github.com/galacticcouncil/snekwork.git"
   },
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/1xGiraffe/hydration-neckwork/issues"
+    "url": "https://github.com/galacticcouncil/snekwork/issues"
   },
-  "homepage": "https://github.com/1xGiraffe/hydration-neckwork#readme",
+  "homepage": "https://github.com/galacticcouncil/snekwork#readme",
   "dependencies": {
     "@clickhouse/client": "^1.16.0",
     "@polkadot/util": "^14.0.1",

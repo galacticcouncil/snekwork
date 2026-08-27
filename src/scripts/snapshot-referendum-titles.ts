@@ -102,7 +102,7 @@ async function fetchTitle(pallet: ReferendumPallet, refIndex: number): Promise<s
   try {
     const res = await fetch(url, {
       signal: controller.signal,
-      headers: { 'user-agent': 'hydration-neckwork-explorer/1.0 (+referendum title sync)', accept: 'text/html' },
+      headers: { 'user-agent': 'snekwork-explorer/1.0 (+referendum title sync)', accept: 'text/html' },
     })
     if (!res.ok) { console.warn(`[titles] ${pallet} ${refIndex}: HTTP ${res.status}`); return null }
     return parseSubsquareTitle(await res.text())

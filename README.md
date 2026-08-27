@@ -33,8 +33,8 @@ Useful status commands:
 
 ```bash
 docker compose ps
-docker logs -f hydration-neckwork-ingestion-supervisor
-docker exec -it hydration-neckwork-clickhouse clickhouse-client \
+docker logs -f snekwork-ingestion-supervisor
+docker exec -it snekwork-clickhouse clickhouse-client \
   --database=price_data --password "${CLICKHOUSE_PASSWORD:-dev}"
 ```
 
@@ -117,7 +117,7 @@ inherit it:
 services:
   ingestion-supervisor:
     volumes:
-      - ./docker-compose.override.yml:/etc/hydration-neckwork/docker-compose.override.yml:ro
+      - ./docker-compose.override.yml:/etc/snekwork/docker-compose.override.yml:ro
 ```
 
 Keep credentials in `.env`; do not put them in the override file.
