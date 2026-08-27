@@ -6,7 +6,7 @@ import { Crumbs, F, AddrPill, AssetChip, FeeAmount, hasTip, StatusBadge, MomentL
 import type { TradeHop } from '../types'
 
 // Route flow: in-asset →(pool)→ … →(pool)→ out-asset. Amount labels come from
-// the hop events; eventless Aave 1:1 wraps infer values from adjacent hops.
+// the hop events; a hop the route names but no event reports keeps null amounts.
 function RouteFlow({ hops }: { hops: TradeHop[] }) {
   if (!hops.length) return null
   return (
@@ -25,46 +25,15 @@ function RouteFlow({ hops }: { hops: TradeHop[] }) {
   )
 }
 
-type DisplayHop = TradeHop & { displayAmountIn: string | null; displayAmountOut: string | null }
-
-function isAaveHop(h: TradeHop): boolean {
-  return h.pool.toLowerCase() === 'aave'
-}
-
-function convertRawAmount(raw: string | null, fromDecimals: number, toDecimals: number): string | null {
-  if (!raw) return null
-  if (fromDecimals === toDecimals) return raw
-  if (!/^\d+$/.test(raw)) return null
-  const delta = Math.abs(toDecimals - fromDecimals)
-  const scale = 10n ** BigInt(delta)
-  const n = BigInt(raw)
-  return fromDecimals < toDecimals ? String(n * scale) : String(n / scale)
-}
-
-function displayRoute(hops: TradeHop[], totalAmountIn: string, totalAmountOut: string): DisplayHop[] {
-  let currentAmount: string | null = totalAmountIn
-  let currentDecimals = hops[0]?.assetIn.decimals ?? 0
-
-  return hops.map((h, i) => {
-    const canInfer = isAaveHop(h)
-    let displayAmountIn = h.amountIn
-    let displayAmountOut = h.amountOut
-
-    if (!displayAmountIn && canInfer) displayAmountIn = convertRawAmount(currentAmount, currentDecimals, h.assetIn.decimals)
-    if (!displayAmountOut && canInfer && displayAmountIn) displayAmountOut = convertRawAmount(displayAmountIn, h.assetIn.decimals, h.assetOut.decimals)
-    if (!displayAmountOut && canInfer && i === hops.length - 1) displayAmountOut = totalAmountOut
-    if (!displayAmountIn && canInfer && displayAmountOut) displayAmountIn = convertRawAmount(displayAmountOut, h.assetOut.decimals, h.assetIn.decimals)
-
-    currentAmount = displayAmountOut ?? h.amountOut
-    currentDecimals = h.assetOut.decimals
-    return { ...h, displayAmountIn, displayAmountOut }
-  })
-}
-
+// A route leg always names its asset: the hop is a fact of the route even when no
+// event reported its amount, and a bare dash would hide which asset moved.
 function RouteAmount({ asset, amount }: { asset: TradeHop['assetIn']; amount: string | null }) {
-  return amount
-    ? <AssetValue asset={asset}>{F.exact(amount, asset.decimals)}</AssetValue>
-    : <span className="muted mono">—</span>
+  return (
+    <span className="trade-leg">
+      <AssetChip asset={asset} />
+      {amount ? <span className="mono">{F.exact(amount, asset.decimals)}</span> : <span className="muted mono">—</span>}
+    </span>
+  )
 }
 
 function AssetValue({ asset, children }: { asset: TradeHop['assetIn']; children: string }) {
@@ -94,8 +63,7 @@ export function TradeDetailPage({ id }: { id: string; slug?: 'swap' }) {
           const eventId = data.eventIndex != null ? `${data.blockHeight}-${data.eventIndex}` : null
           const visibleLimit = data.limit && Number(data.limit.amount) > 0 ? data.limit : null
           const hasRoute = data.route.length > 0
-          const route = displayRoute(data.route, data.amountIn, data.amountOut)
-          const hasRouteTable = route.some(h => h.displayAmountIn || h.displayAmountOut || h.fee)
+          const hasRouteTable = data.route.some(h => h.amountIn || h.amountOut || h.fee)
           return (
             <>
               <div className="detail-card"><div className="dl">
@@ -135,11 +103,11 @@ export function TradeDetailPage({ id }: { id: string; slug?: 'swap' }) {
                     <table className="tbl" style={{ marginTop: 12 }}>
                       <thead><tr><th>Pool</th><th>In</th><th className="r">Out</th><th className="r">Pool fee</th></tr></thead>
                       <tbody>
-                        {route.map((h, i) => (
+                        {data.route.map((h, i) => (
                           <tr key={i}>
                             <td data-label="Pool"><span className="badge" style={{ background: 'color-mix(in srgb, var(--cat-liquidity) 15%, transparent)', color: 'var(--cat-liquidity)' }}>{h.pool}{h.poolId != null ? ` #${h.poolId}` : ''}</span></td>
-                            <td data-label="In"><RouteAmount asset={h.assetIn} amount={h.displayAmountIn} /></td>
-                            <td data-label="Out" className="r"><RouteAmount asset={h.assetOut} amount={h.displayAmountOut} /></td>
+                            <td data-label="In"><RouteAmount asset={h.assetIn} amount={h.amountIn} /></td>
+                            <td data-label="Out" className="r"><RouteAmount asset={h.assetOut} amount={h.amountOut} /></td>
                             <td data-label="Pool fee" className="r">{h.fee ? <AssetAmount asset={h.fee.asset} amount={h.fee.amount} /> : <span className="muted mono">—</span>}</td>
                           </tr>
                         ))}

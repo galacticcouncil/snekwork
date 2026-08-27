@@ -320,15 +320,18 @@ export function ShortAddr({ addr, full }: { addr: string; full?: boolean }) {
 /* ============ asset logo gradient ============ */
 const ASSET_COLORS: Record<string, [string, string]> = {
   BSX: ['#4FFFB0', '#B3FF8F'], DOT: ['#2C89E9', '#95caff'], USDT: ['#74C742', '#45AC1F'],
-  USDC: ['#2C89E9', '#1f5cab'], HOLLAR: ['#b3cf92', '#74C742'], DAI: ['#F7BF06', '#e3ae00'],
+  // Kusama's own black, lifted to charcoal at the far end so the white ticker on
+  // the fallback disc stays legible.
+  KSM: ['#000000', '#434343'],
+  USDC: ['#2C89E9', '#1f5cab'], DAI: ['#F7BF06', '#e3ae00'],
   WBTC: ['#F7BF06', '#e3ae00'], iBTC: ['#F7BF06', '#e3ae00'], tBTC: ['#F7BF06', '#e3ae00'], WETH: ['#6e7588', '#a8afc0'],
-  vDOT: ['#cc6ef4', '#dfb1f3'], GDOT: ['#2C89E9', '#95caff'], aDOT: ['#cc6ef4', '#dfb1f3'], GLMR: ['#74C742', '#45AC1F'],
+  vDOT: ['#cc6ef4', '#dfb1f3'], GLMR: ['#74C742', '#45AC1F'],
   ASTR: ['#ff6868', '#d83b3b'], CFG: ['#dfb1f3', '#cc6ef4'],
 }
 const PALETTE: [string, string][] = [['#4FFFB0', '#B3FF8F'], ['#2C89E9', '#95caff'], ['#74C742', '#45AC1F'], ['#cc6ef4', '#dfb1f3'], ['#F7BF06', '#e3ae00'], ['#ff6868', '#d83b3b'], ['#6e7588', '#a8afc0'], ['#b3cf92', '#74C742']]
 // Aave aTokens (aUSDC, aUSDT, aEURC…) wrap an underlying token — color them as the
 // underlying (aUSDC reads like USDC) rather than hashing the wrapped symbol to a
-// distinct color. A curated entry for the aToken itself (e.g. aDOT) still wins.
+// distinct color. A curated entry for the aToken itself still wins.
 function underlyingColorSymbol(symbol: string): string {
   return /^a[A-Z]/.test(symbol) ? symbol.slice(1) : symbol
 }

@@ -35,18 +35,6 @@ test('an BSX-paying extrinsic reads in the same shape', async ({ page }) => {
   await expect(feeRow(page, /^Tip$/).locator('.asset-chip')).toContainText('BSX')
 })
 
-test('an EVM transaction states its WETH gas charge and no tip', async ({ page }) => {
-  await page.goto('/extrinsic/12848608-5')
-
-  // Ethereum.transact emits no TransactionFeePaid, so this row used to be a dash:
-  // the cost is the gas the EVM charged in the account's fee currency.
-  const fee = feeRow(page, /^Fee$/)
-  await expect(fee.locator('.asset-chip')).toContainText('WETH')
-  // Its priority fee is bundled into that gas charge and cannot be separated, so
-  // the tip is unknown — never a zero standing in for a number nobody has.
-  await expect(feeRow(page, /^Tip$/)).toHaveText('—')
-})
-
 test('a curated surface shows the tip beside the fee, and only when there is one', async ({ page }) => {
   // A swap states the tip beside the fee, in whichever asset the charge settled
   // in — here BSX, from the trade's own tip figure.

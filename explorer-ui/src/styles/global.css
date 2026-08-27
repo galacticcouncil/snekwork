@@ -81,8 +81,6 @@
   --sky-soft: rgba(83,164,243,0.13);
 
   --green: #74C742;
-  /* HOLLAR brand (the icon palette pair in ui.tsx): sage on dark. */
-  --hollar: #b3cf92;
   --green-deep: #45AC1F;
   --green-soft: rgba(116,199,66,0.15);
 
@@ -154,7 +152,6 @@
   --sky-soft: rgba(83,164,243,0.10);
 
   --green: #45AC1F;
-  --hollar: #45AC1F;
   --green-deep: #2e7c12;
   --green-soft: rgba(116,199,66,0.16);
 
@@ -1948,7 +1945,9 @@ a.stat-card-link:focus-visible { outline: 2px solid var(--sky-deep); outline-off
 @media (max-width: 720px) { .ref-link { max-width: 18ch; } }
 /* Stacks a value under a full-width element (a tally bar) inside the flex-row .dd. */
 .dl .dd.dd-stack { flex-direction: column; align-items: stretch; gap: 6px; }
-.tally-bar { display: flex; width: 100%; height: 10px; border-radius: 5px; overflow: hidden; background: var(--surface-2); }
+/* The track under the aye/nay split — the same second surface `.comp-bar` lays its
+   segments on, so an empty or rounding-short bar still reads as a bar. */
+.tally-bar { display: flex; width: 100%; height: 10px; border-radius: 5px; overflow: hidden; background: var(--bg-elev2); }
 .tally-aye { background: var(--green); }
 .tally-nay { background: var(--red); }
 .vb-aye-text { color: var(--green); }

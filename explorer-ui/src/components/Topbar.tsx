@@ -22,10 +22,9 @@ const IT = {
   events: { to: paths.events(), label: 'Events', match: ['events', 'event'] } as NavItem,
   governance: { to: paths.governance(), label: 'Governance', match: ['governance', 'referendum'] } as NavItem,
 }
-// Liquidity lives under Assets at every width; the trigger navigates to Assets
-// so the menu lists only Liquidity. Governance leads the Chain menu while the
-// trigger keeps Blocks.
-const ASSETS_GROUP: NavGroup = { label: 'Assets', items: [IT.assets, IT.liquidity], menuItems: [IT.liquidity] }
+// Liquidity is a direct link: it used to hide in an Assets dropdown that made
+// room for HDX/HOLLAR/Revenue, and with those gone the dropdown would hold one
+// entry. Governance leads the Chain menu while the trigger keeps Blocks.
 const CHAIN_GROUP: NavGroup = {
   label: 'Chain',
   items: [IT.blocks, IT.extrinsics, IT.events, IT.governance],
@@ -35,7 +34,8 @@ const CHAIN_GROUP: NavGroup = {
 const NAV_ENTRIES: Array<{ kind: 'link'; item: NavItem } | { kind: 'group'; group: NavGroup }> = [
   { kind: 'link', item: IT.activity },
   { kind: 'link', item: IT.accounts },
-  { kind: 'group', group: ASSETS_GROUP },
+  { kind: 'link', item: IT.assets },
+  { kind: 'link', item: IT.liquidity },
   { kind: 'group', group: CHAIN_GROUP },
 ]
 const DRAWER_LINKS: NavItem[] = [IT.activity, IT.accounts, IT.assets, IT.liquidity]
