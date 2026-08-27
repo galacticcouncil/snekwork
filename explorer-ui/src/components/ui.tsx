@@ -6,8 +6,8 @@ import type { AccountRef, AssetOrigin, AssetRef, FailureReason, FeePayment } fro
 import { parseUtcTimestamp } from '../utils/time'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { voteSideLabel } from '../utils/voteRows'
-import { CAT, LIQ_LABELS, MM_LABELS } from './activityColors'
-import { resolveTag, useTagMapVersion } from '../userTags'
+import { CAT, LIQ_LABELS } from './activityColors'
+import { resolveTag } from '../userTags'
 import type { ResolvedTag } from '../userTags'
 
 /* ============ shared formatters ============ */
@@ -181,19 +181,6 @@ export const F = {
     const h = Math.floor(m / 60); if (h < 24) return h + 'h ' + (m % 60) + 'm ago'
     const d = Math.floor(h / 24); return d + 'd ' + (h % 24) + 'h ago'
   },
-  // The same elapsed time said as a DURATION rather than a moment. A pool row's
-  // clock starts when this node first saw the transaction; the block row that
-  // replaces it counts from when the chain executed it, which is later by
-  // however long it waited. Both are true, and phrasing them identically made
-  // the age appear to jump backwards at inclusion — so the pool row says how
-  // long it has been waiting, and only the block row says how long ago.
-  waiting: (ts: string, now = Date.now()) => {
-    const t = parseUtcTimestamp(ts); if (!Number.isFinite(t)) return '—'
-    const s = Math.max(0, Math.floor((now - t) / 1000))
-    if (s < 60) return s + 's'
-    const m = Math.floor(s / 60); if (m < 60) return m + 'm ' + (s % 60) + 's'
-    const h = Math.floor(m / 60); return h + 'h ' + (m % 60) + 'm'
-  },
   datetime: (ts: string) => {
     const t = parseUtcTimestamp(ts); if (!Number.isFinite(t)) return ts
     const d = new Date(t)
@@ -236,12 +223,6 @@ function timeFractions(n: number, dates?: string[]): number[] {
 // Used anywhere a time is shown relative (activity, tables, activity rows).
 export function Ago({ ts, now }: { ts: string; now: number }) {
   return <span title={F.datetime(ts)}>{F.ago(ts, now)}</span>
-}
-
-// How long a transaction has been sitting in the pool, for rows that have no
-// block time yet (see F.waiting for why this is not phrased as "ago").
-export function Waiting({ ts, now }: { ts: string; now: number }) {
-  return <span title={`Waiting in the transaction pool since ${F.datetime(ts)}`}>waiting {F.waiting(ts, now)}</span>
 }
 
 // When something happened, on any surface that shows a single moment: the
@@ -386,16 +367,6 @@ export function originChainIconUrl(origin: AssetOrigin): string {
   return `${METADATA_CDN}/${origin.ecosystem}/${origin.chainId}/icon.svg`
 }
 
-// Hollar-wrapped stablecoins (HUSDC, HUSDT, …) have no icon of their own. preis-ui
-// renders them as a composite half-icon: left = HOLLAR (222), right = the wrapped
-// underlying (HUSDC → USDC). [leftId, rightId] — mirrors preis-ui COMPOSITE_ICONS.
-const COMPOSITE_ICONS: Record<number, [number, number]> = {
-  1110: [222, 22],      // HUSDC = HOLLAR + USDC
-  1111: [222, 10],      // HUSDT = HOLLAR + USDT
-  1112: [222, 1112],    // HUSDS = HOLLAR + USDS (no icon yet → letter half)
-  1113: [222, 1000625], // HUSDe = HOLLAR + sUSDe
-  4444: [222, 44],      // HEURC = HOLLAR + EURC
-}
 // Avoid noisy browser-level blocked requests for assets whose CDN icon format is
 // known from the current Hydration registry. Missing icons go straight to the
 // local gradient fallback; PNG-only icons skip the missing SVG request.
@@ -416,7 +387,7 @@ function initialIconMode(srcId: number): 'svg' | 'png' | 'fail' {
 // icon to sample a color from — callers should skip them and use a fallback color
 // rather than firing a request that only 404s.
 export function iconIsSampleable(assetId: number): boolean {
-  return !(assetId in COMPOSITE_ICONS) && !NO_CDN_ICON_IDS.has(assetId)
+  return !NO_CDN_ICON_IDS.has(assetId)
 }
 
 // A single CDN <img> with the svg→png→letter fallback chain. The load state is
@@ -466,19 +437,13 @@ function CdnIcon({ srcId, symbol, size, clip, origin }: { srcId: number; symbol:
 
 export function AssetIcon({ assetId, iconAssetId, symbol, size = 20, parachainId, origin }: { assetId: number; iconAssetId?: number; symbol: string; size?: number; parachainId?: number | null; origin?: AssetOrigin | null }) {
   // Some assets ship only .svg, others only .png — try svg, then png, then the
-  // gradient-letter fallback (same chain as preis-ui). Hollar-wrapped tokens render
-  // as a composite half/half icon; aTokens use the icon ID resolved by the API.
-  const composite = COMPOSITE_ICONS[assetId]
+  // gradient-letter fallback (same chain as preis-ui). aTokens use the icon ID
+  // resolved by the API.
   const chainOrigin = origin ?? (parachainId != null ? { ecosystem: 'polkadot', chainId: String(parachainId), assetId: null } : null)
   const badgeKey = chainOrigin ? `${chainOrigin.ecosystem}:${chainOrigin.chainId}` : ''
   const [badgeFailure, setBadgeFailure] = useState<{ key: string; failed: boolean }>({ key: badgeKey, failed: false })
   const badgeFailed = badgeFailure.key === badgeKey && badgeFailure.failed
-  const body = composite ? (
-      <span className="asset-logo" style={{ position: 'relative', width: size, height: size, borderRadius: '50%', overflow: 'hidden', display: 'inline-block', background: assetGradient(symbol)[0] }}>
-        <CdnIcon srcId={composite[0]} symbol={symbol} size={size} clip="left" />
-        <CdnIcon srcId={composite[1]} symbol={symbol} size={size} clip="right" />
-      </span>
-    ) : <CdnIcon srcId={iconAssetId ?? assetId} symbol={symbol} size={size} origin={origin} />
+  const body = <CdnIcon srcId={iconAssetId ?? assetId} symbol={symbol} size={size} origin={origin} />
   return <span style={{ position: 'relative', width: size, height: size, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', lineHeight: 0 }}>
     {body}
     {chainOrigin && !badgeFailed && <img
@@ -554,26 +519,17 @@ export function showIconFallback(e: React.SyntheticEvent<HTMLImageElement>) {
 }
 
 // The account's omniwatch/snakewatch identity icon. Same fallback chain as
-// preis-ui's OmniwatchIcon: self-authored profile avatar (wallet-login) →
-// custom image (e.g. a Discord avatar) → emoji glyph → deterministic
-// gradient-letter emoji. `className` styles the emoji <span>; `imgClass`
-// styles the rounded image when an avatar/emojiUrl is present.
+// preis-ui's OmniwatchIcon: custom image (e.g. a Discord avatar) → emoji glyph
+// → deterministic gradient-letter emoji. `className` styles the emoji <span>;
+// `imgClass` styles the rounded image when an emojiUrl is present.
 export function AccountEmoji({ account, className = 'emoji id', imgClass = 'emoji-img', title }: {
-  account: { emoji?: string; emojiName?: string; emojiUrl?: string; accountId: string; profile?: { avatarVersion: number } | null }
+  account: { emoji?: string; emojiName?: string; emojiUrl?: string; accountId: string }
   className?: string
   imgClass?: string
   title?: string
 }) {
   const glyph = account.emoji || emojiFor(account.accountId)
   const name = account.emojiName ?? emojiName(glyph) ?? undefined
-  if (account.profile && account.profile.avatarVersion > 0) {
-    return (
-      <span className={className} style={{ padding: 0, overflow: 'hidden' }} title={title ?? name}>
-        <img className={imgClass} src={`/api/explorer/profile-avatar/${encodeURIComponent(account.accountId)}?v=${account.profile.avatarVersion}`} alt={name ?? glyph} onError={showIconFallback} />
-        <span className="icon-fallback" style={{ display: 'none' }}>{glyph}</span>
-      </span>
-    )
-  }
   if (account.emojiUrl) {
     return (
       <span className={className} style={{ padding: 0, overflow: 'hidden' }} title={title ?? name}>
@@ -583,13 +539,6 @@ export function AccountEmoji({ account, className = 'emoji id', imgClass = 'emoj
     )
   }
   return <span className={className} title={title ?? name}>{glyph}</span>
-}
-export function healthFactorDisplay(hf: string): { label: string; cls: string } {
-  if (hf === 'unknown') return { label: '—', cls: '' }
-  if (hf === 'inf') return { label: 'No debt', cls: '' }
-  const v = Number(hf) / 1e18
-  if (!Number.isFinite(v)) return { label: '—', cls: '' }
-  return { label: v.toFixed(2), cls: v < 1.1 ? 'hf-bad' : v < 1.6 ? 'hf-warn' : 'hf-ok' }
 }
 export function moduleName(accountId: string): string | null {
   if (!accountId.startsWith('0x6d6f646c')) return null
@@ -668,12 +617,12 @@ export function tagMemberSuffix(tag: Pick<ResolvedTag, 'memberCount'>, address: 
 // one specific account (close accounts) would lose that account by navigating to its
 // group, so it keeps the label and redirects the link.
 // `noFocus` (here and on AddrPill) takes the link out of the tab order — for
-// pills inside an aria-hidden region (the revenue river's stage), where a tab
-// stop would land keyboard focus on content assistive tech cannot see.
+// pills inside an aria-hidden region, where a tab stop would land keyboard focus
+// on content assistive tech cannot see.
 export function UserTagPill({ tag, address, noCopy, noMemberSuffix, noFocus, to, isContract }: { tag: ResolvedTag; address: string; noCopy?: boolean; noMemberSuffix?: boolean; noFocus?: boolean; to?: string; isContract?: boolean }) {
   return (
     <span className="addr-wrap">
-      <Link to={to ?? paths.tag(tag.id)} tabIndex={noFocus ? -1 : undefined} className="addr-pill" title={to ? `${tag.name} — open account ${address}` : tag.kind === 'user' ? `${tag.name} — your list “${tag.listName}”` : 'Tagged group — open combined view'}>
+      <Link to={to ?? paths.tag(tag.id)} tabIndex={noFocus ? -1 : undefined} className="addr-pill" title={to ? `${tag.name} — open account ${address}` : 'Tagged group — open combined view'}>
         <TagIcon icon={tag.icon} title={tag.name} />
         <span className="tag" style={tag.color ? { color: tag.color } : undefined}>{tag.name}</span>
         {!noMemberSuffix && tagMemberSuffix(tag, address)}
@@ -685,7 +634,7 @@ export function UserTagPill({ tag, address, noCopy, noMemberSuffix, noFocus, to,
 }
 
 // Subtle "this address holds code" marker inside account pills — its own child
-// so it survives every label branch (tag pill, module, profile, identity, bare
+// so it survives every label branch (tag pill, module, identity, bare
 // address). Non-interactive by design: the global button reset would swallow a
 // nested control, and the account page's Contract card is one click away anyway.
 export function ContractGlyph({ show }: { show?: boolean }) {
@@ -694,13 +643,11 @@ export function ContractGlyph({ show }: { show?: boolean }) {
 }
 
 export function AddrPill({ account, full, noCopy, noTag, noFocus, tagToAccount }: { account: AccountRef; full?: boolean; noCopy?: boolean; noTag?: boolean; noFocus?: boolean; tagToAccount?: boolean }) {
-  useTagMapVersion()   // re-render when the viewer's tag map changes
-  // See UserTagPill: -1 keeps aria-hidden hosts (the revenue river) out of the tab order.
+  // See UserTagPill: -1 keeps aria-hidden hosts out of the tab order.
   const tabIndex = noFocus ? -1 : undefined
-  // Priority-resolved tag (the viewer's own lists, in priority order, with
-  // the system directory as a slot in that order) is the primary label, matching
-  // the Accounts list. `noTag` skips this on tag member lists, where the page
-  // context already supplies the group and each row should show the member itself.
+  // The system tag is the primary label, matching the Accounts list. `noTag`
+  // skips this on tag member lists, where the page context already supplies the
+  // group and each row should show the member itself.
   // `tagToAccount` keeps the name but points the link at the account — for a surface
   // that is about this one account rather than the company it keeps.
   const resolved = noTag ? null : resolveTag(account)
@@ -713,21 +660,6 @@ export function AddrPill({ account, full, noCopy, noTag, noFocus, tagToAccount }
           <span className="emoji">⚙️</span><span className="a">{mod}</span>
           <ContractGlyph show={account.isContract} />
         </Link>
-      </span>
-    )
-  }
-  // Self-set profile name: above on-chain identity (the owner signed for it),
-  // below tags. Distinct class, and NEVER the ✓ mark — that stays exclusive
-  // to registrar-verified identities.
-  if (account.profile?.name) {
-    return (
-      <span className="addr-wrap">
-        <Link to={accountHref(account)} tabIndex={tabIndex} className="addr-pill" title={account.address}>
-          <AccountEmoji account={account} title="profile" />
-          <span className="tag profile-name">{account.profile.name}</span>
-          <ContractGlyph show={account.isContract} />
-        </Link>
-        {!noCopy && <Copy text={account.address} />}
       </span>
     )
   }
@@ -749,7 +681,7 @@ export function AddrPill({ account, full, noCopy, noTag, noFocus, tagToAccount }
   }
   // A verified contract's own name, in the slot the bare address would take —
   // the reason a pill exists is to say WHAT this is, and "GhoToken" says more
-  // than 0x531a…f99a. It sits below identity and profile deliberately: those
+  // than 0x531a…f99a. It sits below identity deliberately: that
   // name the actor, this names the code. Never the ✓ (registrar-verified
   // identities only), and always with the address tail, because contract names
   // are not unique — sixteen addresses on this chain are called ERC1967Proxy,
@@ -803,15 +735,11 @@ export function FailureReasonRow({ reason }: { reason: FailureReason }) {
 }
 
 // The venue one hop of a route trades through. Only Stableswap names a pool, so
-// the id is appended only where there is one. Shared by the trade hovercard's route
-// and the DCA schedule's planned route so a venue never reads two ways.
-// `to` links the badge to the venue's pool page (nested links stay clickable
-// inside rowNav rows, same as every other pill).
-// The pool page a venue hop resolves to: the Omnipool has its own page, a
-// named pool id (stableswap share asset / XYK LP token) has /pool/:id, and
-// anything else (OTC, AAVE, HSM…) has no pool page.
-export function poolHref(pool: string, poolId?: number | null): string | undefined {
-  if (pool === 'Omnipool') return paths.omnipool()
+// the id is appended only where there is one. `to` links the badge to the
+// venue's pool page (nested links stay clickable inside rowNav rows, same as
+// every other pill). A named pool id (stableswap share asset / XYK LP token)
+// has /pool/:id; anything else has no pool page.
+export function poolHref(poolId?: number | null): string | undefined {
   return poolId != null ? paths.pool(poolId) : undefined
 }
 export function PoolBadge({ pool, poolId, to }: { pool: string; poolId?: number | null; to?: string }) {
@@ -819,77 +747,6 @@ export function PoolBadge({ pool, poolId, to }: { pool: string; poolId?: number 
   const label = <>{pool}{poolId != null ? ` #${poolId}` : ''}</>
   if (to) return <Link to={to} className="badge" style={style}>{label}</Link>
   return <span className="badge" style={style}>{label}</span>
-}
-
-// The result of a transaction NOBODY has executed yet. A dry run establishes
-// what would happen against current state — informative (22 of 22 predictions
-// matched the chain in an overnight sample) but not a fact, and sometimes not
-// available at all. So a pool row wears a dashed badge that says "projected",
-// and an unjudged one says nothing rather than showing a green tick for an
-// outcome nothing established.
-// Why the runtime will never include a pool transaction, in the reader's terms.
-// `Payment` is the one seen in the wild — a transaction whose account cannot cover
-// the fee validates Ok (so the node keeps and gossips it) and only fails when a
-// block tries to apply it, which is exactly why the dry run alone reads it as
-// "would succeed."
-function unincludableText(reason: string | null | undefined): string {
-  switch (reason) {
-    case 'Payment': return 'the signer cannot pay the transaction fee'
-    case 'Stale': return 'the nonce has already been used'
-    case 'BadProof': return 'the signature does not verify'
-    case 'ExhaustsResources': return 'it would exceed a block’s resource limits'
-    case 'AncientBirthBlock': return 'its mortal era has expired'
-    default: return 'the runtime will not include it in a block'
-  }
-}
-
-// The result of a pool transaction, told honestly: whether it can enter a block at
-// all comes first, and only then what its call would do. A `rejected` transaction
-// is never listed in a feed — it reaches this badge on its own detail page — so
-// the point here is to replace the dry run's misleading "would succeed" with the
-// reason it is stuck. `queued` waits on an earlier nonce; otherwise the dry-run
-// projection stands.
-export function MempoolResultBadge({ includability, reason, projected, compact }: {
-  includability?: 'includable' | 'queued' | 'rejected' | 'unknown'
-  reason?: string | null
-  projected?: 'ok' | 'fail' | 'unknown'
-  compact?: boolean
-}) {
-  if (includability === 'rejected') {
-    return (
-      <span className={`badge projected fail${compact ? ' badge-icon' : ''}`} title={`Cannot be included — ${unincludableText(reason)}. It passes the node's checks and is kept in the pool, but no block can apply it.`}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-        {compact ? null : 'Cannot be included'}
-      </span>
-    )
-  }
-  if (includability === 'queued') {
-    return (
-      <span className={`badge pending${compact ? ' badge-icon' : ''}`} title="Waiting on an earlier transaction from this signer — a lower nonce must be included first">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
-        {compact ? null : 'Queued behind an earlier nonce'}
-      </span>
-    )
-  }
-  return <ProjectedBadge verdict={projected ?? 'unknown'} compact={compact} />
-}
-
-export function ProjectedBadge({ verdict, compact }: { verdict: 'ok' | 'fail' | 'unknown'; compact?: boolean }) {
-  if (verdict === 'unknown') {
-    return <span className="badge projected unknown" title="No dry-run projection available — the outcome is unknown until a block executes it">?</span>
-  }
-  const ok = verdict === 'ok'
-  const title = ok
-    ? 'Projected to succeed — a dry run against current state, not yet executed'
-    : 'Projected to fail against current state — the chain may still execute it differently'
-  return (
-    <span className={`badge projected ${ok ? 'ok' : 'fail'}`} title={title}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-        {ok ? <polyline points="20 6 9 17 4 12" /> : <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>}
-      </svg>
-      {compact ? null : (ok ? 'Would succeed' : 'Would fail')}
-    </span>
-  )
 }
 
 export function StatusBadge({ ok, reason, compact }: { ok: boolean; reason?: string; compact?: boolean }) {
@@ -975,37 +832,6 @@ export function CopyTextButton({ label, text }: { label: string; text: string })
 }
 
 /* ============ charts ============ */
-// How far along something is, as a ring: a DCA schedule's spent budget today.
-// One geometry, one moving number — the dash length — so the ring reads the same
-// at 26px in a table cell and at 72px on a detail page. `pct` null draws the
-// track alone, which is what an open-ended schedule has to show: it is running,
-// it has no end to be a fraction of.
-export function ProgressRing({ pct, size = 46, stroke = 5, color = CAT.tradeDca, label, title }: {
-  pct: number | null
-  size?: number
-  stroke?: number
-  color?: string
-  label?: ReactNode      // centre text; omit for the small in-table ring
-  title?: string
-}) {
-  const r = (44 - stroke) / 2
-  const circumference = 2 * Math.PI * r
-  const filled = pct == null ? 0 : Math.max(0, Math.min(100, pct)) / 100
-  return (
-    <span className="prog-ring" style={{ width: size, height: size }} title={title}>
-      <svg viewBox="0 0 44 44" aria-hidden="true">
-        <circle className="pr-track" cx="22" cy="22" r={r} strokeWidth={stroke} fill="none" />
-        {filled > 0 && <circle
-          cx="22" cy="22" r={r} stroke={color} strokeWidth={stroke} fill="none" strokeLinecap="round"
-          strokeDasharray={`${(circumference * filled).toFixed(2)} ${circumference.toFixed(2)}`}
-          transform="rotate(-90 22 22)"
-        />}
-      </svg>
-      {label != null && <span className="pr-label">{label}</span>}
-    </span>
-  )
-}
-
 export function Sparkline({ data, w = 110, h = 30, change7d }: { data: number[]; w?: number; h?: number; change7d?: number | null }) {
   const id = useId()
   if (!data || data.length < 2) return <Dash />
@@ -1070,8 +896,6 @@ const CHART_MARKER_COLORS: Record<string, string> = {
   'transfer-out': CAT.transfer,
   swap: CAT.trade,
   liquidity: CAT.liquidity,
-  liquidation: CAT.bad,
-  dca: CAT.tradeDca,
   'cross-chain': CAT.xcm,
   price: 'var(--text-low)', // neutral: a market move, not an on-chain event
   other: 'var(--text-low)',
@@ -1709,13 +1533,11 @@ export function rowNav(to: string) {
 // Shared activity type-filter chips (Activity page, account & asset detail). The chip
 // value maps to the backend activity `type` filter; 'all' is the unfiltered feed.
 const ACTIVITY_CHIPS: { v: string; label: string }[] = [
-  { v: 'all', label: 'All' }, { v: 'trade', label: 'Trade' }, { v: 'mm', label: 'Borrow' }, { v: 'liquidity', label: 'Liquidity' },
-  { v: 'transfer', label: 'Transfer' }, { v: 'xcm', label: 'Cross-chain' }, { v: 'stake', label: 'Stake' }, { v: 'vote', label: 'Vote' },
+  { v: 'all', label: 'All' }, { v: 'trade', label: 'Trade' }, { v: 'liquidity', label: 'Liquidity' },
+  { v: 'transfer', label: 'Transfer' }, { v: 'xcm', label: 'Cross-chain' }, { v: 'vote', label: 'Vote' },
 ]
 const ACTIVITY_CHIP_VALUES = new Set(ACTIVITY_CHIPS.map(c => c.v))
 export function normalizeActivityType(value: string): string {
-  if (value === 'dca') return 'trade'   // dca is surfaced under the Trade feed (server does the same)
-  if (value === 'otc') return 'trade'   // otc is surfaced under the Trade feed (server does the same)
   return ACTIVITY_CHIP_VALUES.has(value) ? value : 'all'
 }
 
@@ -1723,19 +1545,10 @@ export function normalizeActivityType(value: string): string {
 export const ACTIVITY_ACTIONS: Record<string, { v: string; label: string }[]> = {
   // Labels mirror the badges the activity table renders for each row, so the
   // filter names exactly what it filters — the renamed ones read from the badge's
-  // own map rather than restating it. OTC (place/pull/fill) is folded in
-  // here alongside swap/dca — otc rows keep their own badges/slugs/detail
-  // pages, only the Trade categorization changes.
-  trade: [
-    { v: 'swap', label: 'Swap' }, { v: 'dca', label: 'DCA' }, { v: 'dca-failed', label: 'Failed DCA' },
-    { v: 'otc-place', label: 'OTC place' }, { v: 'otc-pull', label: 'OTC pull' }, { v: 'otc-fill', label: 'OTC fill' },
-  ],
+  // own map rather than restating it.
+  trade: [{ v: 'swap', label: 'Swap' }],
   xcm: [{ v: 'out', label: 'Outgoing' }, { v: 'in', label: 'Incoming' }],
-  liquidity: [{ v: 'Add', label: 'Add liquidity' }, { v: 'Remove', label: 'Remove liquidity' }, { v: 'Create', label: 'Create pool' }, { v: 'Destroy', label: 'Destroy pool' }, { v: 'Claim', label: LIQ_LABELS.Claim }, { v: 'ClaimReferral', label: LIQ_LABELS.ClaimReferral }],
-  mm: [{ v: 'Supply', label: MM_LABELS.Supply }, { v: 'Withdraw', label: 'Withdraw' }, { v: 'Borrow', label: 'Borrow' }, { v: 'Repay', label: 'Repay' }, { v: 'LiquidationCall', label: MM_LABELS.LiquidationCall }, { v: 'ClaimRewards', label: MM_LABELS.ClaimRewards }],
-  // Staking values ARE their labels — the server sends the action as a word, not a
-  // runtime event name — so there is no mapping here to keep in step.
-  stake: [{ v: 'Stake', label: 'Stake' }, { v: 'Add stake', label: 'Add stake' }, { v: 'Unstake', label: 'Unstake' }, { v: 'Force unstake', label: 'Force unstake' }, { v: 'Staking reward', label: 'Staking reward' }, { v: 'GIGAHDX Stake', label: 'GIGAHDX Stake' }, { v: 'GIGAHDX Unstake', label: 'GIGAHDX Unstake' }, { v: 'GIGAHDX Cancel Unstake', label: 'GIGAHDX Cancel Unstake' }, { v: 'GIGAHDX Unlock', label: 'GIGAHDX Unlock' }, { v: 'GIGAHDX Migrate', label: 'GIGAHDX Migrate' }, { v: 'GIGAHDX Reward', label: 'GIGAHDX Reward' }, { v: 'Collator payout', label: 'Collator payout' }],
+  liquidity: [{ v: 'Add', label: 'Add liquidity' }, { v: 'Remove', label: 'Remove liquidity' }, { v: 'Create', label: 'Create pool' }, { v: 'Destroy', label: 'Destroy pool' }, { v: 'Claim', label: LIQ_LABELS.Claim }],
   // The value is the chain's own term; the label is how this app writes that side —
   // taken from the same mapping the badges use, so the two cannot diverge.
   vote: [{ v: 'Aye', label: voteSideLabel('Aye') }, { v: 'Nay', label: voteSideLabel('Nay') }],

@@ -34,14 +34,12 @@ describe('BalanceBreakdown', () => {
       frozen: raw(500),
       breakdown: [
         { kind: 'lock', source: 'vote', amount: raw(500) },
-        { kind: 'lock', source: 'staking', amount: raw(100) },
-        { kind: 'reserve', source: 'otc', amount: raw(30) },
+        { kind: 'lock', source: 'vesting', amount: raw(100) },
         { kind: 'deposit', source: 'identity', amount: raw(12) },
         { kind: 'deposit', source: 'referenda', amount: raw(20) },
       ],
       timeline: [
-        { state: 'releasable', cause: 'staking', amount: raw(100) },
-        { state: 'scheduled', cause: 'gigahdx', amount: raw(80), until: inDays(35), conditional: true },
+        { state: 'releasable', cause: 'vesting', amount: raw(100) },
         { state: 'scheduled', cause: 'vote', amount: raw(220), until: inDays(120) },
         { state: 'active', cause: 'vote', amount: raw(100) },
       ],
@@ -52,24 +50,20 @@ describe('BalanceBreakdown', () => {
     // transferable is the first schedule row (labeled "free")
     expect(html).toContain('free')
     // reason-led rows: cause · amount · duration description
-    expect(html).toContain('staking')
-    expect(html).toContain('unstake to free')
+    expect(html).toContain('vesting')
+    expect(html).toContain('claim to free')
     // days, never dates
     expect(html).toMatch(/in \d+d/)
     expect(html).not.toMatch(/Aug|Nov|20\d\d/)
-    expect(html).toContain('if unstaked now')
     // exceeding ongoing votes stay open-ended
     expect(html).toContain('while voting/delegating')
-    // statics lead with the reason, no product labels or "static" word
-    expect(html).toContain('OTC')
-    expect(html).toContain('until pulled')
+    // statics lead with the reason, no "static" word
     expect(html).toContain('deposits')
     expect(html).toContain('until cleared')
-    expect(html).not.toContain('OTC order')
     expect(html).not.toContain('static')
     // order: transferable ("free") → releasable → clearable statics →
     // still-cast votes → hard dated locks ascending
-    const order = ['free', 'unstake to free', 'until pulled', 'until cleared', 'while voting/delegating', 'if unstaked now']
+    const order = ['free', 'claim to free', 'until cleared', 'while voting/delegating']
     const idx = order.map(t => html.indexOf(t))
     expect(idx.every(i => i >= 0)).toBe(true)
     expect([...idx].sort((a, b) => a - b)).toEqual(idx)
@@ -101,29 +95,13 @@ describe('BalanceBreakdown', () => {
     expect(html).toContain('vote (old)')
   })
 
-  it('distinguishes running GHDX unstake batches from the staked part', () => {
-    const html = render(bal({
-      frozen: raw(500),
-      breakdown: [{ kind: 'lock', source: 'gigahdx', amount: raw(500) }],
-      timeline: [
-        { state: 'scheduled', cause: 'gigahdx', amount: raw(100), until: inDays(15) },
-        { state: 'scheduled', cause: 'gigahdx', amount: raw(150), until: inDays(25) },
-        { state: 'scheduled', cause: 'gigahdx', amount: raw(250), until: inDays(35), conditional: true },
-      ],
-    }))
-    // two unstake batches with different maturities + the staked remainder
-    expect(html.match(/GHDX unstake/g)?.length).toBe(2)
-    expect(html).toContain('if unstaked now')
-    expect(html).not.toContain('GIGAHDX')
-  })
-
   it('reserve-only assets show only the reason rows', () => {
     const html = render(bal({
-      breakdown: [{ kind: 'reserve', source: 'dca', amount: raw(80) }],
+      breakdown: [{ kind: 'deposit', source: 'identity', amount: raw(80) }],
     }))
-    expect(html).toContain('DCA')
-    expect(html).toContain('until cancelled')
-    expect(html).not.toContain('DCA budget')
+    expect(html).toContain('deposits')
+    expect(html).toContain('until cleared')
+    expect(html).not.toContain('identity deposit')
     expect(html).not.toContain('anytime')
   })
 })

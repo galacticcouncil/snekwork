@@ -18,38 +18,20 @@ describe('parseRoute (clean-path routing, design routes)', () => {
     expect(p('/trades')).toEqual({ name: 'legacy', to: '/activity?tab=trade' })
     expect(p('/accounts')).toEqual({ name: 'accounts' })
     expect(p('/account/7P6Agw')).toEqual({ name: 'account', address: '7P6Agw' })
-    expect(p('/contracts')).toEqual({ name: 'contracts' })
     expect(p('/assets')).toEqual({ name: 'assets' })
-    expect(p('/hdx')).toEqual({ name: 'hdx' })
-    expect(p('/hollar')).toEqual({ name: 'hollar' })
-    expect(p('/revenue')).toEqual({ name: 'revenue' })
     expect(p('/asset/5')).toEqual({ name: 'asset', assetId: 5 })
     expect(p('/holders/0')).toEqual({ name: 'holders', assetId: 0 })
     expect(p('/pool/690')).toEqual({ name: 'pool', poolId: 690 })
     expect(p('/pool/x')).toEqual({ name: 'assets' })
-    expect(p('/omnipool')).toEqual({ name: 'omnipool' })
     expect(p('/nope')).toEqual({ name: 'notfound', path: '/nope' })
   })
   it('path builders round-trip', () => {
     expect(p(paths.block(42))).toEqual({ name: 'block', height: 42 })
     expect(p(paths.pool(1000044))).toEqual({ name: 'pool', poolId: 1000044 })
-    expect(p(paths.omnipool())).toEqual({ name: 'omnipool' })
-    expect(p(paths.hollar())).toEqual({ name: 'hollar' })
-    expect(p(paths.revenue())).toEqual({ name: 'revenue' })
-    expect(p(paths.contracts())).toEqual({ name: 'contracts' })
     expect(p(paths.asset(5))).toEqual({ name: 'asset', assetId: 5 })
     expect(p(paths.extrinsicAt(100, 3))).toEqual({ name: 'extrinsic', id: '100-3' })
     expect(p(paths.tag('t1'))).toEqual({ name: 'tag', tagId: 't1' })
     expect(p(paths.tagsHydration())).toEqual({ name: 'tags-hydration' })
-  })
-  it('resolves /list/:id from just the first segment, ignoring anything after it', () => {
-    // A user tag's own aggregate page lives at the system /tag/:id namespace
-    // (TagDetail resolves it client-side via userTags.listForTag), never under
-    // its owning list — so /list/:id takes only the id and drops any trailing
-    // segments rather than special-casing them.
-    expect(p('/list/lib1')).toEqual({ name: 'list', listId: 'lib1' })
-    expect(p('/list/lib1/tag/t1')).toEqual({ name: 'list', listId: 'lib1' })
-    expect(p('/list/lib1/tag')).toEqual({ name: 'list', listId: 'lib1' })
   })
   it('/tags/hydration is its own route; any other /tags/* falls back to the hub', () => {
     expect(p('/tags/hydration')).toEqual({ name: 'tags-hydration' })
@@ -65,27 +47,17 @@ describe('parseRoute (clean-path routing, design routes)', () => {
 
 describe('activity detail routes', () => {
   it('parses every activity slug', () => {
-    for (const slug of ['swap', 'transfer', 'cross-chain', 'add-liquidity', 'remove-liquidity', 'destroy-pool', 'lend', 'withdraw', 'borrow', 'repay', 'liquidate', 'staking', 'vote', 'otc-place', 'otc-pull', 'otc-fill']) {
+    for (const slug of ['swap', 'transfer', 'cross-chain', 'add-liquidity', 'remove-liquidity', 'destroy-pool', 'claim-rewards', 'vote']) {
       expect(p(`/${slug}/13072380-e2`)).toEqual({ name: 'activity-detail', slug, id: '13072380-e2' })
       expect(p(`/${slug}/13072380-4`)).toEqual({ name: 'activity-detail', slug, id: '13072380-4' })
     }
     // A pool destruction is a liquidity-tab activity, same as create/add/remove —
     // the crumb and the malformed-id fallback both resolve through this map.
     expect(ACTIVITY_SLUG_TAB['destroy-pool']).toBe('liquidity')
-    // DCA is a schedule page: numeric ids open it. The event-form id opens a
-    // single execution's detail; the extrinsic-form id (the scheduling
-    // extrinsic) still resolves to the owning schedule.
-    expect(p('/dca/33546')).toEqual({ name: 'dca-schedule', scheduleId: 33546 })
-    expect(p('/dca/13072380-4')).toEqual({ name: 'dca-resolve', height: 13072380, index: 4, kind: 'extrinsic' })
-    expect(p('/dca/13072380-e2')).toEqual({ name: 'dca-execution', height: 13072380, eventIndex: 2 })
   })
   it('rejects malformed activity ids', () => {
     expect(p('/swap/abc')).toEqual({ name: 'legacy', to: '/activity?tab=trade' })
     expect(p('/cross-chain/')).toEqual({ name: 'legacy', to: '/activity?tab=xcm' })
-    // OTC folds under the Trade activity tab (rows keep their own otc-* slugs).
-    expect(p('/otc-place/abc')).toEqual({ name: 'legacy', to: '/activity?tab=trade' })
-    expect(p('/otc-pull/')).toEqual({ name: 'legacy', to: '/activity?tab=trade' })
-    expect(p('/otc-fill/abc')).toEqual({ name: 'legacy', to: '/activity?tab=trade' })
   })
   it('redirects legacy /trade to /swap', () => {
     expect(p('/trade/12847348-e77')).toEqual({ name: 'legacy', to: '/swap/12847348-e77' })

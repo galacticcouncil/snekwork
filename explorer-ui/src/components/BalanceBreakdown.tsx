@@ -11,7 +11,7 @@ import type { AddressBalance, BalanceLockComponent, BalanceUnlockSlice } from '.
 // (locks overlap, so the server decomposes frozen = the largest lock into
 // time-ordered slices — colored by the lock that causes each slice, toned by
 // how soon it frees, linear vesting fading out), then the static reserves
-// (DCA/OTC orders, deposits — they release only when cancelled or cleared).
+// (deposits — they release only when cleared).
 // Below it, the unlock schedule answers the actual question: WHEN does HOW MUCH
 // unlock, and WHY is it locked.
 
@@ -19,21 +19,15 @@ const big = (v: string | undefined | null) => { try { return BigInt(v || '0') } 
 const min = (a: bigint, b: bigint) => (a < b ? a : b)
 
 interface SourceMeta { label: string; color: string }
-// Lock hues come from the shared lock palette (lockColor) so this bar and the
-// /hdx dashboard stay in parity: transferable light blue, vote (new + old)
-// lavender, staking purple, vesting red (gradient when linear), GHDX brand
-// black with dark-grey unstake batches, and ONE blue for every clearable
-// deposit/order. Names are singular; GHDX is abbreviated to fit the dense bar.
+// Lock hues come from the shared lock palette (lockColor): transferable light
+// blue, vote (new + old) lavender, vesting red (gradient when linear), and ONE
+// blue for every clearable deposit. Names are singular.
 const SOURCE_META: Record<string, SourceMeta> = {
   vesting: { label: 'vesting', color: lockColor('vesting') },
-  staking: { label: 'staking', color: lockColor('staking') },
   vote: { label: 'vote', color: lockColor('vote') },
-  gigahdx: { label: 'GHDX', color: lockColor('gigahdx') },
   democracy: { label: 'vote (old)', color: lockColor('vote') },
   elections: { label: 'council elections (legacy)', color: 'var(--text-low)' },
   sufficiency: { label: 'ED cover', color: 'var(--text-low)' },
-  dca: { label: 'DCA budget', color: 'var(--bd-clear)' },
-  otc: { label: 'OTC order', color: 'var(--bd-clear)' },
   preimage: { label: 'preimage deposit', color: 'var(--bd-clear)' },
   identity: { label: 'identity deposit', color: 'var(--bd-clear)' },
   proxy: { label: 'proxy deposit', color: 'var(--bd-clear)' },
@@ -41,10 +35,8 @@ const SOURCE_META: Record<string, SourceMeta> = {
   referenda: { label: 'referenda deposits', color: 'var(--bd-clear)' },
   other: { label: 'other', color: 'var(--bd-clear)' },
 }
-// Running/matured GHDX unstake batches: dark grey, distinct from staked black.
-const GHDX_UNSTAKE_GREY = '#5c6270'
 const sourceMeta = (source: string): SourceMeta => SOURCE_META[source] ?? { label: source, color: 'var(--text-low)' }
-// 'vote+staking' ties → "votes + staking", colored by the first cause.
+// 'vote+vesting' ties → "vote + vesting", colored by the first cause.
 const causeLabel = (cause: string) => cause.split('+').map(c => sourceMeta(c).label).join(' + ')
 const causeColor = (cause: string) => sourceMeta(cause.split('+')[0]).color
 
@@ -75,28 +67,17 @@ function relWhen(until: string | undefined): string {
 // One row of the unlock schedule: reason · how much · lock-duration description.
 interface ScheduleRow { key: string; cause: string; amount: bigint; desc?: string; color: string; toneOverride?: string; gradient?: boolean }
 
-// Static reserve-side rows collapse into as few slices as possible: DCA and OTC
-// orders stay their own (product) slices; every deposit-shaped rest — identity,
-// proxy, multisig, referenda, preimages, plus whatever stays unattributed —
-// merges into ONE "until cleared" slice named by its parts.
+// Static reserve-side rows collapse into as few slices as possible: every
+// deposit — identity, proxy, multisig, referenda, preimages, plus whatever
+// stays unattributed — merges into ONE "until cleared" slice.
 function mergeStatics(statics: BalanceLockComponent[]): { label: string; color: string; amount: bigint; detail: string }[] {
-  const orders = statics.filter(c => c.source === 'dca' || c.source === 'otc')
-  const deposits = statics.filter(c => c.source !== 'dca' && c.source !== 'otc')
-  const out = orders.map(c => ({
-    label: c.source === 'otc' ? 'OTC' : 'DCA',
-    color: sourceMeta(c.source).color,
-    amount: big(c.amount),
-    detail: c.source === 'otc' ? 'until pulled' : 'until cancelled',
-  }))
-  if (deposits.length) {
-    out.push({
-      label: 'deposits',
-      color: 'var(--bd-clear)',
-      amount: deposits.reduce((s, c) => s + big(c.amount), 0n),
-      detail: 'until cleared',
-    })
-  }
-  return out
+  if (!statics.length) return []
+  return [{
+    label: 'deposits',
+    color: 'var(--bd-clear)',
+    amount: statics.reduce((s, c) => s + big(c.amount), 0n),
+    detail: 'until cleared',
+  }]
 }
 
 type Segment = { key: string; background: string; value: number; tip: ReactNode }
@@ -212,8 +193,6 @@ function BreakdownBand({ rows, segments, legendContent }: {
 // Open-ended slices describe what must happen before they can free.
 function openEndedWhen(cause: string): { detail?: string } {
   const first = cause.split('+')[0]
-  if (first === 'staking') return { detail: 'unstake to free' }
-  if (first === 'gigahdx') return { detail: 'staked · 28d unbond' }
   if (first === 'vote' || first === 'democracy') return { detail: 'while voting/delegating' }
   if (first === 'elections') return { detail: 'orphaned lock' }
   return {}
@@ -255,26 +234,20 @@ export function BalanceBreakdown({ balance }: { balance: AddressBalance }) {
     const color = causeColor(s.cause)
     const amount = big(s.amount)
     if (s.state === 'releasable') {
-      // A releasable gigahdx slice is a MATURED unstake batch awaiting withdrawal.
-      const unstake = s.cause === 'gigahdx'
       releasableRows.push({
-        key: `t${i}`, cause: unstake ? 'GHDX unstake' : causeLabel(s.cause), amount,
-        desc: s.cause === 'staking' ? 'unstake to free' : s.cause.includes('vesting') ? 'claim to free' : 'unlock call away',
-        color: unstake ? GHDX_UNSTAKE_GREY : color,
-        toneOverride: tone(unstake ? GHDX_UNSTAKE_GREY : color, 38),
+        key: `t${i}`, cause: causeLabel(s.cause), amount,
+        desc: s.cause.includes('vesting') ? 'claim to free' : 'unlock call away',
+        color,
+        toneOverride: tone(color, 38),
       })
     } else if (s.state === 'scheduled') {
       const idx = scheduledSlices.indexOf(s)
       const pct = scheduledSlices.length > 1 ? 55 + Math.round((idx / (scheduledSlices.length - 1)) * 30) : 70
-      // A dated (non-conditional) GHDX slice is a running unstake batch —
-      // dark grey, distinct from the staked black part which only frees if
-      // unstaked now.
-      const unstake = s.cause === 'gigahdx' && !s.conditional
       datedRows.push({
-        key: `t${i}`, cause: unstake ? 'GHDX unstake' : causeLabel(s.cause), amount,
-        desc: [relWhen(s.until), s.linear ? 'vests linearly' : s.conditional ? 'if unstaked now' : ''].filter(Boolean).join(' · ') || 'scheduled',
-        color: unstake ? GHDX_UNSTAKE_GREY : color,
-        toneOverride: unstake ? GHDX_UNSTAKE_GREY : tone(color, pct),
+        key: `t${i}`, cause: causeLabel(s.cause), amount,
+        desc: [relWhen(s.until), s.linear ? 'vests linearly' : ''].filter(Boolean).join(' · ') || 'scheduled',
+        color,
+        toneOverride: tone(color, pct),
         gradient: s.linear,
       })
     } else {

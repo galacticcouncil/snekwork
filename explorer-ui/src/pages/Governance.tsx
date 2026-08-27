@@ -1,12 +1,11 @@
 import { useMemo } from 'react'
-import { useGovernanceMotions, useGovernanceOverview, useGovernanceReferenda, useGovernanceTips, useSecurityDashboard, useStats } from '../hooks/useExplorerData'
+import { useGovernanceMotions, useGovernanceOverview, useGovernanceReferenda, useGovernanceTips, useStats } from '../hooks/useExplorerData'
 import { useNow } from '../hooks/useNow'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { Link, paths, setQuery, useQuery, useQueryValue } from '../router'
 import { AddrPill, Crumbs, Dash, DetailTabs, EmptyRow, F, MomentLink, Pager, pendingRows, rowNav, TableSkeleton } from '../components/ui'
-import { NotifyButton } from '../components/NotifyButton'
 import { estimateBlockCountdown } from '../utils/blockCountdown'
-import { blockSeconds, fmtDuration } from '../utils/dca'
+import { blockSeconds, fmtDuration } from '../utils/blockTime'
 import { ayeSharePct } from '../utils/referendumVotes'
 import type { ActiveReferendumCard, CollectiveMotionRow, ExplorerStats, GovernanceReferendumRow, TreasuryTipRow } from '../types'
 
@@ -247,32 +246,6 @@ function TipRow({ t, now }: { t: TreasuryTipRow; now: number }) {
   )
 }
 
-/* ---- the committee roster (the /security/guardians view, in brief) ---- */
-
-// Who the committee IS, right above what it has done — the same roster and
-// thresholds the security page's Guardians section shows, linking there for the
-// full control matrix (which lever needs which majority).
-function TcMembersCard() {
-  const { data } = useSecurityDashboard()
-  const tc = data?.guardians.techCommittee
-  if (!tc) return null
-  return (
-    <div className="pf-card gov-tc-card">
-      <div className="sec-meter-head">
-        <span className="sec-sub" style={{ margin: 0 }}>Members</span>
-        <span className="mono muted" style={{ fontSize: 12 }}>
-          {tc.size > 0 ? `${tc.majority} of ${tc.size} to act · ${tc.superMajority} of ${tc.size} for XCM channels` : 'membership unavailable'}
-        </span>
-      </div>
-      {tc.members.length > 0 && <div className="sec-pills">{tc.members.map(m => <AddrPill key={m.accountId} account={m} />)}</div>}
-      <div className="hdx-note" style={{ marginTop: 10 }}>
-        A simple majority takes effect the moment a motion closes — no referendum, no waiting period.{' '}
-        <Link to={paths.security('guardians')} className="hash">Which lever needs which majority →</Link>
-      </div>
-    </div>
-  )
-}
-
 // Council motions page independently inside the archive tab — three tables on
 // one tab must not fight over one ?page.
 function CouncilMotions() {
@@ -331,18 +304,6 @@ export function Governance() {
         </div>
       </div>
 
-      {/* The same chain-wide watches the detail pages offer, where the reader
-          actually is: referenda phase alerts here, committee motions on their
-          own tab below. */}
-      <div className="ext-link-row">
-        <NotifyButton
-          variant="link"
-          label="Watch referenda"
-          title="Alert me when a referendum enters a new phase"
-          rule={{ kind: 'referendum', params: {}, name: 'New referenda' }}
-        />
-      </div>
-
       {active.length > 0 && (
         <>
           <div className="sec-title">Deciding now
@@ -360,16 +321,7 @@ export function Governance() {
 
       {activeView === 'tc' && (
         <>
-          <div className="ext-link-row" style={{ marginTop: 2 }}>
-            <NotifyButton
-              variant="link"
-              label="Watch TC motions"
-              title="Alert me when the technical committee proposes or resolves a motion"
-              rule={{ kind: 'tc-motion', params: {}, name: 'TC motions' }}
-            />
-          </div>
           <p className="gov-era-note">The technical committee fast-tracks upkeep the runtime trusts it with — registry updates, parameter changes, emergency actions. Each motion links to its propose transaction, where the full call is decoded.</p>
-          <TcMembersCard />
           <MotionsTable body="tc" page={page} onPage={setPage} />
         </>
       )}

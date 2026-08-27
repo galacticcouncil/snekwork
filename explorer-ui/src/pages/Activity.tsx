@@ -8,9 +8,6 @@ import { ActivityTable } from '../components/ActivityTable'
 import { FilterZone, useFilters } from '../components/Filters'
 import { activityFilterFields } from '../components/activityFilters'
 import { categoryColor } from '../components/activityColors'
-import { NotifyButton } from '../components/NotifyButton'
-import { LARGE_VALUE_MIN_USD } from '../notificationKinds'
-import type { PendingNotification } from '../pendingNotification'
 import { offeredPages } from '../utils/activityPaging'
 
 const PAGE = 25
@@ -61,33 +58,6 @@ export function SmolToggle({ hiding, onToggle }: { hiding: boolean; onToggle: ()
     </button>
   )
 }
-// Which of the feed's current filters an alert rule can actually express. A
-// token plus a USD floor IS a large-trade rule on the trade tab and a
-// large-transfer rule on the transfer one; everything else the filter zone
-// offers (dates, an identity class, a per-category action) has no trigger kind
-// behind it, and offering a "Notify" that quietly drops half the filter would
-// promise alerts the reader never asked for. So: express it exactly, or hide.
-// The `all` tab keeps the trade rule it has always produced — a narrowing the
-// reader can see in the button's own copy, never a widening.
-const NOTIFIABLE_TABS: Record<string, { kind: 'large-trade' | 'large-transfer' }> = {
-  all: { kind: 'large-trade' },
-  trade: { kind: 'large-trade' },
-  transfer: { kind: 'large-transfer' },
-}
-export function notifiableFilters(type: string, token: string | undefined, min: string | undefined): PendingNotification | null {
-  const tab = NOTIFIABLE_TABS[type]
-  const assetId = Number(token)
-  const minUsd = Number(min)
-  if (!tab) return null
-  if (!token || !Number.isInteger(assetId) || assetId < 0) return null
-  if (!min || !Number.isFinite(minUsd) || minUsd < LARGE_VALUE_MIN_USD) return null
-  // No name: the server already describes a rule exactly, and it is the side that
-  // holds the asset registry — naming it here produced "on asset 1000625" where the
-  // server says "on sUSDe", and a Title-cased name sitting in the same slot as a
-  // lowercase summary made the list read inconsistently. One source, one wording.
-  return { kind: tab.kind, params: { assetId, minUsd } }
-}
-
 export function Activity() {
   useDocumentTitle('Activity')
   const page = usePageParam()
@@ -97,23 +67,18 @@ export function Activity() {
   // it never renders as a filter chip and "clear filters" leaves it alone.
   const { values: f, onChange, onClear, setDay } = useFilters({ reservedKeys: ['page', 'tab', 'smol'] })
   const [hideSmol, toggleSmol] = useHideSmol()
-  // Failed attempts have no executed USD value. Selecting either DCA action
-  // must therefore bypass the implicit "hide smol" floor, while an explicit
-  // user-entered minimum remains authoritative.
-  const activityMin = (action === 'dca' || action === 'dca-failed') && !f.min
-    ? undefined
-    : effectiveMin(f.min, hideSmol)
+  const activityMin = effectiveMin(f.min, hideSmol)
   // isPlaceholderData: these rows answer the PREVIOUS filter/tab/page, kept on screen
   // while the new one loads. A high "$ from" here takes tens of seconds, so without
   // marking them the feed reads as ignoring the filter (see pendingRows).
-  const { data, isFetching, isPlaceholderData, error, refetch, anchorRef } = useActivity(PAGE, f.from, f.to, page * PAGE, type, { token: f.token, min: activityMin, minRevenue: f.minRevenue, identity: f.identity }, action || undefined)  // filters applied server-side
+  const { data, isFetching, isPlaceholderData, error, refetch, anchorRef } = useActivity(PAGE, f.from, f.to, page * PAGE, type, { token: f.token, min: activityMin, identity: f.identity }, action || undefined)  // filters applied server-side
   // The pager's two bounds, under exactly the filters above: how many rows the feed
   // holds where the API can count it (the vote feed pages in SQL over one source, so
   // its length is that source's own count), and always how deep the API serves this
   // category. The categories assembled from several sources report no total, so they
   // get no page numbers — but their › arrow still stops at the servable depth
   // instead of walking a reader into a refused request.
-  const { data: count } = useActivityCount(type, f.from, f.to, { token: f.token, min: activityMin, minRevenue: f.minRevenue, identity: f.identity }, action || undefined)
+  const { data: count } = useActivityCount(type, f.from, f.to, { token: f.token, min: activityMin, identity: f.identity }, action || undefined)
   // The daily histogram mirrors the active tab + action/token filters.
   const { data: daily } = useDaily('activity', { type, action: action || undefined, token: f.token || undefined })
   const assets = useAssetFilterOptions()
@@ -121,9 +86,6 @@ export function Activity() {
 
   const rows = data ?? []
   const pages = offeredPages({ page, rowsOnPage: rows.length, rowCount: count?.total, maxOffset: count?.maxOffset })
-  // The user's OWN "$ from" only — the smol floor is a view preference, and
-  // turning it into a $10 alert would be a rule nobody asked for.
-  const notifiable = notifiableFilters(type, f.token, f.min)
 
   return (
     <div className="wrap">
@@ -136,15 +98,7 @@ export function Activity() {
       <DayBarChart data={daily ?? []} color={categoryColor(type)} label="Daily activity" selected={f.from === f.to ? f.from : undefined} onSelect={setDay} fmt={F.int} loading={!daily} />
       <ActivityChips value={type} onChange={v => setQuery({ tab: v === 'all' ? null : v, action: null, page: null })} />
       <FilterZone fields={activityFilterFields(type, assets.data ?? [])} values={f} onChange={onChange} onClear={onClear}
-        extra={
-          // One wrapper, not two siblings: .filter-head is a space-between
-          // flex row, so a third child would push the smol toggle to the middle.
-          <span className="filter-extra">
-            <SmolToggle hiding={hideSmol} onToggle={toggleSmol} />
-            {notifiable && <NotifyButton rule={notifiable} label="Notify"
-              title={`Alert me on ${notifiable.kind === 'large-transfer' ? 'transfers' : 'trades'} matching these filters`} />}
-          </span>
-        } />
+        extra={<span className="filter-extra"><SmolToggle hiding={hideSmol} onToggle={toggleSmol} /></span>} />
       <ActivityTable rows={rows} now={now} live={page === 0} anchorRef={anchorRef} loading={isFetching && rows.length === 0} pending={isPlaceholderData} pageSize={PAGE} error={error} onRetry={() => { void refetch() }} />
       <Pager page={page} totalPages={pages.totalPages} hasNext={pages.hasNext} note={pages.note} onPage={setPage} />
     </div>

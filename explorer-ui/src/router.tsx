@@ -8,24 +8,15 @@ import type { MouseEvent, ReactNode, CSSProperties } from 'react'
 // preis-ui (window events + a single store), but using the History API so URLs
 // are clean (no `#`). Deep links work from static nginx via `try_files … /index.html`.
 
-const ACTIVITY_SLUGS = ['swap', 'dca', 'transfer', 'cross-chain', 'add-liquidity', 'remove-liquidity', 'create-pool', 'destroy-pool', 'claim-rewards', 'claim-referral-rewards', 'lend', 'withdraw', 'borrow', 'repay', 'liquidate', 'staking', 'vote', 'otc-place', 'otc-pull', 'otc-fill'] as const
+const ACTIVITY_SLUGS = ['swap', 'transfer', 'cross-chain', 'add-liquidity', 'remove-liquidity', 'create-pool', 'destroy-pool', 'claim-rewards', 'vote'] as const
 export type ActivitySlug = typeof ACTIVITY_SLUGS[number]
 const ACTIVITY_ID_RE = /^\d+-(?:e)?\d+$/
 // Activity feed tab that lists this slug's rows (crumbs + malformed-id fallback).
 export const ACTIVITY_SLUG_TAB: Record<ActivitySlug, string> = {
-  swap: 'trade', dca: 'trade', transfer: 'transfer', 'cross-chain': 'xcm',
-  'add-liquidity': 'liquidity', 'remove-liquidity': 'liquidity', 'create-pool': 'liquidity', 'destroy-pool': 'liquidity', 'claim-rewards': 'all', 'claim-referral-rewards': 'liquidity',
-  lend: 'mm', withdraw: 'mm', borrow: 'mm', repay: 'mm', liquidate: 'mm',
-  staking: 'stake', vote: 'vote',
-  // OTC folds under the Trade activity tab (rows keep their own otc-* slugs).
-  'otc-place': 'trade', 'otc-pull': 'trade', 'otc-fill': 'trade',
+  swap: 'trade', transfer: 'transfer', 'cross-chain': 'xcm',
+  'add-liquidity': 'liquidity', 'remove-liquidity': 'liquidity', 'create-pool': 'liquidity', 'destroy-pool': 'liquidity', 'claim-rewards': 'all',
+  vote: 'vote',
 }
-
-// One section per part of the protocol, so a page never mixes two domains: the
-// money market's solvency and the Omnipool's per-block limits are different
-// questions and used to share a "Risk" tab.
-export const SECURITY_SECTIONS = ['cross-chain', 'wormhole', 'omnipool', 'money-market', 'freezes', 'ledger', 'guardians'] as const
-export type SecuritySection = typeof SECURITY_SECTIONS[number]
 
 export type Route =
   | { name: 'dashboard' }
@@ -35,38 +26,21 @@ export type Route =
   | { name: 'extrinsics' }
   | { name: 'extrinsic'; id: string } // "height-index"
   | { name: 'activity-detail'; slug: ActivitySlug; id: string } // "height-index"
-  | { name: 'dca-schedule'; scheduleId: number }
   | { name: 'referendum'; pallet: 'opengov' | 'democracy'; index: number }
   | { name: 'governance' }
-  | { name: 'dca-execution'; height: number; eventIndex: number }
-  | { name: 'dca-resolve'; height: number; index: number; kind: 'event' | 'extrinsic' }
   | { name: 'events' }
   | { name: 'event'; id: string } // "height-index"
   | { name: 'legacy'; to: string } // pre-consolidation URL, redirected to /activity
   | { name: 'accounts' }
   | { name: 'account'; address: string }
-  | { name: 'contracts' }
-  // A section is its own page, not a tab: switching is a path change, so it scrolls
-  // to top and the back button steps through sections the way a reader expects.
-  | { name: 'security'; section: SecuritySection | null }
   | { name: 'tags' }
   | { name: 'tags-hydration' }
   | { name: 'tag'; tagId: string }
-  | { name: 'lists' }
-  | { name: 'list'; listId: string }
   | { name: 'assets' }
-  | { name: 'hdx' }
-  | { name: 'hollar' }
-  | { name: 'revenue' }
   | { name: 'asset'; assetId: number }
   | { name: 'holders'; assetId: number }
   | { name: 'pool'; poolId: number }
-  | { name: 'omnipool' }
   | { name: 'liquidity' }
-  | { name: 'link-device' } // QR login handoff target; the code rides in the fragment
-  // Alert channels, rules and inbox. Reachable logged out — that page is the
-  // conversion surface every "Get notified" button points at.
-  | { name: 'notifications' }
   | { name: 'notfound'; path: string }
 
 // Internal nav event the store listens to (pushState/replaceState don't fire
@@ -98,7 +72,7 @@ export function parseRoute(loc: string): Route {
     case 'extrinsics': return { name: 'extrinsics' }
     case 'extrinsic':
       return parts[1] ? { name: 'extrinsic', id: parts[1] } : { name: 'extrinsics' }
-    case 'trade': // /trade/* URLs canonicalize to /swap or /dca after load
+    case 'trade': // /trade/* URLs canonicalize to /swap after load
       return parts[1] && ACTIVITY_ID_RE.test(parts[1])
         ? { name: 'legacy', to: `/swap/${parts[1]}` }
         : { name: 'legacy', to: '/activity?tab=trade' }
@@ -111,22 +85,11 @@ export function parseRoute(loc: string): Route {
     case 'accounts': return { name: 'accounts' }
     case 'account':
       return parts[1] ? { name: 'account', address: parts[1] } : { name: 'accounts' }
-    // A contract's detail page IS the account page (/account/0x…) — /contracts
-    // is only the directory.
-    case 'contracts': return { name: 'contracts' }
-    case 'security': {
-      const section = parts[1] as SecuritySection | undefined
-      if (section && (SECURITY_SECTIONS as readonly string[]).includes(section)) return { name: 'security', section }
-      return { name: 'security', section: null }
-    }
     // /tags/hydration is the system-tag directory's own page; any other
     // /tags/* segment (there are none in product today) falls back to the hub.
     case 'tags': return parts[1] === 'hydration' ? { name: 'tags-hydration' } : { name: 'tags' }
     case 'tag':
       return parts[1] ? { name: 'tag', tagId: parts[1] } : { name: 'tags' }
-    case 'lists': return { name: 'lists' }
-    case 'list':
-      return parts[1] ? { name: 'list', listId: parts[1] } : { name: 'lists' }
     case 'assets': return { name: 'assets' }
     // /referendum/<pallet>/<index>. The pallet is part of the identity: Hydration
     // voted through Democracy (0-206) and OpenGov (0-369) and both index from 0.
@@ -136,9 +99,6 @@ export function parseRoute(loc: string): Route {
       if (pallet && parts[2] && isSafeId(parts[2])) return { name: 'referendum', pallet, index: Number(parts[2]) }
       return { name: 'activity' }
     }
-    case 'hdx': return { name: 'hdx' }
-    case 'hollar': return { name: 'hollar' }
-    case 'revenue': return { name: 'revenue' }
     case 'asset':
       return parts[1] && isSafeId(parts[1]) ? { name: 'asset', assetId: Number(parts[1]) } : { name: 'assets' }
     case 'holders':
@@ -147,24 +107,10 @@ export function parseRoute(loc: string): Route {
     // by their share/LP token id; the Omnipool has its own page.
     case 'pool':
       return parts[1] && isSafeId(parts[1]) ? { name: 'pool', poolId: Number(parts[1]) } : { name: 'assets' }
-    case 'omnipool': return { name: 'omnipool' }
     case 'liquidity': return { name: 'liquidity' }
-    case 'link-device': return { name: 'link-device' }
-    case 'notifications': return { name: 'notifications' }
     default:
       if ((ACTIVITY_SLUGS as readonly string[]).includes(parts[0])) {
         const slug = parts[0] as ActivitySlug
-        // A DCA is a SCHEDULE, not a single fill: /dca/<scheduleId> is its page.
-        if (slug === 'dca' && parts[1]) {
-          if (/^\d+$/.test(parts[1])) return { name: 'dca-schedule', scheduleId: Number(parts[1]) }
-          const m = /^(\d+)-(e)?(\d+)$/.exec(parts[1])
-          // Event form (/dca/<height>-e<index>) is one execution's detail. The
-          // extrinsic form is the scheduling extrinsic — it resolves to the
-          // owning schedule via the API, falling back to the extrinsic page.
-          if (m) return m[2]
-            ? { name: 'dca-execution', height: Number(m[1]), eventIndex: Number(m[3]) }
-            : { name: 'dca-resolve', height: Number(m[1]), index: Number(m[3]), kind: 'extrinsic' }
-        }
         return parts[1] && ACTIVITY_ID_RE.test(parts[1])
           ? { name: 'activity-detail', slug, id: parts[1] }
           : { name: 'legacy', to: `/activity?tab=${ACTIVITY_SLUG_TAB[slug]}` }
@@ -281,7 +227,6 @@ export const paths = {
   extrinsic: (id: string) => `/extrinsic/${id}`,
   extrinsicAt: (h: number, i: number) => `/extrinsic/${h}-${i}`,
   activityDetail: (slug: ActivitySlug, id: string) => `/${slug}/${id}`,
-  dcaSchedule: (scheduleId: number) => `/dca/${scheduleId}`,
   referendum: (pallet: 'opengov' | 'democracy', index: number | string) => `/referendum/${pallet}/${index}`,
   governance: () => '/governance',
   events: () => '/events',
@@ -289,26 +234,14 @@ export const paths = {
   eventAt: (h: number, i: number) => `/event/${h}-${i}`,
   accounts: () => '/accounts',
   account: (addr: string) => `/account/${encodeURIComponent(addr)}`,
-  contracts: () => '/contracts',
-  security: (section?: SecuritySection | null) => (section ? `/security/${section}` : '/security'),
   tags: () => '/tags',
   tagsHydration: () => '/tags/hydration',
   tag: (tagId: string) => `/tag/${encodeURIComponent(tagId)}`,
   assets: () => '/assets',
-  hdx: () => '/hdx',
-  hollar: () => '/hollar',
-  revenue: () => '/revenue',
   asset: (assetId: number) => `/asset/${assetId}`,
   holders: (assetId: number) => `/holders/${assetId}`,
   pool: (poolId: number) => `/pool/${poolId}`,
-  omnipool: () => '/omnipool',
   liquidity: () => '/liquidity',
-  lists: () => '/lists',
-  list: (id: string) => `/list/${encodeURIComponent(id)}`,
-  linkDevice: () => '/link-device',
-  // The page's three tabs are query state (`?tab=alerts`), like every other
-  // tabbed surface; the inbox is the default and carries no parameter.
-  notifications: (tab?: 'alerts' | 'channels' | null) => (tab ? `/notifications?tab=${tab}` : '/notifications'),
 }
 
 export function Link({ to, children, className, title, ariaLabel, tabIndex, onClick, style, data }: { to: string; children: ReactNode; className?: string; title?: string; ariaLabel?: string; tabIndex?: number; onClick?: (e: MouseEvent) => void; style?: CSSProperties; data?: Record<string, string> }) {

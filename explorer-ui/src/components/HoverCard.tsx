@@ -1,52 +1,40 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/explorer'
-import { useAddressSummary, useAsset, useExtrinsic, useBlock, useTagSummary, useTrade, useStats, useDcaSchedule, useDcaExecution } from '../hooks/useExplorerData'
-import { useListTagSummary } from '../hooks/useUser'
-import { F, AssetIcon, AssetChip, AssetAmount, FeeAmount, hasTip, AddrPill, CallPill, PoolBadge, poolHref, StatusBadge, FinalizedBadge, AccountEmoji, emojiName, moduleName, TagIcon, TokenIconRow, UserTagPill } from './ui'
+import { useAddressSummary, useAsset, useExtrinsic, useBlock, useTagSummary, useTrade, useStats } from '../hooks/useExplorerData'
+import { F, AssetIcon, FeeAmount, hasTip, AddrPill, CallPill, PoolBadge, poolHref, StatusBadge, FinalizedBadge, AccountEmoji, emojiName, moduleName, TagIcon, TokenIconRow, UserTagPill } from './ui'
 import { ayeSharePct, selectTally } from '../utils/referendumVotes'
-import { dcaCadence, dcaProgress, fmtDuration } from '../utils/dca'
-import { resolveTag, allAssociations, useTagMapVersion, listForTag, tagMapStatus, looksLikeUserTagId } from '../userTags'
+import { resolveTag, allAssociations } from '../userTags'
 import type { AssetRef } from '../types'
 
 // Global hover preview cards for account (.addr-pill), tag (/tag/… links),
-// asset (.asset-chip), trade ([data-activity] with slug swap / /swap/…), DCA
-// schedule and execution (slug dca / /dca/…), extrinsic (a.hash / [data-ext] →
-// /extrinsic/…) and block (/block/…) links. Each card mirrors the basic-info
-// block of its detail page. Mounted once in App.
+// asset (.asset-chip), trade ([data-activity] with slug swap / /swap/…),
+// extrinsic (a.hash / [data-ext] → /extrinsic/…) and block (/block/…) links.
+// Each card mirrors the basic-info block of its detail page. Mounted once in App.
 type VoteContext = { side: string; conviction: string; weighted: string }
 type Target = {
-  kind: 'account' | 'tag' | 'list-tag' | 'asset' | 'trade' | 'dca-schedule' | 'dca-exec' | 'extrinsic' | 'block' | 'referendum'
+  kind: 'account' | 'tag' | 'asset' | 'trade' | 'extrinsic' | 'block' | 'referendum'
   id: string
-  listId?: string   // 'list-tag' only
   vote?: VoteContext
   left: number; top: number; bottom: number
 }
-const SELECTOR = '.addr-pill:not([data-no-hover]), .asset-chip, a.hash, a[href*="/swap/"], a[href*="/dca/"], a[href*="/block/"], a[href*="/referendum/"], [data-activity], [data-ext]'
+const SELECTOR = '.addr-pill:not([data-no-hover]), .asset-chip, a.hash, a[href*="/swap/"], a[href*="/block/"], a[href*="/referendum/"], [data-activity], [data-ext]'
 const HOVER_DWELL_MS = 180
 
-function ProfileMetrics({ portfolioUsd, debtUsd, tradingVolumeUsd, liquidationVolumeUsd, topAssets }: {
+function ProfileMetrics({ portfolioUsd, tradingVolumeUsd, liquidationVolumeUsd, topAssets }: {
   portfolioUsd: number
-  debtUsd: number
   tradingVolumeUsd?: number | null
   liquidationVolumeUsd?: number | null
   topAssets?: { asset: AssetRef; valueUsd: number }[]
 }) {
   return (
     <>
-      <div className="hc-row"><span>Value</span><span className="mono">{F.usd(portfolioUsd - debtUsd)}</span></div>
+      <div className="hc-row"><span>Value</span><span className="mono">{F.usd(portfolioUsd)}</span></div>
       {topAssets && topAssets.length > 0 && <div className="hc-row"><span>Holdings</span><TokenIconRow assets={topAssets} size={18} /></div>}
       {(tradingVolumeUsd ?? 0) > 0 && <div className="hc-row"><span>Trading volume</span><span className="mono">{F.usd(tradingVolumeUsd)}</span></div>}
       {(liquidationVolumeUsd ?? 0) > 0 && <div className="hc-row"><span>Liquidation volume</span><span className="mono">{F.usd(liquidationVolumeUsd)}</span></div>}
     </>
   )
-}
-
-// DCA ids come in two shapes: a bare schedule id (feed rows link to the
-// schedule) and <block>-e<eventIndex> (schedule-page rows link to one
-// execution). Neither resolves through the trade endpoints.
-function dcaKind(id: string): Target['kind'] {
-  return /^\d+-e\d+$/.test(id) ? 'dca-exec' : 'dca-schedule'
 }
 
 // Same two facts the votes tables keep — the vote cast and the conviction-
@@ -80,7 +68,6 @@ function parseTarget(el: Element): Omit<Target, 'left' | 'top' | 'bottom'> | nul
   const act = el.getAttribute('data-activity')
   if (act) {
     const [slug, id] = act.split('/')
-    if (slug === 'dca') return { kind: dcaKind(id), id }
     if (slug === 'swap') return { kind: 'trade', id }
     const ext = el.getAttribute('data-ext')
     return ext ? { kind: 'extrinsic', id: ext } : null
@@ -100,20 +87,11 @@ function parseTarget(el: Element): Omit<Target, 'left' | 'top' | 'bottom'> | nul
   const tm = href.match(/\/tag\/([^?#]+)$/)
   if (tm) {
     const id = decodeURIComponent(tm[1])
-    // While the map is still loading, a UUID-shaped id might yet turn out to
-    // be a user tag — same ambiguity TagDetail's own routing waits out. Show
-    // no card yet rather than guessing 'tag' (system) and hitting a lookup
-    // that 404s forever on a real user-tag id (mirroring the bug TagDetail's
-    // own skeleton exists to avoid, just for the hover card instead of the
-    // page). 'error'/'anonymous' are terminal, same as a plain miss below.
-    if (tagMapStatus() === 'loading' && looksLikeUserTagId(id)) return null
-    const lib = listForTag(id)
     // A folded tag bubble knows how the group voted, same as an account bubble.
     const vote = voteContext(el)
-    return lib ? { kind: 'list-tag', id, listId: lib.listId, vote } : { kind: 'tag', id, vote }
+    return { kind: 'tag', id, vote }
   }
   const sm = href.match(/\/asset\/(\d+)$/); if (sm) return { kind: 'asset', id: sm[1] }
-  const dm = href.match(/\/dca\/([^?#]+)$/); if (dm) { const id = decodeURIComponent(dm[1]); return { kind: dcaKind(id), id } }
   const trm = href.match(/\/(?:trade|swap)\/([^?#]+)$/); if (trm) return { kind: 'trade', id: decodeURIComponent(trm[1]) }
   const xm = href.match(/\/extrinsic\/([^?#]+)$/); if (xm) return { kind: 'extrinsic', id: decodeURIComponent(xm[1]) }
   const bm = href.match(/\/block\/(\d+)(?:[?#]|$)/); if (bm) return { kind: 'block', id: bm[1] }
@@ -195,11 +173,8 @@ export function HoverCards() {
       onMouseLeave={() => setTarget(null)}>
       {target.kind === 'account' ? <AccountHover id={target.id} vote={target.vote} />
         : target.kind === 'tag' ? <TagHover id={target.id} vote={target.vote} />
-        : target.kind === 'list-tag' ? <ListTagHover listId={target.listId!} tagId={target.id} vote={target.vote} />
         : target.kind === 'asset' ? <AssetHover id={Number(target.id)} />
         : target.kind === 'trade' ? <TradeHover id={target.id} />
-        : target.kind === 'dca-schedule' ? <DcaScheduleHover id={target.id} />
-        : target.kind === 'dca-exec' ? <DcaExecutionHover id={target.id} />
         : target.kind === 'referendum' ? <ReferendumHover id={target.id} />
         : target.kind === 'block' ? <BlockHover id={Number(target.id)} />
         : <ExtrinsicHover id={target.id} />}
@@ -246,26 +221,21 @@ function ReferendumHover({ id }: { id: string }) {
   )
 }
 
-// Compact account card: display name (priority tag / module / profile / identity
+// Compact account card: display name (priority tag / module / identity
 // / emoji name) and the value. No address — the pill being hovered already shows
-// it. The associations row lists EVERY tag membership (not just the winner), so
-// the card doubles as a quick "which of my lists is this in" lookup.
+// it.
 const MAX_HOVER_TAGS = 4
 function AccountHover({ id, vote }: { id: string; vote?: VoteContext }) {
-  useTagMapVersion()   // re-render when the viewer's tag map changes
   const { data } = useAddressSummary(id)
   if (!data) return <div className="hc-sub mono">Loading…</div>
   const mod = moduleName(data.accountId)
-  const debtUsd = data.moneyMarket.reduce((s, p) => s + Number(p.totalDebtBase) / 1e8, 0)
   const topAssets = data.topAssets
   const resolved = resolveTag(data)
   const ident = data.identity
-  const profile = data.profile
-  const usingProfileName = !resolved && !mod && !!profile?.name
-  const title = resolved?.name ?? mod ?? profile?.name ?? ident?.display ?? data.emojiName ?? emojiName(data.emoji) ?? 'Account'
+  const title = resolved?.name ?? mod ?? ident?.display ?? data.emojiName ?? emojiName(data.emoji) ?? 'Account'
   // The ✓ mark stays exclusive to a genuinely displayed, verified on-chain
-  // identity — never the self-set profile name or a tag/module label.
-  const showIdentityCheck = !resolved && !mod && !profile?.name && !!ident?.display && ident.verified
+  // identity — never a tag/module label.
+  const showIdentityCheck = !resolved && !mod && !!ident?.display && ident.verified
   const associations = allAssociations(data)
   return (
     <>
@@ -275,7 +245,7 @@ function AccountHover({ id, vote }: { id: string; vote?: VoteContext }) {
           : mod ? <span className="hc-emoji">⚙️</span>
             : <AccountEmoji account={data} className="hc-emoji" />}
         <div style={{ minWidth: 0 }}>
-          <div className="hc-title">{usingProfileName ? <span className="profile-name">{title}</span> : title}
+          <div className="hc-title">{title}
             {resolved ? <span className="em" style={resolved.color ? { color: resolved.color } : undefined}> · tag</span>
               : showIdentityCheck && <span className="id-verified" title="Verified identity" style={{ marginLeft: 5 }}>✓</span>}</div>
         </div>
@@ -283,13 +253,13 @@ function AccountHover({ id, vote }: { id: string; vote?: VoteContext }) {
       {associations.length > 0 && (
         <div className="hc-tags">
           {associations.slice(0, MAX_HOVER_TAGS).map(a => (
-            <UserTagPill key={a.listId ?? `system-${a.id}`} tag={a} address={data.evmAddress ?? data.ss58Polkadot} noCopy />
+            <UserTagPill key={`system-${a.id}`} tag={a} address={data.evmAddress ?? data.ss58Polkadot} noCopy />
           ))}
           {associations.length > MAX_HOVER_TAGS && <span className="hc-tags-more">+{associations.length - MAX_HOVER_TAGS}</span>}
         </div>
       )}
       <VoteContextRows vote={vote} />
-      <ProfileMetrics {...data} debtUsd={debtUsd} topAssets={topAssets} />
+      <ProfileMetrics {...data} topAssets={topAssets} />
     </>
   )
 }
@@ -299,7 +269,6 @@ function AccountHover({ id, vote }: { id: string; vote?: VoteContext }) {
 function TagHover({ id, vote }: { id: string; vote?: VoteContext }) {
   const { data } = useTagSummary(id)
   if (!data) return <div className="hc-sub mono">Loading…</div>
-  const debtUsd = data.moneyMarket.reduce((s, p) => s + Number(p.totalDebtBase) / 1e8, 0)
   const topAssets = data.topAssets
   return (
     <>
@@ -311,32 +280,7 @@ function TagHover({ id, vote }: { id: string; vote?: VoteContext }) {
         </div>
       </div>
       <VoteContextRows vote={vote} />
-      <ProfileMetrics {...data} debtUsd={debtUsd} topAssets={topAssets} />
-    </>
-  )
-}
-
-// A list tag's own hover card — same shape as TagHover, over the aggregate
-// view's authed summary. Logged out (or lacking permission) the query simply
-// never resolves data, and the card reads as "Loading…" rather than crashing —
-// this hovers a pill the viewer's own tag map already resolved for them, so in
-// practice they always have access to what they're hovering.
-function ListTagHover({ listId, tagId, vote }: { listId: string; tagId: string; vote?: VoteContext }) {
-  const { data } = useListTagSummary(listId, tagId)
-  if (!data) return <div className="hc-sub mono">Loading…</div>
-  const debtUsd = data.moneyMarket.reduce((s, p) => s + Number(p.totalDebtBase) / 1e8, 0)
-  const topAssets = data.topAssets
-  return (
-    <>
-      <div className="hc-head">
-        <TagIcon icon={data.icon} title={data.name} className="hc-emoji" />
-        <div>
-          <div className="hc-title">{data.name}<span className="em" style={{ color: data.color }}> · tag</span></div>
-          <div className="hc-sub mono">{data.members.length} account{data.members.length === 1 ? '' : 's'}</div>
-        </div>
-      </div>
-      <VoteContextRows vote={vote} />
-      <ProfileMetrics {...data} debtUsd={debtUsd} topAssets={topAssets} />
+      <ProfileMetrics {...data} topAssets={topAssets} />
     </>
   )
 }
@@ -383,7 +327,7 @@ function TradeHover({ id }: { id: string }) {
         <div className="hc-route-title"><span>Route</span><span className="mono">{hops.length} hop{hops.length === 1 ? '' : 's'}</span></div>
         {hops.map((h, i) => (
           <div className="hc-hop" key={`${h.pool}-${h.assetIn.assetId}-${h.assetOut.assetId}-${i}`}>
-            <PoolBadge pool={h.pool} poolId={h.poolId} to={poolHref(h.pool, h.poolId)} />
+            <PoolBadge pool={h.pool} poolId={h.poolId} to={poolHref(h.poolId)} />
             <span className="hc-hop-assets">
               <span className="trade-leg"><AssetIcon assetId={h.assetIn.assetId} iconAssetId={h.assetIn.iconAssetId} symbol={h.assetIn.symbol} size={16} parachainId={h.assetIn.parachainId} origin={h.assetIn.origin} /><span className="mono">{h.assetIn.symbol}</span></span>
               <span className="muted">→</span>
@@ -392,75 +336,6 @@ function TradeHover({ id }: { id: string }) {
           </div>
         ))}
       </div>
-    </>
-  )
-}
-
-// DCA feed rows link to their schedule: show the order (amount-per sits on the
-// sold leg for Sell orders, the bought leg for Buy orders), cadence and totals —
-// the schedule page's basic-info block in miniature.
-function DcaScheduleHover({ id }: { id: string }) {
-  const { data, isError } = useDcaSchedule(Number(id))
-  if (isError) return <div className="hc-sub mono">DCA schedule not found</div>
-  if (!data) return <div className="hc-sub mono">Loading…</div>
-  return (
-    <>
-      <div className="hc-head">
-        <span className="hc-emoji">⏱</span>
-        <div>
-          <div className="hc-title">DCA <span className="num">#{data.scheduleId}</span></div>
-          <div className="hc-sub mono">{data.status}{data.statusReason ? ` · ${data.statusReason}` : ''}</div>
-        </div>
-      </div>
-      <div className="hc-row"><span>Order</span><span className="asset-flow">
-        {data.direction === 'Buy'
-          ? <>buys <AssetAmount asset={data.assetOut} raw={data.amountPer} /> with <AssetChip asset={data.assetIn} /></>
-          : <>sells <AssetAmount asset={data.assetIn} raw={data.amountPer} /> → <AssetChip asset={data.assetOut} /></>}
-      </span></div>
-      <div className="hc-row"><span>Every</span><span className="mono" title={`${F.int(data.period)} blocks`}>{fmtDuration(dcaCadence(data.periodSeconds, data.period).seconds)}</span></div>
-      {/* asset-flow, not a plain span: the trade-leg exports the icon's baseline,
-          so inline text after it sags a few px — flex centering (the Order row
-          above, .dl .dd on the schedule page) is the established fix. */}
-      <div className="hc-row"><span>Budget</span>{data.totalAmount === '0'
-        ? <span className="mono">open-ended</span>
-        : <span className="asset-flow">
-          <AssetAmount asset={data.assetIn} raw={data.totalAmount} />
-          {data.budgetUsd != null && <span className="mono muted">· {F.usd(data.budgetUsd)}</span>}
-        </span>}</div>
-      {(() => {
-        const { pct, projected } = dcaProgress(data.totalAmount, data.executions.totalIn, data.fundingBalance)
-        return pct != null ? <div className="hc-row"><span>Filled</span><span className="mono">{projected ? '~' : ''}{Math.round(pct)}%</span></div> : null
-      })()}
-      <div className="hc-row"><span>Executed</span><span className="mono">{F.int(data.executions.count)} trade{data.executions.count === 1 ? '' : 's'}{data.executions.failed > 0 ? ` · ${F.int(data.executions.failed)} failed` : ''}</span></div>
-      {data.who && <div className="hc-row"><span>Owner</span><AddrPill account={data.who} noCopy /></div>}
-    </>
-  )
-}
-
-// Schedule-page execution rows link to one attempt (/dca/<block>-e<index>):
-// result, the traded (or intended) legs, value and the failure reason.
-function DcaExecutionHover({ id }: { id: string }) {
-  const m = /^(\d+)-e(\d+)$/.exec(id)
-  const { data, isError } = useDcaExecution(Number(m?.[1] ?? 0), Number(m?.[2] ?? 0))
-  if (isError) return <div className="hc-sub mono">No DCA execution at this event</div>
-  if (!data) return <div className="hc-sub mono">Loading…</div>
-  return (
-    <>
-      <div className="hc-head">
-        <span className="hc-emoji">⏱</span>
-        <div>
-          <div className="hc-title">DCA execution</div>
-          <div className="hc-sub mono">{id} · DCA #{data.scheduleId}</div>
-        </div>
-      </div>
-      <div className="hc-row"><span>Result</span><StatusBadge ok={data.status === 'executed'} /></div>
-      {data.failureReason && <div className="hc-row"><span>Reason</span><span className="mono">{data.failureReason.label}</span></div>}
-      <div className="hc-row"><span>{data.status === 'failed' ? 'Attempted' : 'Swap'}</span><span className="asset-flow">
-        <AssetAmount asset={data.assetIn} raw={data.amountIn} />
-        {data.amountOut != null && <> → <AssetAmount asset={data.assetOut} raw={data.amountOut} /></>}
-      </span></div>
-      {data.valueUsd != null && <div className="hc-row"><span>Value</span><span className="mono">{F.usd(data.valueUsd)}</span></div>}
-      <div className="hc-row"><span>Time</span><span className="mono">{F.datetime(data.timestamp)}</span></div>
     </>
   )
 }

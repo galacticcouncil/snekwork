@@ -3,8 +3,8 @@ import { useRoute, Link, paths, redirect } from './router'
 import { Topbar } from './components/Topbar'
 import { HoverCards } from './components/HoverCard'
 
-// Route-level chunks keep account analytics, HDX charts, and detail views out of
-// the landing-page bundle. Each page still exposes a named export for tests.
+// Route-level chunks keep account analytics and detail views out of the
+// landing-page bundle. Each page still exposes a named export for tests.
 const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })))
 const Activity = lazy(() => import('./pages/Activity').then(m => ({ default: m.Activity })))
 const Blocks = lazy(() => import('./pages/Blocks').then(m => ({ default: m.Blocks })))
@@ -12,33 +12,20 @@ const BlockDetail = lazy(() => import('./pages/BlockDetail').then(m => ({ defaul
 const Extrinsics = lazy(() => import('./pages/Extrinsics').then(m => ({ default: m.Extrinsics })))
 const ExtrinsicDetail = lazy(() => import('./pages/ExtrinsicDetail').then(m => ({ default: m.ExtrinsicDetail })))
 const TradeDetailPage = lazy(() => import('./pages/TradeDetail').then(m => ({ default: m.TradeDetailPage })))
-const DcaSchedule = lazy(() => import('./pages/DcaSchedule').then(m => ({ default: m.DcaSchedule })))
 const Referendum = lazy(() => import('./pages/Referendum').then(m => ({ default: m.Referendum })))
 const Governance = lazy(() => import('./pages/Governance').then(m => ({ default: m.Governance })))
-const DcaResolve = lazy(() => import('./pages/DcaSchedule').then(m => ({ default: m.DcaResolve })))
-const DcaExecution = lazy(() => import('./pages/DcaExecution').then(m => ({ default: m.DcaExecution })))
 const ActivityDetailPage = lazy(() => import('./pages/ActivityDetail').then(m => ({ default: m.ActivityDetailPage })))
 const Events = lazy(() => import('./pages/Events').then(m => ({ default: m.Events })))
 const EventDetail = lazy(() => import('./pages/EventDetail').then(m => ({ default: m.EventDetail })))
 const Accounts = lazy(() => import('./pages/Accounts').then(m => ({ default: m.Accounts })))
 const Account = lazy(() => import('./pages/Account').then(m => ({ default: m.Account })))
-const Contracts = lazy(() => import('./pages/Contracts').then(m => ({ default: m.Contracts })))
-const Security = lazy(() => import('./pages/Security').then(m => ({ default: m.Security })))
 const Tags = lazy(() => import('./pages/Tags').then(m => ({ default: m.Tags })))
 const TagsHydration = lazy(() => import('./pages/Tags').then(m => ({ default: m.TagsHydration })))
 const TagDetail = lazy(() => import('./pages/TagDetail').then(m => ({ default: m.TagDetail })))
-const Lists = lazy(() => import('./pages/Lists').then(m => ({ default: m.Lists })))
-const ListDetail = lazy(() => import('./pages/ListDetail').then(m => ({ default: m.ListDetail })))
 const Assets = lazy(() => import('./pages/Assets').then(m => ({ default: m.Assets })))
 const AssetDetail = lazy(() => import('./pages/AssetDetail').then(m => ({ default: m.AssetDetail })))
 const PoolDetail = lazy(() => import('./pages/PoolDetail').then(m => ({ default: m.PoolDetail })))
-const Omnipool = lazy(() => import('./pages/Omnipool').then(m => ({ default: m.Omnipool })))
 const Liquidity = lazy(() => import('./pages/Liquidity').then(m => ({ default: m.Liquidity })))
-const Hdx = lazy(() => import('./pages/Hdx').then(m => ({ default: m.Hdx })))
-const Revenue = lazy(() => import('./pages/Revenue').then(m => ({ default: m.Revenue })))
-const Hollar = lazy(() => import('./pages/Hollar').then(m => ({ default: m.Hollar })))
-const LinkDevice = lazy(() => import('./pages/LinkDevice').then(m => ({ default: m.LinkDevice })))
-const Notifications = lazy(() => import('./pages/Notifications').then(m => ({ default: m.Notifications })))
 
 // Consolidated top-level URLs are replaced with the matching Activity tab.
 function LegacyRedirect({ to }: { to: string }) {
@@ -75,33 +62,20 @@ export default function App() {
         return route.slug === 'swap'
           ? <TradeDetailPage id={route.id} slug="swap" />
           : <ActivityDetailPage slug={route.slug} id={route.id} />
-      case 'dca-schedule': return <DcaSchedule scheduleId={route.scheduleId} />
       case 'referendum': return <Referendum pallet={route.pallet} index={route.index} />
       case 'governance': return <Governance />
-      case 'dca-execution': return <DcaExecution height={route.height} eventIndex={route.eventIndex} />
-      case 'dca-resolve': return <DcaResolve height={route.height} index={route.index} kind={route.kind} />
       case 'events': return <Events />
       case 'event': return <EventDetail id={route.id} />
       case 'accounts': return <Accounts />
       case 'account': return <Account address={route.address} />
-      case 'contracts': return <Contracts />
-      case 'security': return <Security section={route.section} />
       case 'tags': return <Tags />
       case 'tags-hydration': return <TagsHydration />
       case 'tag': return <TagDetail tagId={route.tagId} />
-      case 'lists': return <Lists />
-      case 'list': return <ListDetail listId={route.listId} />
       case 'assets': return <Assets />
-      case 'hdx': return <Hdx />
-      case 'revenue': return <Revenue />
-      case 'hollar': return <Hollar />
       case 'asset': return <AssetDetail assetId={route.assetId} />
       case 'holders': return <AssetDetail assetId={route.assetId} initialTab="holders" />
       case 'pool': return <PoolDetail poolId={route.poolId} />
-      case 'omnipool': return <Omnipool />
       case 'liquidity': return <Liquidity />
-      case 'link-device': return <LinkDevice />
-      case 'notifications': return <Notifications />
       case 'notfound': return (
         <div className="wrap"><div className="page-head"><div className="page-title">Not found</div></div>
           <div className="detail-card" style={{ padding: 32, textAlign: 'center', color: 'var(--text-medium)' }}>

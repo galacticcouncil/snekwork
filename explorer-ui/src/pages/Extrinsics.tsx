@@ -24,9 +24,7 @@ export function Extrinsics() {
   const now = useNow()
 
   const rows = data ?? []
-  // Mempool rows all sit at block 0-0, so their key is their hash — otherwise
-  // two pool transactions would collide and React would drop one.
-  const rowKey = (x: (typeof rows)[number]) => x.mempool ? x.hash : `${x.blockHeight}-${x.index}`
+  const rowKey = (x: (typeof rows)[number]) => `${x.blockHeight}-${x.index}`
   const fresh = useNewRows(rows.map(rowKey), page === 0)
   // counts.extrinsics is the signed total, matching this list's signedOnly read. Any
   // filter makes it the wrong total, and then the pager walks a page at a time

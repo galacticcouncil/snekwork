@@ -66,7 +66,7 @@ describe('SVG geometry classes', () => {
     const svg = svgGeometryClasses()
     const sized = layoutSizedClasses()
     // The guard is worthless if the scan found no shapes at all.
-    expect(svg.size).toBeGreaterThan(5)
+    expect(svg.size).toBeGreaterThan(2)
 
     const clashes = [...svg].filter(([cls]) => sized.has(cls))
       .map(([cls, el]) => `.${cls} is on <${el}> but sized by \`${sized.get(cls)}\``)

@@ -42,9 +42,9 @@ test('event-backed trade rows hover and navigate to the trade detail page', asyn
   await page.goto('/activity?tab=trade')
 
   // The newest event-backed swap the feed offers, selected by shape rather than by
-  // a fixed event index: the top of this tab is a mempool projection followed by an
-  // unfinalized row, both deliberately non-navigable and owned by their own specs,
-  // and pinning one index made this test fail whenever that index moved.
+  // a fixed event index: the top of this tab can be an unfinalized row, which is
+  // deliberately non-navigable and owned by its own spec, and pinning one index
+  // made this test fail whenever that index moved.
   const row = page.locator('tr.clickable[data-activity^="swap/"]:not([data-ext])').first()
   await expect(row).toBeVisible()
 
@@ -52,12 +52,11 @@ test('event-backed trade rows hover and navigate to the trade detail page', asyn
   expect(activity).toMatch(/^swap\/\d+-e\d+$/)
   const tradeId = activity!.replace(/^swap\//, '')
   await expect(row.locator('td[data-label="Type"]')).toContainText('Swap')
-  await expect(page.locator('td[data-label="Type"]', { hasText: 'DCA' }).first()).toBeVisible()
 
   // Hover the Type badge specifically, not the row's bounding-box center: the
   // Activity column's auto-computed width shifts with whatever else is on the
-  // page (e.g. otc rows folded into this same tab), which can otherwise land
-  // the row's center on a nested asset-chip and open ITS hovercard instead.
+  // page, which can otherwise land the row's center on a nested asset-chip and
+  // open ITS hovercard instead.
   await row.locator('td[data-label="Type"]').hover()
   await expect(page.locator('.hovercard')).toContainText('Trade')
   await expect(page.locator('.hovercard')).toContainText(tradeId!)

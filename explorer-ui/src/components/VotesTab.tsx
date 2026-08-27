@@ -1,5 +1,4 @@
 import { useAccountListCount, useAccountVotes, useTagListCount, useTagVotes, useTagVotesByReferendum } from '../hooks/useExplorerData'
-import { useListTagListCount, useListTagVotes, useListTagVotesByReferendum } from '../hooks/useUser'
 import { useNow } from '../hooks/useNow'
 import { setQuery, useQuery } from '../router'
 import { Pager } from './ui'
@@ -11,7 +10,6 @@ import type { VoteGroupRow, VoteRow } from '../types'
 type VotesScope =
   | { kind: 'account'; address: string }
   | { kind: 'tag'; tagId: string }
-  | { kind: 'list-tag'; listId: string; tagId: string }
 
 function toTableRow(vote: VoteRow): VoteTableRow {
   return {
@@ -51,8 +49,6 @@ function groupToTableRow(group: VoteGroupRow): VoteTableRow {
 
 export function VotesTab({ scope }: { scope: VotesScope }) {
   const accountAddress = scope.kind === 'account' ? scope.address : null
-  const listId = scope.kind === 'list-tag' ? scope.listId : null
-  const listTagId = scope.kind === 'list-tag' ? scope.tagId : null
   const now = useNow()
   const query = useQuery()
   const requestedPage = Number.parseInt(query.get('vpage') ?? '', 10)
@@ -66,11 +62,8 @@ export function VotesTab({ scope }: { scope: VotesScope }) {
   const systemTagId = scope.kind === 'tag' ? scope.tagId : null
   const accountVotes = useAccountVotes(accountAddress, offset)
   const tagVotes = useTagVotes(grouped ? null : systemTagId, offset)
-  const listTagVotes = useListTagVotes(grouped ? null : listId, listTagId, offset)
-  const tagGrouped = useTagVotesByReferendum(systemTagId, offset, grouped)
-  const listTagGrouped = useListTagVotesByReferendum(listId, listTagId, offset, grouped)
-  const groupedPage = scope.kind === 'tag' ? tagGrouped : listTagGrouped
-  const votes = scope.kind === 'account' ? accountVotes : scope.kind === 'tag' ? tagVotes : listTagVotes
+  const groupedPage = useTagVotesByReferendum(systemTagId, offset, grouped)
+  const votes = scope.kind === 'account' ? accountVotes : tagVotes
   const rows = grouped
     ? (groupedPage.data?.rows ?? []).map(groupToTableRow)
     : (votes.data ?? []).map(toTableRow)
@@ -79,10 +72,9 @@ export function VotesTab({ scope }: { scope: VotesScope }) {
   // Grouped mode counts referenda instead, straight off its own response.
   const accountTotal = useAccountListCount(accountAddress, voteListCount())
   const tagTotal = useTagListCount(grouped ? null : systemTagId, voteListCount())
-  const listTagTotal = useListTagListCount(grouped ? null : listId, listTagId, voteListCount())
   const totalPages = grouped
     ? pageCount(groupedPage.data?.total)
-    : pageCount((scope.kind === 'account' ? accountTotal : scope.kind === 'tag' ? tagTotal : listTagTotal).data?.total)
+    : pageCount((scope.kind === 'account' ? accountTotal : tagTotal).data?.total)
   const setPage = (nextPage: number) => setQuery({ vpage: nextPage > 0 ? String(nextPage) : null })
   const active = grouped ? groupedPage : votes
 
@@ -104,7 +96,7 @@ export function VotesTab({ scope }: { scope: VotesScope }) {
           )}
         </div>
       )}
-      {/* Same table the referendum page uses. A tag/list-tag page shows which
+      {/* Same table the referendum page uses. A tag page shows which
           member cast each vote (or, grouped, how many members' votes each
           referendum row combines); an account page IS that account, so its
           account column drops — and here the REFERENDUM is the column that

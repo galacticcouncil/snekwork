@@ -24,9 +24,7 @@ export function Events() {
   const now = useNow()
 
   const rows = data ?? []
-  // Projected pool events share block 0, so their key is transaction hash +
-  // index — otherwise two pool transactions' events would collide.
-  const rowKey = (e: (typeof rows)[number]) => e.mempool ? `${e.hash}-${e.eventIndex}` : `${e.blockHeight}-${e.eventIndex}`
+  const rowKey = (e: (typeof rows)[number]) => `${e.blockHeight}-${e.eventIndex}`
   const fresh = useNewRows(rows.map(rowKey), page === 0)
   // 302.9M events is 12.1M pages, far past the offset the API serves — skipping N
   // rows reads N rows — so the pager numbers the servable ones and says the rest are

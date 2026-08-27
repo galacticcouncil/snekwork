@@ -1,19 +1,10 @@
-import { userApi } from '../api/explorer'
 import { useTags } from '../hooks/useExplorerData'
-import { useSession } from '../session'
-import { useMe, useLists, useUserMutation } from '../hooks/useUser'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { Link, paths } from '../router'
-import { Crumbs, AddrPill, EmptyRow, TableSkeleton, TagIcon, rowNav } from '../components/ui'
-import { PublicListsPanel } from '../components/PublicListsPanel'
-import type { ListSummaryRef } from '../types'
+import { Crumbs, EmptyRow, TableSkeleton, TagIcon, rowNav } from '../components/ui'
 
-// The one clickable "list" row on the hub: the built-in Hydration
-// directory, promoted above every user-made list so tags — not
-// lists — read as the primary thing to browse. Its own table lives at
-// /tags/hydration (TagsHydration below); everything else on this page is
-// either unclickable (Discover) or a management action (Invites, the
-// "Manage lists" button).
+// The one clickable row on the hub: the built-in Hydration directory. Its own
+// table lives at /tags/hydration (TagsHydration below).
 function HydrationTagsHero({ tagCount }: { tagCount: number }) {
   return (
     <Link to={paths.tagsHydration()} className="acct-head" style={{ textDecoration: 'none', color: 'inherit' }}>
@@ -26,80 +17,20 @@ function HydrationTagsHero({ tagCount }: { tagCount: number }) {
   )
 }
 
-// Two groups sharing one table: a pending invite the viewer hasn't answered
-// (Accept/Decline) and a private list they already accepted into (only
-// reachable through an invite — a public list's `visibility` would read
-// 'public' here regardless of whether this particular subscription started as
-// an invite or a direct Subscribe, so that case can't be distinguished from
-// the data /user/me ships and stays out of this list; it appears as an
-// ordinary Subscribed row in Public lists above instead).
-function Invites({ invites, invitedSubscriptions }: { invites: ListSummaryRef[]; invitedSubscriptions: ListSummaryRef[] }) {
-  const respondMutation = useUserMutation(userApi.respondInvite)
-  const unsubscribeMutation = useUserMutation(userApi.unsubscribe)
-  return (
-    <>
-      <div className="sec-title">Invites · {invites.length + invitedSubscriptions.length}</div>
-      <div className="panel"><table className="tbl">
-        <thead><tr><th>List</th><th>Owner</th><th className="r">Action</th></tr></thead>
-        <tbody>
-          {invites.map(inv => (
-            <tr key={inv.listId}>
-              <td data-label="List"><span className="tag">{inv.name}</span></td>
-              <td data-label="Owner"><AddrPill account={inv.owner} noCopy /></td>
-              <td data-label="Action" className="r">
-                <button type="button" className="btn sm primary" disabled={respondMutation.isPending} onClick={() => respondMutation.mutate([inv.listId, true])}>Accept</button>{' '}
-                <button type="button" className="btn sm" disabled={respondMutation.isPending} onClick={() => respondMutation.mutate([inv.listId, false])}>Decline</button>
-              </td>
-            </tr>
-          ))}
-          {invitedSubscriptions.map(lib => (
-            <tr key={lib.listId}>
-              <td data-label="List"><span className="tag">{lib.name}</span> <span className="muted" style={{ fontSize: 11 }}>· Invited · subscribed</span></td>
-              <td data-label="Owner"><AddrPill account={lib.owner} noCopy /></td>
-              <td data-label="Action" className="r">
-                <button type="button" className="btn sm" disabled={unsubscribeMutation.isPending} onClick={() => unsubscribeMutation.mutate([lib.listId])}>Unsubscribe</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table></div>
-    </>
-  )
-}
-
-// The tag discovery hub: the built-in directory up top, then every OTHER way
-// to find tags — public lists to subscribe to, and any pending/accepted
-// invites — with list management itself pushed behind its own button.
-// Tags are what a viewer clicks and shares; lists are provenance, which is
-// why this page browses tags-by-list rather than editing lists.
+// The tag discovery hub. Tags are what a viewer clicks and shares, so this page
+// browses the directory rather than editing anything.
 export function Tags() {
   useDocumentTitle('Tags')
-  const session = useSession()
-  const me = useMe()
-  const libs = useLists()
   const { data: systemTags } = useTags()
-
-  const invites = me.data?.invites ?? []
-  // See the Invites comment above: a private subscription can only exist
-  // because an invite was accepted, so this is exact, not a heuristic — it
-  // just doesn't catch the (rarer) invite-to-a-public-list case.
-  const invitedSubscriptions = (me.data?.subscriptions ?? []).filter(l => l.visibility === 'private')
 
   return (
     <div className="wrap">
       <div className="page-head">
         <Crumbs items={[{ label: 'Home', to: paths.dashboard() }, { label: 'Tags' }]} />
-        <div className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          Tags
-          <Link to={paths.lists()} className="btn" style={{ marginLeft: 'auto' }}>Manage lists</Link>
-        </div>
+        <div className="page-title">Tags</div>
       </div>
 
       <HydrationTagsHero tagCount={systemTags?.length ?? 0} />
-
-      {(invites.length > 0 || invitedSubscriptions.length > 0) && <Invites invites={invites} invitedSubscriptions={invitedSubscriptions} />}
-
-      <PublicListsPanel lists={libs.data ?? []} isLoading={libs.isLoading} me={me.data} session={session} />
     </div>
   )
 }

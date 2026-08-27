@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { estimateBlockCountdown } from '../utils/blockCountdown'
-import { blockSeconds, fmtDuration } from '../utils/dca'
+import { blockSeconds, fmtDuration } from '../utils/blockTime'
 import { MomentLink } from './ui'
 import type { ExplorerStats, ReferendumProgress, ReferendumTimelineEntry, ReferendumTrackRef } from '../types'
 

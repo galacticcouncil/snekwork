@@ -58,23 +58,10 @@ test('an XYK pool renders without peg sections and an unknown pool 404s', async 
   await expect(page.getByText('Pool not found')).toBeVisible()
 })
 
-test('the Omnipool page lists assets and lands on an asset\'s Liquidity tab', async ({ page }) => {
-  await page.goto('/omnipool')
-  await expect(page.locator('.detail-card')).toContainText('Hub reserve')
-  const rows = page.locator('table.tbl tbody tr')
-  await expect(rows).toHaveCount(5)
-  // Ordered by reserve value: the fixture's DOT position is the largest.
-  await expect(rows.first()).toContainText('DOT')
-  await expect(page.locator('.sec-title', { hasText: 'Composition over time' })).toBeVisible()
-
-  await rows.first().click()
-  await expect(page).toHaveURL(/\/asset\/5\?tab=liquidity$/)
-})
-
 test.describe('mobile', () => {
   test.use({ viewport: { width: 390, height: 844 } })
 
-  for (const path of ['/asset/5?tab=liquidity', '/pool/690', '/omnipool']) {
+  for (const path of ['/asset/5?tab=liquidity', '/pool/690']) {
     test(`no horizontal overflow at 390px on ${path}`, async ({ page }) => {
       await page.goto(path)
       await expect(page.locator('.detail-card, .pool-cards .hdx-card').first()).toBeVisible()

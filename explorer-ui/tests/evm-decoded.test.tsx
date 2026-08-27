@@ -4,12 +4,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { EvmCallCard, EvmLogView } from '../src/components/EvmDecoded'
 import { decodedParamsRecord, evmTransactionEnvelope } from '../src/utils/evmDecoded'
-import { ContractTransactionsView, ContractEventsView } from '../src/components/ContractActivityTab'
 import { EventDetail } from '../src/pages/EventDetail'
 import { ExtrinsicDetail as ExtrinsicDetailPage } from '../src/pages/ExtrinsicDetail'
-import { mockSync, MOCK_EVM_TX, MOCK_EVM_TX_HASH, MOCK_EVM_TX_RECEIPT } from './fixtures/mockApi'
+import { mockSync, MOCK_EVM_TX, MOCK_EVM_TX_HASH } from './fixtures/mockApi'
 import type {
-  ContractEventsPage, ContractTransactionsPage, DecodedEvmCall, EvmLogDecode,
+  DecodedEvmCall, EvmLogDecode,
   EventDetail as EventDetailData, ExtrinsicDetail,
 } from '../src/types'
 
@@ -109,61 +108,6 @@ describe('EventDetail decoding', () => {
   })
 })
 
-describe('contract activity views', () => {
-  const txPage: ContractTransactionsPage = {
-    transactions: [
-      {
-        blockHeight: 200, extrinsicIndex: 2, timestamp: '2026-08-04 10:00:00', txHash: '0x' + 'aa'.repeat(32),
-        from: { address: CALLER, accountId: CALLER }, success: true,
-        method: { selector: '0xa9059cbb', name: 'transfer', signature: 'transfer(address,uint256)' },
-      },
-      {
-        blockHeight: 199, extrinsicIndex: 1, timestamp: '2026-08-04 09:59:48', txHash: '0x' + 'bb'.repeat(32),
-        from: { address: CALLER, accountId: CALLER }, success: false,
-        method: { selector: '0xdeadbeef', name: null, signature: null },
-      },
-    ],
-    total: 51,
-  }
-
-  const eventsPage: ContractEventsPage = {
-    events: [
-      {
-        blockHeight: 200, eventIndex: 4, extrinsicIndex: 2, timestamp: '2026-08-04 10:00:00',
-        name: 'Transfer', topics: ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'], data: '0x',
-        evmDecoded: decodedLog, decodedBy: 'verified-abi',
-      },
-      {
-        blockHeight: 198, eventIndex: 3, extrinsicIndex: 1, timestamp: '2026-08-04 09:59:36',
-        name: 'Borrow', topics: ['0x' + '11'.repeat(32)], data: '0x',
-        args: { reserve: ADDR, amount: '5' }, decodedBy: 'ingest',
-      },
-      {
-        blockHeight: 197, eventIndex: 9, extrinsicIndex: null, timestamp: '2026-08-04 09:59:24',
-        name: null, topics: ['0x' + '22'.repeat(32)], data: '0x1234',
-      },
-    ],
-    total: 3,
-  }
-
-  it('renders transactions with method chips, selector fallback and a pager', () => {
-    const out = render(<ContractTransactionsView address={ADDR} />, qc => qc.setQueryData(['contract-txs', ADDR, 0, 25], txPage))
-    expect(out).toContain('transfer')
-    expect(out).toContain('0xdeadbeef')
-    expect(out).toContain('/extrinsic/200-2')
-    expect(out).toContain('pager')
-  })
-
-  it('renders events with names, and the raw topic0 for unknown events', () => {
-    const out = render(<ContractEventsView address={ADDR} />, qc => qc.setQueryData(['contract-events', ADDR, 0, 25], eventsPage))
-    expect(out).toContain('Transfer')
-    expect(out).toContain('Borrow')
-    expect(out).toContain('/event/200-4')
-    // The undecodable event shows its topic0, not an invented name.
-    expect(out).toMatch(/0x2222/)
-  })
-})
-
 // The extrinsic page IS the EVM transaction's page (there is no /tx/<hash> route),
 // so these rows are the only place the explorer states an Ethereum transaction's own
 // facts. The fixture's one Ethereum.transact extrinsic is the subject, reached by
@@ -180,10 +124,10 @@ describe('EVM transaction rows on the extrinsic page', () => {
     expect(detail.evmTx?.txHash).toBe(MOCK_EVM_TX_HASH)
   })
 
-  // Gas is the one part nothing indexes. Without the receipt the page states
+  // Gas is not indexed and there is no receipt to read: the page states
   // everything else and simply leaves the gas rows out — never a zero or a
   // placeholder standing in for a number nobody has.
-  it('renders without the receipt, and shows no gas at all', () => {
+  it('renders the transaction facts, and shows no gas at all', () => {
     const out = render(<ExtrinsicDetailPage id={evmTxId} />, qc => qc.setQueryData(['extrinsic', evmTxId], detail))
     expect(out).toContain('EVM tx hash')
     expect(out).toContain(MOCK_EVM_TX_HASH)
@@ -197,29 +141,6 @@ describe('EVM transaction rows on the extrinsic page', () => {
     // And no substrate fee is invented — Ethereum.transact carries no
     // TransactionPayment.TransactionFeePaid event.
     expect(out).toContain('Fee')
-  })
-
-  it('shows gas used against its limit, the share and the effective price once the receipt lands', () => {
-    const out = render(<ExtrinsicDetailPage id={evmTxId} />, qc => {
-      qc.setQueryData(['extrinsic', evmTxId], detail)
-      qc.setQueryData(['evm-receipt', MOCK_EVM_TX_HASH], MOCK_EVM_TX_RECEIPT)
-    })
-    expect(out).toContain('355,638')
-    expect(out).toContain('565,795')
-    expect(out).toContain('62.9%')
-    expect(out).toContain('7,000,447 wei')
-    // Labelled as the price actually charged, not the ceiling the sender signed.
-    expect(out).toContain('effective')
-  })
-
-  it('falls back to the signed ceiling when the node reports no effective price, and says which', () => {
-    const out = render(<ExtrinsicDetailPage id={evmTxId} />, qc => {
-      qc.setQueryData(['extrinsic', evmTxId], detail)
-      qc.setQueryData(['evm-receipt', MOCK_EVM_TX_HASH], { gasUsed: '355638', effectiveGasPrice: null })
-    })
-    expect(out).toContain('7,000,447 wei')
-    expect(out).toContain('maxFeePerGas')
-    expect(out).not.toContain('effective')
   })
 
   // 35,627 reverted EVM transactions expose no reason anywhere else in the explorer;

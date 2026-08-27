@@ -15,7 +15,7 @@ function timestampMs(timestamp: string | null | undefined): number {
 //
 // `blockSeconds` is required and has no default: the chain's pace is an era
 // fact, not a constant (12s once, ~6s now, 2s planned), so every caller passes
-// the measured `stats.avgBlockSec` through `blockSeconds()` from utils/dca,
+// the measured `stats.avgBlockSec` through `blockSeconds()` from utils/blockTime,
 // which supplies the nominal fallback in the one place that documents it.
 export function estimateBlockCountdown(
   targetBlock: number,

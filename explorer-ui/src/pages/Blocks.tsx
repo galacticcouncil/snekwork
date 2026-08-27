@@ -6,7 +6,7 @@ import { Link, paths, usePageParam, setPage } from '../router'
 import { Crumbs, F, FinalizedBadge, AddrPill, AreaChart, ChartCardSkeleton, TableSkeleton, EmptyRow, Pager, rowNav, Ago, Dash, pendingRows, LiveAnchor } from '../components/ui'
 import { UNFILTERED_COLOR } from '../components/activityColors'
 import { parseUtcTimestamp } from '../utils/time'
-import { blockSeconds } from '../utils/dca'
+import { blockSeconds } from '../utils/blockTime'
 import { offeredPages } from '../utils/activityPaging'
 
 const PAGE = 25

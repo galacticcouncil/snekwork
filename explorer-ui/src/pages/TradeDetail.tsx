@@ -1,11 +1,9 @@
-import { useEffect } from 'react'
 import { useTrade } from '../hooks/useExplorerData'
 import { useNow } from '../hooks/useNow'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
-import { Link, paths, redirect } from '../router'
+import { Link, paths } from '../router'
 import { Crumbs, F, AddrPill, AssetChip, FeeAmount, hasTip, StatusBadge, MomentLink, SkeletonRows } from '../components/ui'
 import type { TradeHop } from '../types'
-import { RevenueRow } from '../components/RevenueRow'
 
 // Route flow: in-asset →(pool)→ … →(pool)→ out-asset. Amount labels come from
 // the hop events; eventless Aave 1:1 wraps infer values from adjacent hops.
@@ -77,17 +75,11 @@ function AssetAmount({ asset, amount }: { asset: TradeHop['assetIn']; amount: st
   return amount ? <AssetValue asset={asset}>{F.exact(amount, asset.decimals)}</AssetValue> : <span className="muted mono">—</span>
 }
 
-export function TradeDetailPage({ id, slug = 'swap' }: { id: string; slug?: 'swap' | 'dca' }) {
+export function TradeDetailPage({ id }: { id: string; slug?: 'swap' }) {
   const { data, isLoading, isError } = useTrade(id)
   const now = useNow()
-  const label = slug === 'dca' ? 'DCA' : 'Swap'
+  const label = 'Swap'
   useDocumentTitle(`${label} ${id}`)
-  // Canonicalize /swap ↔ /dca once the data says which it is.
-  useEffect(() => {
-    if (!data) return
-    const canonical = data.dca ? 'dca' : 'swap'
-    if (canonical !== slug) redirect(paths.activityDetail(canonical, id))
-  }, [data, slug, id])
 
   return (
     <div className="wrap">
@@ -116,7 +108,6 @@ export function TradeDetailPage({ id, slug = 'swap' }: { id: string; slug?: 'swa
                   </span>
                 </div>
                 <div className="dt">Value</div><div className="dd mono">{F.usd(data.valueUsd)}</div>
-                <RevenueRow revenue={data.revenue} />
                 {data.executionPrice != null && <>
                   <div className="dt">Execution price</div>
                   <div className="dd">

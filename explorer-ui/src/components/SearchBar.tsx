@@ -1,18 +1,11 @@
 /* eslint-disable react-refresh/only-export-components -- exports routing/rendering helpers the tests exercise directly, alongside <SearchBar> */
-import { useState, useRef, useEffect, useId, useMemo } from 'react'
+import { useState, useRef, useEffect, useId } from 'react'
 import { api } from '../api/explorer'
 import { navigate, paths } from '../router'
 import type { SearchResult } from '../types'
-import { searchUserTags, useTagMapVersion } from '../userTags'
 import { AccountEmoji, AssetIcon, F, ShortAddr, TagIcon, noAutofill } from './ui'
 
-// A viewer's own list tag, resolved client-side (see userTags.searchUserTags)
-// rather than through the shared, anonymous /explorer/search — that endpoint is
-// cached across every viewer and cannot know a private tag's name. Carries its
-// own `type` so it merges into the same rendered list as a server SearchResult
-// without pretending to be one.
-interface UserTagHit { type: 'user-tag'; listId: string; listName: string; tagId: string; name: string; color: string; icon: string }
-type Hit = SearchResult | UserTagHit
+type Hit = SearchResult
 
 // `value` is the canonical AccountId32 (public-key hex); `label` carries the
 // human SS58/EVM form. Account links and display must use the latter.
@@ -21,7 +14,6 @@ const srLooksAddr = (s?: string) => !!s && (s.startsWith('0x') || /^[1-9A-HJ-NP-
 // Exported for direct unit testing (routing + labelling are the durable behavior;
 // the debounced input above them needs a real DOM to exercise).
 export function routeFor(r: Hit): string {
-  if (r.type === 'user-tag') return paths.tag(r.tagId)
   switch (r.type) {
     case 'block': return paths.block(r.value)
     case 'extrinsic': return paths.extrinsic(r.value)
@@ -32,7 +24,7 @@ export function routeFor(r: Hit): string {
     // Pallet is part of the referendum's identity (Democracy and OpenGov both
     // index from 0), so both fields are needed to build its route.
     case 'referendum': return r.pallet && r.index != null ? paths.referendum(r.pallet, r.index) : paths.dashboard()
-    case 'pool': return r.value === 'omnipool' ? paths.omnipool() : paths.pool(Number(r.value))
+    case 'pool': return paths.pool(Number(r.value))
     default: return paths.dashboard()
   }
 }
@@ -40,27 +32,16 @@ export function routeFor(r: Hit): string {
 // (see referendumTitleKey server-side), which is what keeps a same-numbered
 // Democracy and OpenGov referendum from colliding on the same React key.
 export function hitKey(r: Hit): string {
-  return r.type === 'user-tag' ? `user-tag:${r.listId}:${r.tagId}` : `${r.type}:${r.value}`
+  return `${r.type}:${r.value}`
 }
 export const TYPE_LABEL: Record<Hit['type'], string> = {
-  block: 'Block', extrinsic: 'Extrinsic', address: 'Account', asset: 'Asset', tag: 'Tag', 'user-tag': 'Tag', referendum: 'Referendum', pool: 'Pool',
+  block: 'Block', extrinsic: 'Extrinsic', address: 'Account', asset: 'Asset', tag: 'Tag', referendum: 'Referendum', pool: 'Pool',
 }
 
 // Account results use the same avatar and shortened-address treatment as account
 // pills. Identity names remain secondary so the address stays visible in compact
 // dropdowns.
 export function SearchResultBody({ r }: { r: Hit }) {
-  if (r.type === 'user-tag') {
-    return (
-      <span className="sr-acct">
-        <TagIcon icon={r.icon} title={r.name} />
-        <span className="sr-acct-name">
-          <span className="mono" style={r.color ? { color: r.color } : undefined}>{r.name}</span>
-          <span className="sr-desc">· {r.listName}</span>
-        </span>
-      </span>
-    )
-  }
   if (r.type === 'address') {
     // `label` is the SS58 for a direct address hit, or the identity display for
     // an identity-name hit; `value` is the canonical accountId32.
@@ -119,7 +100,6 @@ export function SearchResultBody({ r }: { r: Hit }) {
 }
 
 export function SearchBar({ variant }: { variant: 'hero' | 'topbar' }) {
-  useTagMapVersion()   // re-render when the viewer's tag map (thus its searchable tags) changes
   const [value, setValue] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
   const [open, setOpen] = useState(false)
@@ -175,18 +155,9 @@ export function SearchBar({ variant }: { variant: 'hero' | 'topbar' }) {
     searchAbort.current?.abort()
     navigate(routeFor(r)); setOpen(false); setValue(''); setResults([]); setResultsQuery(''); setSearched(false)
   }
-  // The viewer's own list tags matching the typed text, prepended ahead of the
-  // server's shared results — computed straight off `value` (no debounce, no
-  // network) since it's a pure local lookup over the tag map already in memory.
-  const userTagHits: UserTagHit[] = useMemo(
-    () => searchUserTags(value).map(hit => ({ type: 'user-tag' as const, ...hit })),
-    [value],
-  )
   // Server hits for the text currently in the box; empty while a keystroke is still
-  // debouncing, so Enter re-runs the search instead of opening a stale hit. The
-  // local tag hits above stay regardless — they never go stale.
-  const serverResults: SearchResult[] = resultsQuery === value.trim() ? results : []
-  const currentResults: Hit[] = [...userTagHits, ...serverResults]
+  // debouncing, so Enter re-runs the search instead of opening a stale hit.
+  const currentResults: Hit[] = resultsQuery === value.trim() ? results : []
   function onKey(e: React.KeyboardEvent) {
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, currentResults.length - 1)) }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)) }

@@ -72,10 +72,9 @@ describe('every list that holds rows has a surface that marks them', () => {
   it('holds rows in exactly the paged list hooks, plus the day chart', () => {
     expect(holdingHooks.sort()).toEqual([
       'useAccountActivity', 'useAccountEvents', 'useAccountExtrinsics', 'useAccountVotes',
-      'useAccounts', 'useActivity', 'useAssetActivity', 'useBlocks',
-      'useContractEvents', 'useContractTransactions', 'useContracts', 'useDaily', 'useEvents',
+      'useAccounts', 'useActivity', 'useAssetActivity', 'useBlocks', 'useDaily', 'useEvents',
       'useExtrinsics', 'useGovernanceMotions', 'useGovernanceReferenda', 'useGovernanceTips',
-      'useHolders', 'useOmnipoolLps', 'usePoolLps', 'useTagActivity', 'useTagEvents',
+      'useHolders', 'usePoolLps', 'useTagActivity', 'useTagEvents',
       'useTagExtrinsics', 'useTagVotes', 'useTagVotesByReferendum',
     ])
     expect(holdingHooks.filter(h => CHART_ONLY.includes(h))).toEqual(CHART_ONLY)
@@ -90,18 +89,14 @@ describe('every list that holds rows has a surface that marks them', () => {
       '../src/pages/Accounts.tsx': 1,
       '../src/pages/AssetDetail.tsx': 2,        // activity feed + holders
       '../src/pages/PoolDetail.tsx': 1,          // liquidity providers
-      '../src/components/AssetLiquidity.tsx': 1, // top Omnipool LPs
       '../src/components/ScopedActivity.tsx': 3, // activity, extrinsics, events tabs
       '../src/components/VotesTab.tsx': 1,
-      '../src/components/ContractActivityTab.tsx': 2, // transactions + events sub-tabs
       '../src/pages/Governance.tsx': 3,          // referenda, motions, tips tables
     }
     for (const [path, expected] of Object.entries(surfaces)) {
       const src = read(path)
-      // `pending={…isPlaceholderData}` specifically: other components on these
-      // pages take a `pending` prop for a write in flight (the asset header's
-      // alert dialog), which is not a held-rows signal and must not be counted
-      // as one.
+      // `pending={…isPlaceholderData}` specifically: a `pending` prop that is not
+      // a held-rows signal must not be counted as one.
       const marks = occurrences(src, 'pendingRows(') + (src.match(/pending=\{[^}]*isPlaceholderData[^}]*\}/g)?.length ?? 0)
       expect(marks, path).toBe(expected)
       // A surface that reads isPlaceholderData but never renders it would pass a

@@ -3,10 +3,9 @@ import { useBlockActivity, useEventAt, useExtrinsic, useStats } from '../hooks/u
 import { useNow } from '../hooks/useNow'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { Link, paths, redirect, ACTIVITY_SLUG_TAB, type ActivitySlug } from '../router'
-import { activityLabel, canonicalTarget, subordinateActivityTarget, parseId, SLUG_TYPES, ActivityDesc, ChainBadge, ConvictionTag, ExternalAccountPill, explorerSiteName } from '../components/ActivityTable'
-import { LIQ_LABELS, MM_LABELS } from '../components/activityColors'
-import { RevenueRow } from '../components/RevenueRow'
-import { Crumbs, F, AddrPill, AssetChip, FeeAmount, hasTip, StatusBadge, FinalizedBadge, CallPill, MomentLink, SkeletonRows, VoteSideBadge } from '../components/ui'
+import { activityLabel, canonicalTarget, subordinateActivityTarget, parseId, SLUG_TYPES, ActivityDesc, ChainBadge, ConvictionTag, ExternalAccountPill } from '../components/ActivityTable'
+import { LIQ_LABELS } from '../components/activityColors'
+import { Crumbs, F, AddrPill, FeeAmount, hasTip, StatusBadge, FinalizedBadge, CallPill, MomentLink, SkeletonRows, VoteSideBadge } from '../components/ui'
 import { convictionLabel, voteSideLabel, voteSubjectLabel } from '../utils/voteRows'
 
 export function ActivityDetailPage({ slug, id }: { slug: ActivitySlug; id: string }) {
@@ -23,8 +22,8 @@ export function ActivityDetailPage({ slug, id }: { slug: ActivitySlug; id: strin
   const now = useNow()
 
   // An id can name an event that IS activity but is not activity of its OWN: the
-  // transfer legs of an OTC fill, a swap or a money-market call are that action's
-  // plumbing, and the feed renders only the action. Such an id therefore matches no
+  // transfer legs of a swap are that action's plumbing, and the feed renders
+  // only the action. Such an id therefore matches no
   // row, and answering "no transfer found" while titling the page "Transfer" asserts
   // a family the event never belonged to and strands the reader one click from what
   // it is. So resolve the event to its extrinsic and hand over to the activity that
@@ -58,10 +57,7 @@ export function ActivityDetailPage({ slug, id }: { slug: ActivitySlug; id: strin
         <Crumbs items={[{ label: 'Home', to: paths.dashboard() }, { label: 'Activity', to: `/activity?tab=${ACTIVITY_SLUG_TAB[slug]}` }, { label: id }]} />
         <div className="page-title">{label} <span className="num">{id}</span>
           {row?.type === 'xcm' && <span className="sub">{row.xcmDir === 'in' ? `in from ${row.fromChain ?? '?'}` : `out to ${row.destChain ?? '?'}`}</span>}
-          {row?.type === 'mm' && row.mmMarket && <span className="sub">{row.mmMarket}</span>}
-          {row?.type === 'staking' && row.stakingAction && <span className="sub">{row.stakingAction}</span>}
           {row?.type === 'vote' && voteSub && <span className="sub">{voteSub}</span>}
-          {row?.type === 'otc' && row.otcOrderId != null && <span className="sub">order #{row.otcOrderId}</span>}
         </div>
       </div>
 
@@ -85,22 +81,14 @@ export function ActivityDetailPage({ slug, id }: { slug: ActivitySlug; id: strin
                 so the description drops what that already says (see ActivityDesc). */}
             <div className="dt">Activity</div><div className="dd"><ActivityDesc r={row} headed /></div>
             <div className="dt">Value</div><div className="dd mono">{F.usd(row.valueUsd)}</div>
-            <RevenueRow revenue={row.revenue} />
             {row.who && <><div className="dt">Account</div><div className="dd"><AddrPill account={row.who} /></div></>}
             {row.type === 'transfer' && row.to && <><div className="dt">To</div><div className="dd"><AddrPill account={row.to} /></div></>}
-            {row.type === 'xcm' && row.xcmDir === 'in' && row.fromTxUrl && <><div className="dt">Origin transaction</div><div className="dd"><a className="ext-link" href={row.fromTxUrl} target="_blank" rel="noopener">{explorerSiteName(row.fromTxUrl)} ↗</a></div></>}
             {row.type === 'xcm' && row.xcmDir !== 'in' && row.destChain && <>
               <div className="dt">Destination</div><div className="dd"><ChainBadge chain={row.destChain} />{row.destAccount && <span style={{ marginLeft: 8 }}><ExternalAccountPill account={row.destAccount} /></span>}</div>
-              {row.fromTxUrl && <><div className="dt">Origin transaction</div><div className="dd"><a className="ext-link" href={row.fromTxUrl} target="_blank" rel="noopener">{explorerSiteName(row.fromTxUrl)} ↗</a></div></>}
             </>}
-            {row.type === 'xcm' && row.destTxUrl && <><div className="dt">Destination transaction</div><div className="dd"><a className="ext-link" href={row.destTxUrl} target="_blank" rel="noopener">{explorerSiteName(row.destTxUrl)} ↗</a></div></>}
-            {row.type === 'xcm' && row.messageId && <><div className="dt">Message ID</div><div className="dd mono" style={{ overflowWrap: 'anywhere' }}>{row.messageId}</div></>}
-            {row.type === 'xcm' && row.bridge && <><div className="dt">Bridge</div><div className="dd">{row.bridge}</div></>}
-            {/* Both read the badge's own label maps, so this page cannot name an
+            {/* Reads the badge's own label map, so this page cannot name an
                 action differently from the row that led here. */}
-            {row.type === 'mm' && <><div className="dt">Action</div><div className="dd">{MM_LABELS[row.mmAction ?? ''] ?? row.mmAction ?? '—'}</div></>}
             {row.type === 'liquidity' && <><div className="dt">Action</div><div className="dd">{LIQ_LABELS[row.liqAction ?? ''] ?? LIQ_LABELS.Add}</div></>}
-            {row.type === 'staking' && <><div className="dt">Action</div><div className="dd">{row.stakingAction ?? '—'}</div></>}
             {row.type === 'vote' && <>
               {/* The subtitle carries these too, but a subtitle is scenery: a reader
                   looking for how hard somebody voted looks down the labelled rows, the
@@ -120,17 +108,6 @@ export function ActivityDetailPage({ slug, id }: { slug: ActivitySlug; id: strin
                 <div className="dd"><span className="mono">{row.voteRef}</span>{row.votePallet && <span className="muted"> · {row.votePallet}</span>}</div>
               </>}
             </>}
-            {row.type === 'otc' && <>
-              <div className="dt">Order ID</div><div className="dd mono">#{row.otcOrderId}</div>
-              <div className="dt">Action</div><div className="dd">{row.otcAction ?? '—'}</div>
-              {/* The Account row above is the taker who called the fill; this is
-                  the account whose order it consumed. */}
-              {row.otcAction === 'Fill' && row.to && <><div className="dt">Maker</div><div className="dd"><AddrPill account={row.to} /></div></>}
-              {row.otcAction === 'Place' && <><div className="dt">Partially fillable</div><div className="dd">{row.otcPartiallyFillable ? 'Yes' : 'No'}</div></>}
-              {row.otcAction === 'Fill' && <><div className="dt">Partial fill</div><div className="dd">{row.otcPartial ? 'Yes' : 'No'}</div></>}
-              {row.otcAction === 'Fill' && row.otcFee != null && row.assetOut && <><div className="dt">Fee</div><div className="dd mono">{F.exact(row.otcFee, row.assetOut.decimals)} <AssetChip asset={row.assetOut} /></div></>}
-            </>}
-            {row.dca && row.dcaStatus === 'failed' && <><div className="dt">Result</div><div className="dd"><StatusBadge ok={false} /></div></>}
             <div className="dt">When</div><div className="dd mono"><MomentLink at={row} now={now} /> <FinalizedBadge finalized={row.blockHeight <= (stats?.finalizedBlock ?? -1)} /></div>
             {extId && <><div className="dt">Extrinsic</div><div className="dd mono"><Link to={paths.extrinsic(extId)} className="hash">{extId}</Link></div></>}
             {eventId && <><div className="dt">Event</div><div className="dd mono"><Link to={paths.event(eventId)} className="hash">{eventId}</Link></div></>}

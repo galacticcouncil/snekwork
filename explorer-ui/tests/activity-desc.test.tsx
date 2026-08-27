@@ -9,7 +9,6 @@ import type { ActivityRow, AssetRef } from '../src/types'
 // the detail page stops repeating its own header while the lists keep every fact.
 
 const hdx: AssetRef = { assetId: 0, symbol: 'HDX', name: 'Hydration', decimals: 12, parachainId: null }
-const usdt: AssetRef = { assetId: 10, symbol: 'USDT', name: 'Tether USD', decimals: 6, parachainId: 1000 }
 
 const base: ActivityRow = {
   type: 'vote', blockHeight: 13267476, timestamp: '2026-07-22 08:01:21', eventIndex: 33, extrinsicIndex: 2,
@@ -111,25 +110,5 @@ describe('ActivityDesc — cross-chain', () => {
   it('leaves a same-chain transfer with no chain badges at all', () => {
     const transfer: ActivityRow = { ...base, type: 'transfer', asset: hdx, amount: '1000000000000', to: null }
     expect(renderToStaticMarkup(<ActivityDesc r={transfer} />)).not.toMatch(local)
-  })
-})
-
-describe('ActivityDesc — OTC', () => {
-  const fill: ActivityRow = {
-    ...base, type: 'otc', otcAction: 'Fill', otcOrderId: 91,
-    assetIn: hdx, assetOut: usdt, amountIn: '1000000000000', amountOut: '5000000',
-  }
-
-  it('trails the order id in a list', () => {
-    expect(renderToStaticMarkup(<ActivityDesc r={fill} />)).toContain('#91')
-  })
-
-  it('drops the order id the header already carries', () => {
-    expect(renderToStaticMarkup(<ActivityDesc r={fill} headed />)).not.toContain('#91')
-  })
-
-  it('keeps the order id when the legs are unknown — nothing else identifies the row', () => {
-    const legless = { ...fill, assetIn: null, assetOut: null }
-    expect(renderToStaticMarkup(<ActivityDesc r={legless} headed />)).toContain('Order #91')
   })
 })

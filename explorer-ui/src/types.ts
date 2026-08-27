@@ -24,11 +24,6 @@ export interface AccountIdentity {
   twitter: string
 }
 
-// A wallet-login profile: the display name and avatar the account owner set
-// themselves. `avatarVersion` busts the avatar image URL's cache on change —
-// absent/null means no profile has been set up for the account.
-export interface ProfileRef { name: string; avatarVersion: number }
-
 export interface AccountRef {
   accountId: string
   address: string        // Polkadot SS58 or EVM 0x (never Hydration SS58)
@@ -37,7 +32,6 @@ export interface AccountRef {
   emojiUrl?: string      // custom image icon (e.g. a Discord avatar) — render in place of the emoji char
   tag: TagRef | null
   identity?: AccountIdentity | null   // on-chain Identity.IdentityOf display + judgement status
-  profile?: ProfileRef | null         // self-authored wallet-login profile, if the account has one
   isContract?: boolean                // deployed EVM smart contract — pills wear the </> glyph
   contractName?: string               // verified source's contract name — the pill's label, like an identity display
 }
@@ -79,30 +73,11 @@ export type AssetFilterItem = Pick<AssetRef, 'assetId' | 'symbol' | 'name'> & { 
 
 export interface TopAccountRow {
   account: AccountRef | null
-  // `userTagId`/`listId` are additive: set only when this group row folded under
-  // the REQUESTING viewer's own tag (served from /user/accounts) rather than a
-  // system one. `tagId` is the tag's real id either way, so TagGroupPill's link
-  // (paths.tag(tagId)) already routes a user tag to its aggregate page — see
-  // userTags.ts's looksLikeUserTagId — with no change needed to read it.
-  tag: { tagId: string; name: string; color: string; icon: string; memberCount: number; userTagId?: string; listId?: string } | null
+  tag: { tagId: string; name: string; color: string; icon: string; memberCount: number } | null
   portfolioUsd: number
   lastBlock: number
-  // Money-market enrichment (null when the account has no MM position).
-  suppliedUsd: number | null
-  borrowedUsd: number | null
   // Optional enrichments (design parity — populated where available).
-  healthFactor?: string | null
   identity?: string | null
-  // Account holding the group's worst-HF position (DefiSim link target for tags).
-  simAccount?: string | null
-  // Supplemental markets never replace the primary Money Market columns above.
-  // This compact summary only makes the less-used credit line discoverable.
-  supplementalMarket?: {
-    marketKey: string
-    market: string
-    borrowedUsd: number
-    healthFactor?: string | null
-  } | null
   // 1Y weekly value sparkline (fixed length, zero-padded → same range for all rows).
   sparkline?: number[]
   // The account's own activity feed total, the same number its detail page reports.
@@ -112,98 +87,18 @@ export interface TopAccountRow {
   activityCountComplete?: boolean
   tradingVolumeUsd?: number
   liquidationVolumeUsd?: number
-  // Protocol revenue earned from this account/group.
-  revenueUsd?: number
   // Up to 4 largest holdings (> $10, highest USD first) → icon cluster after value.
   topAssets?: { asset: AssetRef; valueUsd: number }[]
   // Further holdings over $10 the four icons leave out.
   otherAssets?: number
 }
 
-export type AccountSort = 'value' | 'supplied' | 'borrowed' | 'health' | 'identity' | 'activity' | 'volume' | 'liquidation' | 'revenue'
+export type AccountSort = 'value' | 'identity' | 'activity' | 'volume'
 export interface AccountsPage {
   rows: TopAccountRow[]
   total: number
 }
 
-// A registry contract, as the /contracts directory and AddressDetail.contract
-// carry it. Creation is evidence-labelled: `create` came from a top-level
-// Ethereum.transact, `factory` from first-log attribution ("first seen", never
-// "created"), `unknown` states honest incompleteness. `verified` is the compact
-// directory chip; `verification` the full card, with an explicit `unverified`
-// status rather than a null when no verification exists.
-export interface ContractCreation {
-  method: 'create' | 'factory' | 'unknown'
-  deployer?: AccountRef | null
-  deployerWhitelisted?: boolean       // advisory ContractDeployer whitelist (provenance only)
-  factory?: AccountRef
-  attribution?: 'first-log'
-  blockHeight?: number
-  extrinsicIndex?: number
-  timestamp?: string
-  txHash?: string
-}
-export interface ContractVerification {
-  status: string           // 'verified' | 'unverified'
-  name?: string
-  compilerVersion?: string
-  matchType?: string       // 'exact_match' | 'match' | ''
-  source?: string          // 'verified' | 'import:blockscout' | 'manual'
-  verifiedAt?: string
-  abiPresent?: boolean
-  sourceFileCount?: number
-  supersededBytecode?: boolean   // code at the address changed after verification (CREATE2 redeploy)
-}
-export interface ContractInfo {
-  address: string
-  account: AccountRef
-  verified: { status: string; name: string; matchType: string } | null
-  verification: ContractVerification | null
-  creation: ContractCreation
-  codeHash: string
-  codeSize: number
-  destroyed: boolean
-  txCount: number
-  logCount: number
-  firstActivity: string | null
-  lastActivity: string | null
-  // What the contract holds and does as an ACCOUNT, on the same models the
-  // accounts directory reads. Absent means "not established" — no number is
-  // shown rather than a zero standing in for one (see ContractMetrics, api).
-  portfolioUsd?: number
-  topAssets?: { asset: AssetRef; valueUsd: number }[]
-  // Further holdings over $10 the four icons leave out.
-  otherAssets?: number
-  sparkline?: number[]
-  tradingVolumeUsd?: number
-  activityCount?: number
-  activityCountComplete?: boolean
-}
-export type ContractSort = 'created' | 'active' | 'txs' | 'logs' | 'value' | 'volume' | 'activity' | 'name'
-export interface ContractsPage {
-  contracts: ContractInfo[]
-  total: number
-}
-// Lazy verified-contract artifacts (extrinsic-bytes pattern): fetched only when
-// the Code/Read sub-tabs actually need them.
-export interface ContractAbiPayload {
-  address: string
-  abi: unknown[]
-  source: string
-  contractName: string
-}
-export interface ContractSourcesPayload {
-  address: string
-  files: { path: string; content: string }[]
-  compiler: {
-    version: string
-    evmVersion: string
-    optimizerEnabled: boolean
-    optimizerRuns: number
-    constructorArguments: string
-    settings: unknown
-  }
-}
 // Request-time verified-ABI decoding on detail surfaces (§9). `hashed` marks an
 // indexed dynamic event param whose preimage only exists on chain as its hash.
 export interface EvmDecodedParam {
@@ -228,39 +123,6 @@ export interface DecodedEvmCall {
   contractName: string | null
   call: EvmCallDecode
 }
-// Contract-tab activity views, scoped to one contract.
-export interface ContractTxMethod { selector: string | null; name: string | null; signature: string | null }
-export interface ContractTxRow {
-  blockHeight: number
-  extrinsicIndex: number | null
-  timestamp: string
-  txHash: string
-  from: AccountRef | null
-  success: boolean
-  method: ContractTxMethod
-}
-export interface ContractTransactionsPage { transactions: ContractTxRow[]; total: number }
-export interface ContractEventRow {
-  blockHeight: number
-  eventIndex: number
-  extrinsicIndex: number | null
-  timestamp: string
-  name: string | null
-  topics: string[]
-  data: string
-  evmDecoded?: EvmLogDecode
-  args?: Record<string, unknown>
-  decodedBy?: 'verified-abi' | 'ingest'
-}
-export interface ContractEventsPage { events: ContractEventRow[]; total: number }
-// Sourcify V2 verification job, as the poll endpoint reports it.
-export interface VerificationJob {
-  isJobCompleted: boolean
-  verificationId: string
-  contract: { match: string | null; runtimeMatch: string | null; creationMatch: string | null }
-  error?: { customCode: string; message: string; errorId: string }
-}
-
 // trade detail
 export interface TradeHop {
   pool: string
@@ -294,8 +156,6 @@ export interface TradeDetail {
   // `extrinsicTip`, whose tip slot it carries as `tipAmount`.
   feePayment?: FeePayment
   route: TradeHop[]
-  dca: boolean
-  revenue?: ActivityRevenue
 }
 
 export interface DailyPoint { date: string; value: number }
@@ -337,22 +197,6 @@ export interface ExtrinsicOrigin {
 export interface ExtrinsicSummary {
   // false = unfinalized (pending-head layer; may reorg away). Absent = finalized.
   finalized?: boolean
-  // true = still in the transaction pool: no block yet (blockHeight/index are 0
-  // placeholders, address it by hash) and the outcome is a dry-run PROJECTION.
-  mempool?: boolean
-  // What the dry run established, on mempool rows only. 'unknown' means the
-  // projection was unavailable — the transaction is listed, unjudged.
-  projected?: 'ok' | 'fail' | 'unknown'
-  // Whether the runtime can include this pool transaction at all — a separate
-  // claim from `projected` (what its call would do). 'rejected' is a genuine
-  // failing transaction (it cannot pay its fee, its nonce is stale, …), shown and
-  // badged for what it is; `unincludableReason` names the cause. 'queued' waits on
-  // an earlier nonce. A doomed followup behind a rejected transaction is dropped
-  // entirely, so it never reaches the client.
-  includability?: 'includable' | 'queued' | 'rejected' | 'unknown'
-  unincludableReason?: string | null
-  // The transaction that reused this one's nonce and replaced it.
-  replacedBy?: string
   blockHeight: number
   index: number
   hash: string
@@ -390,12 +234,6 @@ export interface EvmTransactionFacts {
   exitDetail: string | null
   extraData: string | null
 }
-// Gas accounting for one EVM transaction, fetched lazily per viewed extrinsic and
-// deliberately NOT part of ExtrinsicDetail — it comes from an RPC receipt, which
-// would otherwise sit on the critical path of every EVM extrinsic view. Exact
-// integers as decimal strings; `effectiveGasPrice` absent when the node omits it.
-export interface EvmReceipt { gasUsed: string; effectiveGasPrice: string | null }
-
 export interface ExtrinsicEvent { eventIndex: number; name: string; args: unknown; decoded?: boolean; evmDecoded?: EvmLogDecode }
 // What the fee actually cost, when the signer's fee currency is not HDX (or when
 // there is no HDX figure at all — an EVM transaction). `fee`/`tip` still carry
@@ -464,61 +302,7 @@ export interface BalanceUnlockSlice { state: 'releasable' | 'scheduled' | 'activ
 // `frozen` is the non-transferable part of `free` (per-account max lock, summed
 // across the account set for tags).
 export interface AddressBalance { asset: AssetRef; total: string; free: string; reserved: string; frozen?: string; breakdown?: BalanceLockComponent[]; timeline?: BalanceUnlockSlice[]; lastBlock: number; valueUsd: number | null }
-export interface MmReserve {
-  assetId: number
-  iconAssetId?: number
-  symbol: string
-  decimals: number
-  parachainId?: number | null
-  origin?: AssetRef['origin']
-  supplied: string
-  debt: string
-  suppliedUsd: number | null
-  debtUsd: number | null
-  collateral: boolean
-}
 export interface LpPosition { positionId: string; asset: AssetRef; amount: string; hubAmount?: string; shares: string; valueUsd: number | null; venue: string }
-export interface ActiveDca {
-  id: number; assetIn: AssetRef; assetOut: AssetRef; direction: string
-  amountPerTrade: string; totalAmount: string; filledAmount: string; remainingAmount: string | null
-  executionsDone: number; period: number; nextExecutionBlock: number | null
-  // Seconds actually observed between this order's trades. `period` is a block
-  // count and block time is not a constant (12s, ~6s, 2s ahead), so a duration
-  // has to come from measurement, not multiplication. Null before two trades.
-  periodSeconds: number | null
-  // valueUsd is one trade at current prices, budgetUsd the whole remaining plan.
-  valueUsd: number | null; budgetUsd: number | null
-  // Owner's spendable balance of the sold asset, on open-ended orders only —
-  // the only thing that can date an order with no budget to run out of.
-  fundingBalance: string | null
-  // That balance at current prices — the open-ended stand-in for budgetUsd.
-  fundingUsd?: number | null
-  scheduleBlock: number; scheduleIndex: number | null
-  // The schedule's owner — redundant on an account's own page, but the asset
-  // page lists schedules across owners, so each row names whose order it is.
-  who?: AccountRef
-}
-
-// The asset page's DCAs tab: ongoing schedules buying the asset vs selling it.
-export interface AssetDcas { buys: ActiveDca[]; sells: ActiveDca[] }
-export interface MoneyMarketPosition {
-  marketKey: string
-  market: string                 // display label, e.g. 'Money Market' or 'GIGAHDX'
-  role: 'primary' | 'supplemental'
-  defiSimSupported: boolean      // currently true only for the primary market
-  stakingBacked?: boolean        // collateral backed by locked-in-wallet HDX (display-only in net worth)
-  blockHeight: number
-  timestamp: string
-  totalCollateralBase: string
-  totalSuppliedBase?: string
-  totalDebtBase: string
-  availableBorrowsBase: string
-  liquidationThreshold: string
-  ltv: string
-  healthFactor: string
-  simAccount?: string
-  reserves?: MmReserve[]
-}
 export interface AddressAlias {
   accountId: string | null
   evmAddress: string | null
@@ -549,7 +333,6 @@ export interface AddressDetail {
   ss58Polkadot: string
   tag: TagRef | null
   identity: AccountIdentity | null
-  profile?: ProfileRef | null
   relatedAccountIds: string[]
   aliases: AddressAlias[]
   balances: AddressBalance[]
@@ -559,14 +342,10 @@ export interface AddressDetail {
   portfolioUsd: number
   tradingVolumeUsd?: number
   liquidationVolumeUsd?: number
-  revenueUsd?: number
-  moneyMarket: MoneyMarketPosition[]
   liquidityPositions?: LpPosition[]
-  activeDcas?: ActiveDca[]
   proxy?: AccountProxyInfo | null
   multisig?: MultisigInfo | null
   multisigMemberships?: MultisigMembership[]
-  contract?: ContractInfo | null      // deployed EVM contract at this address
   portfolioSeries?: number[]
   portfolioDates?: string[]
   balanceHistory?: AssetBalanceHistory[]
@@ -577,16 +356,15 @@ export interface AssetBalanceHistory { asset: AssetRef; current: number; points:
 export interface AccountHistoryResponse { portfolioSeries: number[]; portfolioDates: string[]; balanceHistory: AssetBalanceHistory[] }
 
 // One of the account/tag's largest value-changing events (big transfers in/out,
-// swaps, liquidity moves, cross-chain flows, liquidations) — the value chart's
-// clickable markers. A 'dca' marker stands for a whole schedule (its executions
-// summed), not one swap; a 'price' marker annotates a big value-line jump no
-// discrete event explains (its valueUsd is the SIGNED delta, asset is null).
+// swaps, liquidity moves, cross-chain flows) — the value chart's clickable
+// markers. A 'price' marker annotates a big value-line jump no discrete event
+// explains (its valueUsd is the SIGNED delta, asset is null).
 export interface ValueEvent {
   blockHeight: number
   eventIndex: number
   extrinsicIndex: number | null
   timestamp: string
-  kind: 'transfer-in' | 'transfer-out' | 'swap' | 'liquidity' | 'liquidation' | 'dca' | 'cross-chain' | 'price' | 'other'
+  kind: 'transfer-in' | 'transfer-out' | 'swap' | 'liquidity' | 'cross-chain' | 'price' | 'other'
   valueUsd: number
   asset: AssetRef | null
   counterparty: AccountRef | null
@@ -594,11 +372,7 @@ export interface ValueEvent {
   direction?: 'in' | 'out'
   // false when a cross-chain marker has no resolvable detail row → render unlinked.
   linkable?: boolean
-  // A 'dca' marker summarizes a whole schedule: id links to /dca/:id, trades is
-  // the execution count behind valueUsd; block/event point at the peak execution.
-  dcaScheduleId?: number
-  dcaTrades?: number
-  // Traded pair for swap/DCA markers; `asset` stays the value-bearing leg.
+  // Traded pair for swap markers; `asset` stays the value-bearing leg.
   assetIn?: AssetRef | null
   assetOut?: AssetRef | null
   // Raw token amount in `asset` decimals — only on single-event markers.
@@ -677,10 +451,6 @@ export interface IndexerStatus {
 export interface EventRow {
   // false = unfinalized (pending-head layer; may reorg away). Absent = finalized.
   finalized?: boolean
-  // true = a dry-run PROJECTION of what a pool transaction would emit;
-  // blockHeight/extrinsicIndex are placeholders and `hash` names the transaction.
-  mempool?: boolean
-  hash?: string
   blockHeight: number
   eventIndex: number
   extrinsicIndex: number | null
@@ -716,32 +486,14 @@ export interface TradeRow {
   amountOut: string
   valueUsd: number | null
   venue: string
-  dca?: boolean
   linkBlock?: number | null
   linkIndex?: number | null
 }
 
-/**
- * Protocol revenue the activity's EXTRINSIC generated. ABSENT means the revenue
- * model has not booked that block yet (it trails the head by ~1000 blocks), NOT
- * that the action earned nothing — a zero is spelled out with the field present.
- */
-export interface ActivityRevenue {
-  protocolUsd: number
-  lpUsd: number
-  streams: { stream: string; usd: number }[]
-}
-
 export interface ActivityRow {
-  type: 'transfer' | 'trade' | 'xcm' | 'liquidity' | 'mm' | 'dca' | 'staking' | 'vote' | 'otc'
-  revenue?: ActivityRevenue
+  type: 'transfer' | 'trade' | 'xcm' | 'liquidity' | 'vote'
   // false = unfinalized (pending-head layer; may reorg away). Absent = finalized.
   finalized?: boolean
-  // true = still in the transaction pool, values are a dry-run PROJECTION.
-  mempool?: boolean
-  // The pool transaction's hash (mempool rows only) — their identity while no
-  // block coordinates exist yet.
-  hash?: string
   blockHeight: number
   timestamp: string
   eventIndex?: number | null
@@ -755,7 +507,6 @@ export interface ActivityRow {
   amountIn: string | null
   amountOut: string | null
   valueUsd: number | null
-  dcaScheduleId?: number
   destChain?: string
   destParachainId?: number | null
   // Destination account of a cross-chain transfer. `address` is always the
@@ -764,36 +515,18 @@ export interface ActivityRow {
   destAccount?: {
     // The same canonical id local accountRefs carry — for a bound-EVM
     // AccountKey20 this differs from `raw` (the bare H160), so viewer-side
-    // lookups (user tags, avatar URLs) must key on this, not on `raw`/`address`.
+    // lookups must key on this, not on `raw`/`address`.
     // Optional only for old cached responses/fixtures that predate this field.
     kind: 'AccountId32' | 'AccountKey20'; accountId?: string; address: string; raw: string; subscanUrl: string | null
     emoji?: string; emojiName?: string; emojiUrl?: string
     tag?: TagRef | null
     identity?: { display: string; verified: boolean } | null
-    profile?: ProfileRef | null
     isContract?: boolean
     contractName?: string
   }
-  xcmDir?: 'in' | 'out'      // xcm: transfer direction relative to Hydration
+  xcmDir?: 'in' | 'out'      // xcm: transfer direction relative to the chain
   fromChain?: string         // xcm inbound: origin chain name
   fromParachainId?: number | null
-  // Source account of an inbound transfer (best-effort — resolved server-side
-  // from the Ocelloids crosschain index; absent for old rows or on API outage).
-  fromAccount?: ActivityRow['destAccount']
-  messageId?: string | null
-  fromTxUrl?: string | null   // xcm inbound: origin-chain extrinsic on its explorer  // xcm inbound: message topic id
-  // Destination-chain transaction, once the journey lands there — the far end's
-  // counterpart to fromTxUrl.
-  destTxUrl?: string | null
-  // How the transfer crossed, when a bridge rather than only XCM carried it
-  // ('Snowbridge', 'Wormhole', 'Basejump'). Resolved alongside fromChain, and not
-  // versioned on purpose: Snowbridge v1 and v2 differ in the hops they take, not in
-  // being Snowbridge, and the version is not always determinable.
-  bridge?: string | null
-  mmAction?: string
-  mmMarketKey?: string
-  mmMarket?: string
-  stakingAction?: string
   votePallet?: string
   voteRefPallet?: 'opengov' | 'democracy' | null
   voteRefTitle?: string | null
@@ -801,17 +534,9 @@ export interface ActivityRow {
   voteRef?: string | null
   voteSide?: string
   voteConviction?: string | null
-  liqAction?: 'Add' | 'Remove' | 'Create' | 'Claim' | 'ClaimReferral' | 'Destroy'   // Create = pool creation; Destroy = pool closure; Claim = LM rewards; ClaimReferral = referral rewards
-  dca?: boolean
-  dcaStatus?: 'failed'
-  dcaError?: string
+  liqAction?: 'Add' | 'Remove' | 'Create' | 'Claim' | 'Destroy'   // Create = pool creation; Destroy = pool closure; Claim = LM rewards
   linkBlock?: number | null
   linkIndex?: number | null
-  otcAction?: 'Place' | 'Pull' | 'Fill'
-  otcOrderId?: number
-  otcPartial?: boolean            // fill came from OTC.PartiallyFilled
-  otcPartiallyFillable?: boolean  // Placed order property
-  otcFee?: string                 // fills; denominated in assetOut
 }
 
 export interface VoteRow {
@@ -856,20 +581,6 @@ export interface VoteGroupRow {
 // ceiling, so rows cover only the newest part of it.
 export interface VotesByReferendumPage { rows: VoteGroupRow[]; total: number; complete: boolean }
 
-export interface MoneyMarketRow {
-  account: AccountRef
-  supplyUsd: number
-  debtUsd: number
-  netWorthUsd: number
-  healthFactor: string
-  blockHeight: number
-}
-export interface MoneyMarketResponse {
-  totalSupplyUsd: number
-  totalDebtUsd: number
-  positions: MoneyMarketRow[]
-}
-
 // One day of collateral seized from borrowers in the primary money market:
 // `amount` is the raw token amount, `valueUsd` its value at the time it happened.
 export interface AssetLiquidationDay { date: string; valueUsd: number; amount: string; count: number }
@@ -886,8 +597,6 @@ export interface AssetLiquidations {
 export interface AssetDetail {
   asset: AssetListItem
   holderCount: number
-  // Ongoing DCA schedules buying or selling this asset (the DCAs tab badge).
-  dcaCount: number
   totalUsd: number
   priceSeries: number[]
   priceDates?: string[]
@@ -897,7 +606,7 @@ export interface AssetDetail {
   liquiditySourceCount?: number
 }
 
-// liquidity pools (asset Liquidity tab, pool detail, Omnipool page)
+// liquidity pools (asset Liquidity tab, pool detail)
 
 export type PoolKind = 'omnipool' | 'stableswap' | 'xyk'
 export interface PoolCompositionEntry { asset: AssetRef; amount: string; usd: number | null; sharePct: number | null }
@@ -1006,207 +715,6 @@ export interface PoolLpsResponse {
   lps: PoolLpRow[]
 }
 
-// One omnipool asset's LP ranking. `account` is null exactly once — the
-// protocol's own shares, which have no position NFT.
-export interface OmnipoolLpRow {
-  rank: number
-  account: AccountRef | null
-  protocol?: boolean
-  positions: number
-  farmedPositions: number
-  shares: string
-  sharePct: number | null
-  amount: string     // current withdrawable asset leg
-  hubAmount: string  // current withdrawable H2O leg
-  valueUsd: number | null
-}
-export interface OmnipoolAssetLpsResponse {
-  asset: AssetRef
-  totalShares: string
-  protocolShares: string
-  lpCount: number
-  positionCount: number
-  total: number
-  lps: OmnipoolLpRow[]
-}
-
-export interface OmnipoolAssetRow {
-  asset: AssetRef
-  reserve: string
-  reserveUsd: number | null
-  hubReserve: string
-  weightPct: number | null
-  capPct: number | null
-  tradable: string[]
-}
-export interface OmnipoolDetail {
-  account: AccountRef
-  tvlUsd: number | null
-  assetCount: number
-  hubReserveTotal: string
-  lrnaPrice: number | null
-  assets: OmnipoolAssetRow[]      // ordered by reserve value, largest first
-  history: { buckets: string[]; tvlUsd: (number | null)[]; composition: { asset: AssetRef; usd: (number | null)[] }[] }
-}
-
-export interface HdxCohort { key: string; label: string; minPct: number; minHdx: number; accounts: number; totalHdx: number }
-export interface HdxLockType { key: string; label: string; accounts: number; totalHdx: number }
-export interface HdxUnlockBucket { label: string; fromTs: string; toTs: string; gigahdx: number; vesting: number; vote: number }
-export interface HdxDailyFlow { date: string; buyHdx: number; sellHdx: number; buyers: number; sellers: number }
-export interface HdxMover { account: AccountRef; balanceHdx: number; boughtHdx: number; soldHdx: number; netHdx: number }
-
-// ── /revenue ────────────────────────────────────────────────────────────────
-export type RevenueStream =
-  | 'omnipool_asset_fee' | 'omnipool_protocol_fee' | 'liquidation_penalty'
-  | 'pepl_liquidation_profit' | 'asset_reserve' | 'hollar_borrow'
-  | 'hsm_revenue' | 'network_fee'
-export type RevenueRange = '30d' | '1y' | 'all'
-
-export interface RevenuePoint { t: number; usd: number }
-export interface RevenueDashboard {
-  totals: { day: number; week: number; month: number; allTime: number }
-  history: {
-    range: RevenueRange
-    bucketSeconds: number
-    series: { stream: RevenueStream; points: RevenuePoint[] }[]
-  }
-  breakdown: { stream: RevenueStream; usd: number; share: number }[]
-  topAccounts: { account: AccountRef; usd: number }[]
-  asOf: string
-}
-
-export interface RevenueFlowItem {
-  stream: RevenueStream
-  block: number
-  t: number
-  eventIndex: number
-  legIndex: number
-  account: AccountRef | null
-  assetId: number
-  usd: number
-}
-export interface RevenueFlowResponse {
-  items: RevenueFlowItem[]
-  drips: { key: string; label: string; stream: RevenueStream; usdPerBlock: number }[]
-  cursor: string
-  head: number
-  blockSeconds: number
-}
-
-// Full-era weekly holder-structure series (see api hdxService.HdxStructure).
-// Treasury, protocol plumbing and Kraken custody are carved out of the user
-// class; tranches and HODL bands describe user accounts only.
-export interface HdxStructure {
-  weeks: string[]
-  ownership: {
-    treasury: number[]; protocol: number[]; kraken: number[]
-    top10: number[]; top11to100: number[]; top101to1000: number[]; rest: number[]
-  }
-  effectiveHolders: number[]
-  hodl: { under3m: number[]; m3to12: number[]; y1to2: number[]; over2y: number[] }
-  backfilledAllocationHdx: number
-  // Monthly full-era trend series (null before a series starts). See api
-  // hdxService.HdxStructure for semantics.
-  trends: {
-    months: string[]
-    stakedClassic: (number | null)[]
-    stakedGiga: (number | null)[]
-    liquidFloat: (number | null)[]
-    realizedPrice: (number | null)[]
-    marketPrice: (number | null)[]
-    top100Share: (number | null)[]
-    krakenHdx: (number | null)[]
-    buybackHdx: (number | null)[]
-    traders: (number | null)[]
-    gov: { quarters: string[]; capital: number[]; voters: number[] }
-  }
-}
-
-export interface HdxDashboard {
-  price: number | null
-  change24h: number | null
-  supply: { totalHdx: number; protocolHdx: number; userHdx: number; holders: number }
-  cohorts: HdxCohort[]   // Whale, Dolphin, Fish, Shrimp (in that order)
-  // Vesting figures count only HDX still on schedule; vestedUnclaimedHdx is
-  // the already-vested remainder that sits under a stale ormlvest lock.
-  locks: { types: HdxLockType[]; totalLockedHdx: number; lockedPctOfUser: number; vestedUnclaimedHdx: number; snapshotAt: string | null }
-  unlocks: {
-    buckets: HdxUnlockBucket[]                     // 8 weekly then monthly buckets
-    laterHdx: { gigahdx: number; vesting: number; vote: number }
-    unlockableNowHdx: number
-    activeVoteHdx: number
-    stakingAnytimeHdx: number
-    gigaPending: { count: number; totalHdx: number; nextUnlockTs: string | null }
-  }
-  flows: { daily: HdxDailyFlow[]; dca: { buy: { orders: number; hdxPerDay: number }; sell: { orders: number; hdxPerDay: number } } }
-  churn: { weekly: { weekStart: string; newHolders: number; exitedHolders: number }[] }
-  structure: HdxStructure
-  topMovers: { accumulators: HdxMover[]; distributors: HdxMover[] }
-  gigaMarket: GigaMarketReserveStat[] | null
-  gigaLiquidations: GigaLiquidations | null
-}
-
-export interface GigaMarketReserveStat { asset: AssetRef; supplied: number; suppliedUsd: number | null; debt: number; debtUsd: number | null; suppliers: number; borrowers: number }
-export interface GigaLiquidations { currentPrice: number; points: { price: number; stHdx: number }[] }
-
-export interface HollarPegPoint { ts: string; close: number }
-export interface HollarCollateral {
-  asset: AssetRef
-  poolId: number
-  holdings: string
-  holdingsUsd: number | null
-  purchaseFeePct: number
-  buyBackFeePct: number
-  maxBuyPrice: number
-  buybackRatePct: number
-  maxInHolding: string | null
-  lastArbTs: string | null
-  lastArbDirection: 'in' | 'out' | null
-}
-export interface HollarArbDay { date: string; hollarIn: number; hollarOut: number }
-export interface HollarTradeDay { date: string; bought: number; sold: number }
-export interface HollarPool {
-  poolId: number
-  tvlUsd: number | null
-  hollar: { amount: number; usd: number | null }
-  // One entry per non-HOLLAR asset in the pool — most pools have exactly one
-  // partner, but N-asset pools exist (e.g. pool 105 = HOLLAR/USDC/USDT).
-  partners: { asset: AssetRef; amount: number; usd: number | null }[]
-  hollarSharePct: number | null
-}
-// Full-era HOLLAR trend series (see api hollarService.HollarTrends).
-export interface HollarTrends {
-  weeks: string[]
-  composition: { stableswap: number[]; omnipool: number[]; protocol: number[]; bridged: number[]; wallets: number[] }
-  holders: (number | null)[]
-  peg: { close: (number | null)[]; low: (number | null)[]; high: (number | null)[] }
-  debt: (number | null)[]
-  borrowers: (number | null)[]
-  revenueCumUsd: (number | null)[]
-  depth: { stableswap: (number | null)[]; omnipool: (number | null)[] }
-  months: string[]
-  stableSharePct: (number | null)[]
-  pegStats: { uptime50Pct: number; uptime25Pct: number; maxAbsDevBps: number } | null
-  rates: { label: string; pct: number; prevPct: number | null; since: string }[]
-}
-
-export interface HollarDashboard {
-  price: number | null
-  change24h: number | null
-  pegDeviationBps: number | null
-  peg: { hourly: HollarPegPoint[]; within25bpsPct: number | null; maxDevBps: number | null; min30d: number | null; max30d: number | null }
-  supply: { total: number; holders: number; inStablepools: number; inOmnipool: number; other: number }
-  hsm: {
-    totalHoldingsUsd: number
-    collaterals: HollarCollateral[]
-    arbitrageDaily: HollarArbDay[]
-    tradesDaily: HollarTradeDay[]
-    lastArb: { ts: string; direction: 'in' | 'out'; asset: AssetRef; hollarAmount: number } | null
-  }
-  pools: HollarPool[]
-  trends: HollarTrends
-}
-
 export interface TagDetail {
   tagId: string
   name: string
@@ -1220,90 +728,10 @@ export interface TagDetail {
   portfolioUsd: number
   tradingVolumeUsd?: number
   liquidationVolumeUsd?: number
-  revenueUsd?: number
-  moneyMarket: MoneyMarketPosition[]
   liquidityPositions?: LpPosition[]
-  activeDcas?: ActiveDca[]
   portfolioSeries: number[]
   portfolioDates?: string[]
   balanceHistory: AssetBalanceHistory[]
-}
-
-// One leg of a DCA schedule's route. Only Stableswap names a specific pool; the
-// other venues are a single pool each.
-export interface DcaRouteHop { pool: string; poolId: number | null; assetIn: AssetRef; assetOut: AssetRef }
-
-export interface DcaScheduleDetail {
-  scheduleId: number
-  who: AccountRef | null
-  createdAt: { blockHeight: number; timestamp: string; extrinsicIndex: number | null }
-  assetIn: AssetRef
-  assetOut: AssetRef
-  // 'Sell' | 'Buy' ('' for pre-router schedules). amountPer follows it: the
-  // sold (in) amount for Sell orders, the bought (out) amount for Buy orders.
-  direction: string
-  amountPer: string
-  totalAmount: string
-  // What one trade and the whole budget are worth — at today's price while the
-  // schedule is live, at the price of the day it stopped once it has finished
-  // (the era its own executions traded in).
-  amountPerUsd: number | null
-  budgetUsd: number | null
-  usdBasis: 'current' | 'ended'
-  period: number
-  // Seconds actually observed between this schedule's trades (median of its most
-  // recent gaps), null before it has run twice. See ActiveDca.periodSeconds.
-  periodSeconds: number | null
-  // Null means the schedule set none (the runtime default applies) or that it was
-  // submitted through an EVM permit whose inner call is not indexed — neither is a
-  // real zero, so both render as unknown rather than "0 retries".
-  maxRetries: number | null
-  // Per-execution slippage tolerance against the oracle price, as a Permill
-  // (30000 = 3%). Same Option caveat as maxRetries.
-  slippagePermill: number | null
-  // The order's own absolute price bound, fixed for its whole life: a Sell floors
-  // what each trade receives, a Buy caps what each trade pays. Only the one the
-  // direction defines is ever set.
-  minAmountOut: string | null
-  maxAmountIn: string | null
-  // The path each execution trades through. An EMPTY array is a real answer: the
-  // order named no path, so the router picks one per execution. Null = unknown.
-  route: DcaRouteHop[] | null
-  // Highest block the pallet has planned an execution for — the anchor for the
-  // next-execution countdown and the budget's remaining runway.
-  nextExecutionBlock: number | null
-  // Owner's spendable balance of the sold asset, on live open-ended schedules
-  // only: what dates an order that has no budget to exhaust.
-  fundingBalance: string | null
-  status: 'active' | 'completed' | 'terminated' | 'cancelled'
-  statusAt: string | null
-  // Named termination reason for error terminations (e.g. "token frozen").
-  statusReason: string | null
-  executions: { count: number; failed: number; attempts: number; totalIn: string; totalOut: string }
-  rows: ActivityRow[]
-}
-
-// A single DCA execution attempt (one row on the schedule page), addressed by
-// its execution event. Executed attempts carry both legs and a price; failed
-// attempts carry only the schedule's fixed per-trade leg (the sold amount for
-// Sell orders, the bought amount for Buy orders) and a decoded failure reason.
-export interface DcaExecutionDetail {
-  scheduleId: number
-  status: 'executed' | 'failed'
-  who: AccountRef | null
-  blockHeight: number
-  timestamp: string
-  eventIndex: number
-  extrinsicIndex: number | null
-  assetIn: AssetRef
-  assetOut: AssetRef
-  amountIn: string | null
-  amountOut: string | null
-  valueUsd: number | null
-  executionPrice: number | null
-  period: number
-  failureReason: FailureReason | null
-  revenue?: ActivityRevenue
 }
 
 export interface ReferendumVoter {
@@ -1426,598 +854,11 @@ export interface ReferendumProgress {
   projection: { state: 'passing' | 'on-track' | 'short'; confirmableAtBlock: number | null } | null
 }
 
-// A user-authored tag list: a named, ownable collection of tags an account
-// created to organize other accounts (mirrors the built-in Tag directory, but
-// user-owned and optionally shared). `isPersonal` marks the one list every
-// account gets automatically and cannot delete or leave.
-export interface ListSummaryRef {
-  listId: string
-  name: string
-  note: string
-  visibility: 'private' | 'public'
-  isPersonal: boolean
-  owner: AccountRef
-  tagCount: number
-  accountCount: number
-  subscriberCount: number
-}
-
-export interface ListTagDetail {
-  tagId: string
-  name: string
-  color: string
-  // The RAW stored icon — '' when unset. This is what an edit form must seed
-  // from and resubmit; `checkIcon` server-side rejects anything URL-shaped,
-  // so seeding an edit from `displayIcon` (which can be a profile-avatar URL
-  // once the first-member fallback engages) would 422 a plain rename.
-  icon: string
-  // The DISPLAY icon — `icon` if set, else derived from the first member
-  // (see tagDisplayIcon server-side). Every display surface (this page's own
-  // header/pill, tag-map pills elsewhere) uses this, never `icon` directly.
-  displayIcon: string
-  note: string
-  members: AccountRef[]
-}
-
-export interface ListDetailResponse extends ListSummaryRef {
-  tags: ListTagDetail[]
-  // Present only when the viewer is authenticated and not the owner — whether
-  // they already subscribe to this (public) list.
-  subscribed?: boolean
-  // Owner-only (Subscribers tab): every account with a live invite or an
-  // active subscription. Absent for every other viewer, including the
-  // anonymous public detail — never an empty array standing in for "no
-  // access", so the tab can tell "no subscribers yet" apart from "not yours
-  // to see".
-  shares?: { account: AccountRef; status: 'invited' | 'active' }[]
-}
-
-// The viewer's tag-map projection: every list's tags reduced to member
-// addresses, for local pill resolution without a round trip per tag. The
-// 'system' entry stands for the built-in Tag directory (no list owns it).
-export interface TagMapList {
-  listId: string
-  name: string
-  tags: { tagId: string; name: string; color: string; icon: string; members: string[] }[]
-}
-export interface TagMapResponse { lists: TagMapList[] }
-
-export interface MeResponse {
-  account: AccountRef
-  profile: ProfileRef | null
-  lists: ListSummaryRef[]
-  subscriptions: ListSummaryRef[]
-  invites: ListSummaryRef[]
-  order: string[]
-}
-
-export interface LoginChallengeResponse { nonce: string; message: string }
-export interface LoginResponse { token: string; me: MeResponse }
-
-// QR device-link handoff: `code` goes into the QR only, `linkId` is the handle
-// the issuing device polls with (never the code itself).
-export interface DeviceLinkResponse { code: string; linkId: string; expiresAt: string }
-export type DeviceLinkStatus = 'pending' | 'claimed' | 'expired'
-// One live session on the devices list; `id` is the server-side token hash —
-// the handle revocation takes — never a usable token.
-export interface DeviceSession { id: string; label: string; createdVia: string; createdAt: string; lastSeen: string; current: boolean }
-
-// Notifications. The kind union mirrors NOTIFICATION_KINDS in
-// api/src/notifications/notificationRules.ts; the constants and per-kind
-// parameter shapes live in src/notificationKinds.ts, which is the UI's copy of
-// that registry (a rule's parameter set exists in exactly one place per side).
-export type NotificationKind =
-  | 'account-activity' | 'large-trade' | 'large-transfer' | 'price' | 'health-factor'
-  | 'referendum' | 'tc-motion' | 'safety' | 'extrinsic' | 'event'
-  | 'protocol-revenue' | 'liquidation'
-// A channel is described by what is safe to show: a web-push channel by its
-// endpoint's HOST (never the endpoint or its keys), a Telegram channel by its
-// @username (never the chat id). The server never sends the credential itself.
-export interface NotificationChannel {
-  id: string
-  kind: 'webpush' | 'telegram'
-  label: string
-  verified: boolean
-  endpointHost?: string
-  username?: string
-}
-// What an account-activity rule watches: one address, a system tag, or one of
-// the viewer's own list tags. A tag target follows its membership, so the rule
-// stores the tag's identity rather than the addresses it held when it was made.
-// The legacy `{ address }` parameter shape is still accepted by the server and
-// still readable here (see readTarget in notificationKinds.ts).
-export type NotificationTarget =
-  | { kind: 'address'; address: string }
-  | { kind: 'tag'; tagId: string }
-  | { kind: 'list-tag'; listId: string; tagId: string }
-
-// `channels: []` means every channel — the same "empty is all" rule the store
-// uses, so a rule keeps working when a new channel is linked later.
-export interface NotificationRule {
-  id: string
-  kind: NotificationKind
-  kindLabel: string
-  name: string
-  summary: string
-  params: Record<string, unknown>
-  channels: string[]
-  muted: boolean
-  cooldownS: number
-  // Display-only echo of a tag target, resolved server-side: the rules table
-  // renders a tag pill from these rather than re-resolving a tag id the viewer
-  // may not even have loaded. Absent for an address target.
-  targetLabel?: string
-  targetMemberCount?: number
-  targetIcon?: string
-  targetColor?: string
-  // An address target has no tag to name, so the server resolves the account
-  // itself — the same ref every other surface draws an account from.
-  targetAccount?: AccountRef | null
-  // Set by POST /rules when an equivalent rule already existed: the create is
-  // idempotent, so a double click (or a second surface subscribing to the same
-  // thing) gets the rule back instead of a duplicate.
-  existing?: boolean
-}
-export interface NotificationInboxRow {
-  id: string
-  ruleId: string
-  kind: string
-  kindLabel: string
-  title: string
-  body: string
-  url: string
-  blockHeight: number
-  read: boolean
-  createdAt: string
-}
-// `vapidPublicKey`/`telegramBot` are '' when that channel is unconfigured on
-// this deployment — the page says so rather than offering a dead button.
-export interface NotificationsOverview {
-  channels: NotificationChannel[]
-  rules: NotificationRule[]
-  unread: number
-  vapidPublicKey: string
-  telegramBot: string
-}
-export interface NotificationInboxPage { rows: NotificationInboxRow[]; unread: number; total: number }
 // `/explorer/filter-names` — the pallet.call and pallet.Event names present in the
 // indexed data, so a name field can offer them instead of asking to be told one.
 // Suggestions only: a name not in the list is still a valid filter and a valid
 // alert (the server matches names case-insensitively and partially).
 export interface FilterNames { calls: string[]; events: string[] }
-// The Telegram link handoff: `url` is the bot deep link carrying `code`.
-export interface NotificationTelegramLink { code: string; url: string; expiresAt: string }
-export type NotificationLinkStatus = 'pending' | 'claimed' | 'expired'
-// What a create/update request carries. `params` is the kind's own object (see
-// notificationKinds.ts); the server re-validates it and answers 422 by name.
-export interface NotificationRuleInput {
-  kind: NotificationKind
-  params: Record<string, unknown>
-  name?: string
-  channels?: string[]
-  cooldownS?: number
-}
-export interface NotificationRulePatch {
-  muted?: boolean
-  name?: string
-  params?: Record<string, unknown>
-  channels?: string[]
-  cooldownS?: number
-}
-export interface WebPushSubscriptionInput { endpoint: string; keys: { p256dh: string; auth: string } }
-
-// Security page — circuit breakers, freezes and the origins that can lift them.
-// Raw integer amounts stay strings (asset decimals live on the AssetRef); the
-// global withdraw limit arrives pre-scaled to HDX because its reference currency
-// is fixed by the runtime.
-// Every sink live today is a sibling parachain's sovereign account, so `chain`
-// names the chain the funds are leaving for.
-export interface SecurityEgressSink { account: AccountRef; chain: string | null }
-export interface SecurityWithdrawLimit {
-  configured: boolean
-  limit: number | null
-  used: number | null
-  usagePct: number | null
-  windowMs: number | null
-  lastCreditedMs: number | null
-  lockdownUntilMs: number | null
-  armedAt: { blockHeight: number; blockTimestamp: string } | null
-  everTripped: boolean
-  egressAccounts: SecurityEgressSink[]
-  localAssets: AssetRef[]
-  externalAssetCount: number
-}
-
-// `unarmed` = no lockdown row yet (the asset's first mint sets the baseline);
-// `expired` = the 24h window elapsed and the next mint re-baselines it.
-export type SecurityFuseStatus = 'locked' | 'frozen' | 'expired' | 'active' | 'unarmed'
-export interface SecurityFuse {
-  asset: AssetRef
-  status: SecurityFuseStatus
-  limit: string
-  used: string
-  headroom: string
-  usagePct: number
-  untilBlock: number | null
-  periodEndBlock: number | null
-  category: 'local' | 'external' | null
-  lockdownCount: number
-  // Today's dollar meaning of the allowance and of what this period minted —
-  // the token amounts alone hide that a WETH fuse and a PINK fuse differ by
-  // six orders of magnitude. Null when the asset has no price.
-  limitUsd: number | null
-  usedUsd: number | null
-}
-
-export interface SecurityLockdown {
-  asset: AssetRef
-  blockHeight: number
-  blockTimestamp: string
-  untilBlock: number
-  liftedAtBlock: number | null
-  liftedAtTimestamp: string | null
-  liftedEarly: boolean | null
-  extrinsicIndex: number | null
-}
-
-export interface SecurityPerBlockRow {
-  asset: AssetRef
-  reserve: string
-  reserveUsd: number | null
-  tradeLimitPct: number
-  tradeAllowance: string
-  tradeAllowanceUsd: number | null
-  addLimitPct: number | null
-  addAllowance: string | null
-  removeLimitPct: number | null
-  removeAllowance: string | null
-  overridden: boolean
-  peakBlockNet: string | null
-  peakBlockHeight: number | null
-  peakPressurePct: number | null
-  tradable: string[]
-}
-
-export interface SecurityTrip {
-  blockHeight: number
-  blockTimestamp: string
-  extrinsicId: string
-  callName: string
-  errorName: string
-  account: AccountRef | null
-}
-
-export interface SecurityPausedCall {
-  pallet: string
-  call: string
-  pausedAtBlock: number | null
-  pausedAtTimestamp: string | null
-  extrinsicIndex: number | null
-  orphaned: boolean
-}
-
-export interface SecurityTradability { asset: AssetRef; poolId: number | null; bits: number; flags: string[] }
-
-export interface SecuritySafetyEvent {
-  kind: string
-  label: string
-  detail: string
-  blockHeight: number
-  blockTimestamp: string
-  extrinsicIndex: number | null
-  asset: AssetRef | null
-}
-
-// Solvency of one lending market. The primary and supplemental markets are
-// isolated, so their debts and health factors are never blended.
-export interface SecurityMarketSolvency {
-  key: string
-  label: string
-  role: 'primary' | 'supplemental'
-  borrowers: number
-  debtUsd: number
-  collateralUsd: number
-  // Under water: collateral no longer covers the debt at the liquidation
-  // threshold, so anyone may close the position for a fee — transient by design.
-  underwaterCount: number
-  underwaterDebtUsd: number
-  underwaterCollateralUsd: number
-  // Bad debt: the part no liquidation can recover, Σ max(0, debt − collateral).
-  badDebtCount: number
-  badDebtUsd: number
-  // Under water but still fully covered — a liquidator profits, so it should clear.
-  liquidatableCount: number
-  liquidatableDebtUsd: number
-  // Within 5% of the liquidation threshold, excluding positions whose proximity is
-  // structural: e-mode loops and isolation-mode collateral. Null when chain state
-  // is unavailable, since both flags are only readable from the pool contract.
-  nearLiquidationCount: number | null
-  nearLiquidationDebtUsd: number | null
-}
-
-export interface SecurityLiquidation {
-  blockHeight: number
-  blockTimestamp: string
-  extrinsicIndex: number | null
-  borrower: AccountRef
-  collateral: AssetRef
-  debt: AssetRef
-}
-
-// A real liquidity event beside the per-block allowance the circuit breaker
-// measures it against. The share can exceed 100%: the allowance is computed from
-// today's reserve, not the reserve at that block.
-export interface SecurityLiquidityMove {
-  asset: AssetRef
-  kind: 'add' | 'remove'
-  amount: string
-  blockHeight: number
-  blockTimestamp: string
-  extrinsicIndex: number | null
-  allowance: string | null
-  shareOfAllowancePct: number | null
-}
-
-export interface SecurityDashboard {
-  head: { blockHeight: number; blockTimestamp: string }
-  chainAsOf: string | null
-  chainBlock: number | null
-  withdraw: SecurityWithdrawLimit
-  fuses: {
-    periodBlocks: number
-    rows: SecurityFuse[]
-    lockedCount: number
-    frozenCount: number
-    lockdownTotal: number
-    releaseTotal: number
-    lockdowns: SecurityLockdown[]
-  }
-  perBlock: {
-    defaultTradePct: number
-    defaultAddPct: number
-    defaultRemovePct: number
-    rows: SecurityPerBlockRow[]
-    peakWindowDays: number
-  }
-  trips: {
-    total: number
-    enforcementTotal: number
-    directTotal: number
-    nestedTotal: number
-    byError: { name: string; count: number; enforcement: boolean }[]
-    byYear: { year: number; count: number }[]
-    recent: SecurityTrip[]
-  }
-  freezes: {
-    paused: SecurityPausedCall[]
-    hubTradability: string[]
-    omnipool: SecurityTradability[]
-    omnipoolAssetCount: number
-    delisted: SecurityTradability[]
-    stableswap: SecurityTradability[]
-  }
-  risk: {
-    windowDays: number
-    markets: SecurityMarketSolvency[]
-    liquidations: { day: number; week: number; month: number; total: number; lastTimestamp: string | null; recent: SecurityLiquidation[] }
-    largestMoves: SecurityLiquidityMove[]
-  }
-  runtime: { specVersion: number; upgrades: number; lastUpgrade: { blockHeight: number; blockTimestamp: string } | null }
-  timeline: SecuritySafetyEvent[]
-  guardians: {
-    techCommittee: { members: AccountRef[]; size: number; majority: number; superMajority: number }
-    memberSetAtBlock: number | null
-    outstandingWhitelisted: { callHash: string; blockHeight: number; blockTimestamp: string }[]
-  }
-  // Null until the backing snapshot has run once; the overview card renders the
-  // slot either way rather than disappearing.
-  wormhole: WormholeSummary | null
-}
-
-// ---- Wormhole NTT backing (Security → Wormhole) ----
-//
-// Every Wormhole asset is locked in custody on its origin chain and minted on
-// Hydration. The two must agree once every transfer that has not landed is
-// counted — those still in flight, and those the origin chain's rate limiter is
-// holding in its release queue:
-//   locked = issuance + inflightIn + inflightOut + queued + residual
-// A positive residual is custody the chain does not owe — benign, and the state
-// the seeded migration left behind. A negative residual means supply exceeds
-// its backing, which is what this surface exists to catch.
-//
-// Raw integer amounts stay strings at the row's own `decimals`. A null is a
-// value that could not be read, never a zero.
-export type WormholeStatus = 'ok' | 'surplus' | 'attention' | 'deficit' | 'unverified' | 'unconfigured'
-
-export interface WormholeSummary {
-  assets: number
-  lockedUsd: number | null
-  issuanceUsd: number | null
-  // Null when Wormholescan is not configured, so in-flight is unchecked rather
-  // than known to be empty.
-  inflightCount: number | null
-  inflightUsd: number | null
-  // Transfers the origin chain's own inbound rate limiter is holding back:
-  // burned here, redeemed there, not yet released from custody.
-  queuedCount: number | null
-  queuedUsd: number | null
-  worstStatus: WormholeStatus
-  // Total absolute USD of the negative residuals, 0 when every asset is covered.
-  deficitUsd: number | null
-  surplusUsd: number | null
-  asOf: string | null
-}
-
-export interface WormholeAssetRow {
-  assetId: string
-  symbol: string
-  decimals: number
-  originChainId: number
-  originChainName: string
-  // Canonical display form for the origin chain: 0x… on EVM and Sui, base58 on Solana.
-  originToken: string | null
-  manager: string
-  mode: 'burning' | 'locking' | null
-  pausedLocal: boolean | null
-  pausedOrigin: boolean | null
-  peer: string | null
-  issuance: string | null
-  // Gap-closing mints parked at 0x…dEaD: counted by issuance but permanently
-  // out of circulation, so they need no custody and leave the equation.
-  burned: string | null
-  locked: string | null
-  inflightIn: string | null
-  inflightOut: string | null
-  inflightCount: number | null
-  // Held at the origin rate limiter. Null when custody could not be read, or
-  // when the origin chain's family has no queue reader (Sui) — those keep
-  // degrading to visible surplus, never to a hidden shortfall.
-  queued: string | null
-  queuedCount: number | null
-  residual: string | null
-  // The four NTT rate limiters this asset passes through, or null when the
-  // origin chain is unconfigured/unread. Every leg is the same instrument: a
-  // bucket that refills linearly over `durationSec`, and a transfer larger than
-  // what is left is not rejected — it is held for one whole window.
-  limits: WormholeLimits | null
-  // All-time NTT flows, and the part of supply they do not explain — the legacy
-  // pre-NTT remainder, which should hold constant per asset.
-  flows: { mintedIn: string; burnedOut: string; nonNtt: string | null }
-  issuanceUsd: number | null
-  lockedUsd: number | null
-  residualUsd: number | null
-  status: WormholeStatus
-  statusDetail: string
-  transfers14d: { out: number; in: number }
-}
-
-// One NTT rate limiter, read live. Raw amounts are integers at the ASSET's own
-// decimals, whatever units the chain holding the limiter counts in.
-export interface WormholeFuse {
-  limit: string
-  // What the bucket holds right now, after refilling since the last transfer.
-  capacity: string
-  // (limit − capacity) / limit × 100, clamped to 0..100.
-  utilizationPct: number
-  // The refill window, read from the manager rather than assumed — 86 400s on
-  // every leg today.
-  durationSec: number
-  lastConsumedAt: string | null
-}
-
-// Direction names are Hydration-centric: `in` is the origin chain's outbound
-// leg (a transfer entering Hydration), `out` its inbound leg (the release of a
-// transfer leaving Hydration — the leg that holds a queued release). The two
-// local legs are read for honesty: they are set so high in practice that the
-// origin side carries every real limit.
-export interface WormholeLimits {
-  in: WormholeFuse | null
-  out: WormholeFuse | null
-  localOut: WormholeFuse | null
-  localIn: WormholeFuse | null
-}
-
-export interface WormholeInflightOp {
-  id: string
-  direction: 'in' | 'out'
-  assetId: string | null
-  symbol: string | null
-  amount: string | null
-  amountUsd: number | null
-  fromChainId: number
-  toChainId: number
-  sequence: string
-  sentAt: string | null
-  sourceTx: string | null
-}
-
-// A transfer that arrived at its origin chain and was refused release by that
-// chain's inbound rate limiter. It is neither in flight nor settled: the tokens
-// are burned on Hydration and still sitting in origin custody. Once
-// `releasableAt` passes, anyone can call completeInboundQueuedTransfer to let
-// it out — a queued release is a delay, not a loss.
-export interface WormholeQueuedRelease {
-  // The NTT message digest. It is not a transaction, so it links nowhere; the
-  // surface shows it short and copyable instead.
-  digest: string
-  assetId: string
-  symbol: string
-  amount: string
-  amountUsd: number | null
-  // The origin chain holding the release.
-  chainId: number
-  recipient: string | null
-  queuedAt: string | null
-  releasableAt: string | null
-  releasable: boolean
-}
-
-export interface WormholeTransferRow {
-  direction: 'in' | 'out'
-  assetId: string
-  symbol: string
-  amount: string
-  // Event-time valuation; null when the asset had no price at that block.
-  amountUsd: number | null
-  account: string | null
-  // Full account descriptor for the pill; `account` stays the raw id for links.
-  accountRef: AccountRef | null
-  counterpartyChainId: number
-  blockHeight: number
-  eventIndex: number
-  extrinsicIndex: number | null
-  timestamp: string
-  sequence: string | null
-}
-
-// One origin chain's custody reader. `configured` is whether the deployment has
-// an endpoint for it at all; `ok` is whether the last poll answered.
-export interface WormholeChainState {
-  chainId: number
-  name: string
-  family: 'evm' | 'solana' | 'sui'
-  configured: boolean
-  ok: boolean
-  asOf: string | null
-}
-
-export interface WormholeBridgeDetail {
-  assets: WormholeAssetRow[]
-  inflight: WormholeInflightOp[]
-  // Newest first.
-  queued: WormholeQueuedRelease[]
-  recent: WormholeTransferRow[]
-  totals: {
-    lockedUsd: number | null
-    issuanceUsd: number | null
-    inflightUsd: number | null
-    deficitUsd: number | null
-    surplusUsd: number | null
-  }
-  chains: WormholeChainState[]
-  scan: { configured: boolean; ok: boolean; asOf: string | null }
-  hydrationChainId: number
-  asOf: string | null
-  indexedThrough: { block: number; at: string } | null
-}
-
-// ---- protocol revenue breakdown (the Protocol Revenue detail tab) ----
-
-export interface RevenueBreakdownAsset { asset: AssetRef; usd: number }
-export interface RevenueBreakdownStream {
-  stream: string
-  usd: number
-  assets: RevenueBreakdownAsset[]
-  // The folded tail past the top assets, so a stream row still adds up
-  // without hundreds of dust lines.
-  otherUsd: number
-  otherCount: number
-}
-export interface RevenueBreakdown {
-  totalUsd: number
-  streams: RevenueBreakdownStream[]
-}
-
 // ---- /governance ----
 
 export interface GovernanceTrackRef { id: number; name: string }

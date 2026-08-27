@@ -5,13 +5,13 @@ import { activityBadge } from '../src/components/activityColors'
 import type { ActivityRow } from '../src/types'
 
 describe('trade activity actions', () => {
-  it('offers failed DCA on every surface using the shared action list', () => {
-    expect(ACTIVITY_ACTIONS.trade).toContainEqual({ v: 'dca-failed', label: 'Failed DCA' })
-    expect(normalizeActivityAction('trade', 'dca-failed')).toBe('dca-failed')
+  it('offers swap on every surface using the shared action list', () => {
+    expect(ACTIVITY_ACTIONS.trade).toContainEqual({ v: 'swap', label: 'Swap' })
+    expect(normalizeActivityAction('trade', 'swap')).toBe('swap')
   })
 
   it('does not accept the trade-only action on another activity family', () => {
-    expect(normalizeActivityAction('liquidity', 'dca-failed')).toBe('')
+    expect(normalizeActivityAction('liquidity', 'swap')).toBe('')
   })
 })
 
@@ -34,18 +34,14 @@ describe('origin asset icons', () => {
 })
 
 describe('reward claim classification', () => {
-  it('offers and routes incentives claims as claim-rewards activities', () => {
-    expect(ACTIVITY_ACTIONS.mm).toContainEqual({ v: 'ClaimRewards', label: 'Claim Lend Rewards' })
-    expect(normalizeActivityAction('mm', 'ClaimRewards')).toBe('ClaimRewards')
-    expect(activitySlug({ type: 'mm', mmAction: 'ClaimRewards' } as ActivityRow)).toBe('claim-rewards')
-    expect(SLUG_TYPES['claim-rewards']).toEqual(expect.arrayContaining(['mm', 'liquidity']))
+  it('offers and routes liquidity-mining claims as claim-rewards activities', () => {
+    expect(ACTIVITY_ACTIONS.liquidity).toContainEqual({ v: 'Claim', label: 'Claim LP Rewards' })
+    expect(normalizeActivityAction('liquidity', 'Claim')).toBe('Claim')
+    expect(activitySlug({ type: 'liquidity', liqAction: 'Claim' } as ActivityRow)).toBe('claim-rewards')
+    expect(SLUG_TYPES['claim-rewards']).toEqual(expect.arrayContaining(['liquidity']))
   })
 
-  // Two unrelated claims share one slug, so the label is the only thing telling a
-  // reader which position paid out. They met in the merged feed as one word.
-  it('names the lending claim and the liquidity claim apart', () => {
-    expect(activityBadge({ type: 'mm', mmAction: 'ClaimRewards' } as ActivityRow).label).toBe('Claim Lend Rewards')
+  it('names the claim after the position it pays out', () => {
     expect(activityBadge({ type: 'liquidity', liqAction: 'Claim' } as ActivityRow).label).toBe('Claim LP Rewards')
-    expect(ACTIVITY_ACTIONS.liquidity).toContainEqual({ v: 'Claim', label: 'Claim LP Rewards' })
   })
 })

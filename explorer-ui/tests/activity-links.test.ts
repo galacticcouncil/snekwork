@@ -12,21 +12,13 @@ const base: ActivityRow = {
 describe('activitySlug', () => {
   it('maps rows to canonical slugs', () => {
     expect(activitySlug({ ...base, type: 'trade' })).toBe('swap')
-    expect(activitySlug({ ...base, type: 'trade', dca: true })).toBe('dca')
-    expect(activitySlug({ ...base, type: 'dca' })).toBe('dca')
     expect(activitySlug(base)).toBe('transfer')
     expect(activitySlug({ ...base, type: 'xcm' })).toBe('cross-chain')
     expect(activitySlug({ ...base, type: 'liquidity', liqAction: 'Add' })).toBe('add-liquidity')
     expect(activitySlug({ ...base, type: 'liquidity', liqAction: 'Remove' })).toBe('remove-liquidity')
     expect(activitySlug({ ...base, type: 'liquidity', liqAction: 'Destroy' })).toBe('destroy-pool')
-    expect(activitySlug({ ...base, type: 'mm', mmAction: 'Supply' })).toBe('lend')
-    expect(activitySlug({ ...base, type: 'mm', mmAction: 'LiquidationCall' })).toBe('liquidate')
-    expect(activitySlug({ ...base, type: 'mm', mmAction: 'Repay' })).toBe('repay')
-    expect(activitySlug({ ...base, type: 'staking', stakingAction: 'GIGAHDX Stake' })).toBe('staking')
+    expect(activitySlug({ ...base, type: 'liquidity', liqAction: 'Claim' })).toBe('claim-rewards')
     expect(activitySlug({ ...base, type: 'vote', voteSide: 'Aye' })).toBe('vote')
-    expect(activitySlug({ ...base, type: 'otc', otcAction: 'Place' })).toBe('otc-place')
-    expect(activitySlug({ ...base, type: 'otc', otcAction: 'Pull' })).toBe('otc-pull')
-    expect(activitySlug({ ...base, type: 'otc', otcAction: 'Fill' })).toBe('otc-fill')
   })
 })
 
@@ -45,12 +37,6 @@ describe('activityId', () => {
   it('prefers the event index', () => expect(activityId(base)).toBe('100-e7'))
   it('falls back to the extrinsic index', () => expect(activityId({ ...base, eventIndex: null })).toBe('100-2'))
   it('returns null with neither', () => expect(activityId({ ...base, eventIndex: null, extrinsicIndex: null })).toBe(null))
-  it('links a DCA row to its owning schedule by default', () => {
-    expect(activityId({ ...base, type: 'dca', dca: true, dcaScheduleId: 42, eventIndex: 7 })).toBe('42')
-  })
-  it('links a DCA row to its own execution when the execution flag is set', () => {
-    expect(activityId({ ...base, type: 'dca', dca: true, dcaScheduleId: 42, eventIndex: 7 }, true)).toBe('100-e7')
-  })
 })
 
 describe('canonicalTarget', () => {
@@ -58,9 +44,9 @@ describe('canonicalTarget', () => {
     expect(canonicalTarget(base, 'transfer', '100-e7')).toBe(null)
   })
 
-  it('canonicalizes on slug mismatch (row is dca, current slug is swap)', () => {
-    const row: ActivityRow = { ...base, type: 'trade', dca: true }
-    expect(canonicalTarget(row, 'swap', '100-e7')).toBe('/dca/100-e7')
+  it('canonicalizes on slug mismatch (row is a swap, current slug is transfer)', () => {
+    const row: ActivityRow = { ...base, type: 'trade' }
+    expect(canonicalTarget(row, 'transfer', '100-e7')).toBe('/swap/100-e7')
   })
 
   it('upgrades an extrinsic-form id to the event form when the slug already matches', () => {
@@ -68,8 +54,8 @@ describe('canonicalTarget', () => {
   })
 
   it('canonicalizes both slug and id when both are wrong', () => {
-    const row: ActivityRow = { ...base, type: 'trade', dca: true }
-    expect(canonicalTarget(row, 'swap', '100-2')).toBe('/dca/100-e7')
+    const row: ActivityRow = { ...base, type: 'trade' }
+    expect(canonicalTarget(row, 'transfer', '100-2')).toBe('/swap/100-e7')
   })
 })
 
@@ -85,44 +71,26 @@ describe('parseId', () => {
 })
 
 describe('SLUG_TYPES', () => {
-  it('maps swap and dca to the trade coarse type', () => {
-    expect(SLUG_TYPES.swap).toEqual(['trade', 'dca'])
-    expect(SLUG_TYPES.dca).toEqual(['trade', 'dca'])
+  it('maps swap to the trade coarse type', () => {
+    expect(SLUG_TYPES.swap).toEqual(['trade'])
   })
   it('maps cross-chain to xcm', () => expect(SLUG_TYPES['cross-chain']).toEqual(['xcm']))
-  it('maps the five mm slugs to mm', () => {
-    for (const slug of ['lend', 'withdraw', 'borrow', 'repay', 'liquidate'] as const) {
-      expect(SLUG_TYPES[slug]).toEqual(['mm'])
-    }
-  })
   it('maps liquidity slugs to liquidity', () => {
     expect(SLUG_TYPES['add-liquidity']).toEqual(['liquidity'])
     expect(SLUG_TYPES['remove-liquidity']).toEqual(['liquidity'])
+    expect(SLUG_TYPES['claim-rewards']).toEqual(['liquidity'])
   })
-  it('maps transfer, staking and vote to their own singleton types', () => {
+  it('maps transfer and vote to their own singleton types', () => {
     expect(SLUG_TYPES.transfer).toEqual(['transfer'])
-    expect(SLUG_TYPES.staking).toEqual(['staking'])
     expect(SLUG_TYPES.vote).toEqual(['vote'])
-  })
-  it('maps the three otc slugs to the otc coarse type', () => {
-    expect(SLUG_TYPES['otc-place']).toEqual(['otc'])
-    expect(SLUG_TYPES['otc-pull']).toEqual(['otc'])
-    expect(SLUG_TYPES['otc-fill']).toEqual(['otc'])
-  })
-})
-
-describe('canonicalTarget (otc)', () => {
-  it('redirects on otc slug mismatch (row is a pull, current slug is otc-place)', () => {
-    const row: ActivityRow = { ...base, type: 'otc', otcAction: 'Pull', otcOrderId: 42 }
-    expect(canonicalTarget(row, 'otc-place', '100-e7')).toBe('/otc-pull/100-e7')
   })
 })
 
 // An id can name an event that is real, is part of an activity, and is deliberately
-// not a row of its own: the transfer legs and fee withdrawals of an OTC fill, a swap
-// or a money-market call. Before this, such an id answered "No transfer activity
-// found" under a page titled "Transfer" — asserting a family the event never belonged
-// to, and stranding the reader one click from what it actually is.
+// not a row of its own: the transfer legs and fee withdrawals of a swap. Before this,
+// such an id answered "No transfer activity found" under a page titled "Transfer" —
+// asserting a family the event never belonged to, and stranding the reader one click
+// from what it actually is.
 describe('subordinateActivityTarget', () => {
   const at = (extrinsicIndex: number | null, over: Partial<ActivityRow> = {}): ActivityRow => ({
     type: 'transfer', blockHeight: 13278487, timestamp: '2026-07-23 01:43:42', eventIndex: 12,
@@ -131,28 +99,28 @@ describe('subordinateActivityTarget', () => {
   } as ActivityRow)
 
   it('hands a plumbing event over to the activity owning its extrinsic', () => {
-    // The real case: OTC.fill_order emits transfer legs at e6/e8 and the fill at e12.
-    const rows = [at(2, { type: 'otc', otcAction: 'Fill', eventIndex: 12 })]
-    expect(subordinateActivityTarget(rows, 2)).toBe('/otc-fill/13278487-e12')
+    // The real case: a routed swap emits transfer legs and the swap at e12.
+    const rows = [at(2, { type: 'trade', eventIndex: 12 })]
+    expect(subordinateActivityTarget(rows, 2)).toBe('/swap/13278487-e12')
   })
 
   it('refuses to guess when the extrinsic holds several activities', () => {
     const rows = [
-      at(2, { type: 'otc', otcAction: 'Fill', eventIndex: 12 }),
-      at(2, { type: 'otc', otcAction: 'Fill', eventIndex: 20 }),
+      at(2, { type: 'trade', eventIndex: 12 }),
+      at(2, { type: 'trade', eventIndex: 20 }),
     ]
     expect(subordinateActivityTarget(rows, 2)).toBeNull()
   })
 
   it('has nowhere to hand over when nothing owns the extrinsic', () => {
-    expect(subordinateActivityTarget([at(9, { type: 'swap' })], 2)).toBeNull()
+    expect(subordinateActivityTarget([at(9, { type: 'trade' })], 2)).toBeNull()
     expect(subordinateActivityTarget([], 2)).toBeNull()
     // A hook event has no extrinsic to be owned by.
-    expect(subordinateActivityTarget([at(2, { type: 'otc' })], null)).toBeNull()
+    expect(subordinateActivityTarget([at(2, { type: 'trade' })], null)).toBeNull()
   })
 
-  // A DCA execution's own id is its schedule, so an owner with no addressable row
-  // falls back to the extrinsic rather than building a broken activity URL.
+  // An owner with no addressable row falls back to the extrinsic rather than
+  // building a broken activity URL.
   it('falls back to the extrinsic when the owner has no id of its own', () => {
     const rows = [at(2, { type: 'transfer', eventIndex: null, extrinsicIndex: 2 })]
     expect(subordinateActivityTarget(rows, 2)).toBe('/transfer/13278487-2')

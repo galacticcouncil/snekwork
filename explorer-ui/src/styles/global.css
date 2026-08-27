@@ -444,17 +444,6 @@ svg { display: block; }
 [data-theme="light"] .theme-toggle .ic-sun { display: none; }
 [data-theme="light"] .theme-toggle .ic-moon { display: block; }
 
-/* Mid-width fold: between the mobile drawer (≤860px) and full desktop, the six
-   nav items would squeeze the topbar search to its minimum — Assets/HDX/HOLLAR
-   collapse into the Assets dropdown instead. */
-.nav .nav-fold-group { display: none; }
-@media (min-width: 861px) and (max-width: 1119px) {
-  .nav > .nav-link.nav-fold { display: none; }
-  .nav .nav-fold-group { display: block; }
-  /* The permanent Assets group yields to the wider fold dropdown here, or the
-     bar would show two "Assets" triggers. */
-  .nav .nav-unfold-group { display: none; }
-}
 /* At the narrowest desktop widths even the folded nav pinches the search —
    drop the wordmark and keep the logo. */
 @media (min-width: 861px) and (max-width: 989px) {
@@ -1507,13 +1496,6 @@ svg { display: block; }
 .hop-pool { font-family: 'GeistMono'; font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-medium); white-space: nowrap; }
 
 /* two-sided health badge: color-coded factor | DefiSim, the whole thing one link */
-.hf-badge { display: inline-flex; align-items: stretch; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; font-family: 'GeistMono'; font-size: 11px; line-height: 1; white-space: nowrap; vertical-align: middle; }
-.hf-badge .hfv { padding: 5px 8px; font-weight: 600; color: var(--text-medium); }
-.hf-badge .hfv.hf-ok { background: var(--green-soft); color: var(--green); }
-.hf-badge .hfv.hf-warn { background: var(--amber-soft); color: var(--amber); }
-.hf-badge .hfv.hf-bad { background: var(--red-soft); color: var(--red); }
-.hf-badge .sim { padding: 5px 8px; border-left: 1px solid var(--border); color: var(--text-medium); background: var(--panel); }
-.hf-badge:hover .sim { color: var(--text-high); }
 .mm-bar { padding: 16px 0; border-bottom: 1px solid var(--separator); }
 .mm-bar-track { position: relative; height: 8px; background: var(--panel); border-radius: 9999px; overflow: hidden; }
 .mm-bar-fill { height: 100%; background: linear-gradient(90deg, var(--green), var(--amber)); border-radius: 9999px; }
@@ -1945,45 +1927,6 @@ a.apx-mark-go:hover, a.apx-mark-go:active { text-decoration: underline; }
 /* ============ DCA schedules ============
    A DCA is scheduled in blocks but read in time, so every surface here leads
    with the duration and keeps the block count in .dca-blocks behind it. */
-.prog-ring { position: relative; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.prog-ring svg { width: 100%; height: 100%; display: block; }
-.prog-ring .pr-track { stroke: var(--panel-hover); }
-.prog-ring .pr-label {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  font-family: 'GeistMono'; font-size: 15px; font-weight: 600; color: var(--text-high); letter-spacing: -0.02em;
-}
-.prog-ring .pr-unit { font-size: 10px; color: var(--text-low); margin-left: 1px; }
-.prog-ring .pr-runs { font-size: 13px; }
-
-/* The order, its progress and its next move, above the schedule's detail list.
-   Padded like a .dl row so the ring lines up with the labels under it rather
-   than floating against the card's rounded corner. */
-.dca-hero { display: flex; align-items: center; gap: 16px; padding: 18px; border-bottom: 1px solid var(--separator); flex-wrap: wrap; }
-.dca-hero-body { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
-/* One type size for the whole sentence, chips included: the words are centred in
-   their line box and a chip's symbol is centred on its 20px icon, so the two only
-   share a baseline while they share a size — at 15px sans over 12px mono the
-   words visibly rode above the amounts. */
-.dca-order { font-size: 14px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-.dca-order .asset-chip, .dca-order .trade-leg, .dca-order .mono { font-size: inherit; }
-.dca-order .dca-every { color: var(--text-medium); }
-.dca-hero-facts { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 13px; color: var(--text-medium); }
-/* Separator ahead of each fact but the first: a wrapped line then starts with
-   the dot instead of ending on one. */
-.dca-hero-facts > span + span::before { content: '·'; margin-right: 7px; color: var(--text-lowest); }
-.dca-hero-facts .dca-state { font-family: 'GeistMono'; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
-/* The mechanism behind a duration, never competing with it. */
-.dca-blocks { font-size: 11px; }
-/* Marks a dollar figure as the price of its own day, not of today. */
-.dca-then { font-size: 11px; color: var(--text-lowest); }
-/* Second line of a table cell: the dollar value under an amount, the block under
-   a countdown, the trades left under a runway. */
-/* Every cell's second line shares one box, so the dollar figures, block numbers,
-   trade counts and balances across a row sit on the same baseline. Nothing taller
-   than text goes in here — an asset icon would lift its own line out of step. */
-.dca-sub { display: block; font-size: 11px; line-height: 1.5; margin-top: 1px; }
-/* The ring rides inside the first line rather than setting the row's height. */
-.dca-filled .prog-ring { align-self: center; }
 /* Most cells in an active order are two lines (a value over its dollar figure,
    its block, its trade count). Top-aligning the row puts every first line on one
    line — including the selling → buying pair, which otherwise floated in the
@@ -2590,47 +2533,6 @@ a.apx-mark-go:hover, a.apx-mark-go:active { text-decoration: underline; }
 .tbl tr.unfinalized > td { opacity: .55; transition: opacity 300ms; }
 .tbl tr.unfinalized:hover > td { opacity: .8; }
 
-/* Transaction-pool (mempool) rows: dry-run PROJECTIONS of transactions no
-   block holds yet. The opposite treatment of unfinalized: these must stand
-   out, not recede — a lavender wash with an edge bar, plus the pulsing pool
-   chip. Self-healing like unfinalized: inclusion replaces the row with its
-   (dimmed) unfinalized version, finality with the plain one. The pulse dies
-   with every other animation under prefers-reduced-motion. */
-.tbl tr.mempool > td { background: color-mix(in srgb, var(--lavender-deep) 7%, transparent); }
-.tbl tr.mempool:hover > td { background: color-mix(in srgb, var(--lavender-deep) 12%, transparent); }
-/* The pool row's left edge: a column of square pixels marching upward, one
-   block per step. A newly arrived row's solid sky line fades out after 1.25s
-   and leaves the row looking settled — but a pool row is not settled, it is a
-   projection held in memory, so its edge keeps moving for exactly as long as
-   that is true and stops existing the moment a block carries the transaction.
-   Blocks alternate full and half intensity, and the step timing makes them
-   jump a whole pixel at a time rather than slide. */
-.tbl tbody tr.mempool > td:first-child,
-.tbl tbody tr.mempool.row-new > td:first-child {
-  box-shadow: none;
-  background-image: repeating-linear-gradient(to bottom,
-    var(--lavender-deep) 0 3px,
-    transparent 3px 6px,
-    color-mix(in srgb, var(--lavender-deep) 40%, transparent) 6px 9px,
-    transparent 9px 12px);
-  background-repeat: repeat-y;
-  background-size: 3px 12px;
-  background-position: 0 0;
-  animation: poolBits 1s steps(4, end) infinite;
-}
-.tbl tbody tr.mempool.row-new > td:first-child { animation: poolBits 1s steps(4, end) infinite, rowEnter 1.25s ease-out; }
-@keyframes poolBits { from { background-position: 0 0; } to { background-position: 0 -12px; } }
-/* One motion per context: where the marching edge already says "in memory",
-   the invader sits still (it keeps bobbing on the detail page, which has no
-   row edge to carry the motion). */
-.tbl tbody tr.mempool .pool-chip { animation: none; }
-/* A projected result: the same shape as a real one, drawn as an outline so it
-   reads as "not settled yet" at a glance. The unknown case is deliberately
-   plain — no colour to imply an outcome nothing established. */
-.badge.projected { background: transparent; border: 1px dashed currentColor; }
-.badge.projected.ok { color: var(--green); }
-.badge.projected.fail { color: var(--red); }
-.badge.projected.unknown { color: var(--text-low); border-style: dashed; padding-inline: 7px; }
 /* ── /liquidity ───────────────────────────────────────────────────────────────
    A pool is a mixture, so every row draws its own, and the page reads down as a
    cascade of shapes rather than a column of numbers. The bar is the one bold
@@ -2675,10 +2577,6 @@ a.apx-mark-go:hover, a.apx-mark-go:active { text-decoration: underline; }
 
 /* Conviction sits beside the AYE/NAY badge and must not read as part of it. */
 .conviction-tag { margin-left: 6px; }
-.pool-chip { display: inline-block; margin-right: 8px; font-size: 12px; line-height: 1; vertical-align: middle; animation: poolHover 1.4s steps(2, end) infinite; }
-/* Two positions, no in-between — the same pixel logic as the row's edge. */
-@keyframes poolHover { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
-
 /* A pool card that IS a link (the Liquidity tab's source cards): plain ink,
    hover lifts the border like a table row's hover — the whole card navigates. */
 a.hdx-card-link { text-decoration: none; color: inherit; cursor: pointer; transition: border-color 140ms; }

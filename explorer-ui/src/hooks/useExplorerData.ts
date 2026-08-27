@@ -1,11 +1,9 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { api, userApi } from '../api/explorer'
+import { api } from '../api/explorer'
 import type { EventFilters, ExtrinsicFilters, ListCountQuery, ValueFilters } from '../api/explorer'
 import { useHeadStream, BLOCK_STALE_MS, LIVE_MS } from '../live'
 import { useHeldRows } from './useHeldRows'
-import { getSession } from '../session'
-import { tagMapStatus, hasUserTagMembers, useTagMapVersion } from '../userTags'
-import type { AccountSort, ContractSort, RevenueRange } from '../types'
+import type { AccountSort } from '../types'
 
 // List/feed hooks honour the global Live toggle. When live, they poll on LIVE_MS;
 // when paused, no refetch. The API's single-flight cache keeps DB load O(1) in
@@ -59,33 +57,12 @@ export function useEvents(limit = 25, from?: string, to?: string, offset = 0, fi
   const key = ['events', limit, from, to, offset, filters]
   return useHeldRows(useQuery({ queryKey: key, queryFn: ({ signal }) => api.events(limit, from, to, offset, filters, signal), refetchInterval: offset === 0 ? ri : false, staleTime: 2000, placeholderData: keepPreviousData }), key, offset === 0)
 }
-// Whether this request must go to the viewer's own endpoint: only the identity
-// filter's answer depends on who is asking, and only when the viewer actually
-// has tags — otherwise the shared, cached, public feed is the same answer for
-// everyone and there is no reason to pay for a per-viewer entry.
-function useViewerFeed(filters?: ValueFilters): { authed: boolean; accountId?: string; version: number } {
-  const version = useTagMapVersion()
-  const session = getSession()
-  const authed = !!filters?.identity && !!session && tagMapStatus() === 'ready' && hasUserTagMembers()
-  return { authed, accountId: session?.accountId, version }
-}
-
 export function useActivity(limit = 30, from?: string, to?: string, offset = 0, type = 'all', filters?: ValueFilters, action?: string) {
   const ri = useInterval(LIVE_MS, true)
-  const viewer = useViewerFeed(filters)
-  const key = viewer.authed
-    ? ['activity', 'viewer', viewer.accountId, viewer.version, limit, from, to, offset, type, filters, action]
-    : ['activity', limit, from, to, offset, type, filters, action]
+  const key = ['activity', limit, from, to, offset, type, filters, action]
   return useHeldRows(useQuery({
     queryKey: key,
-    queryFn: async ({ signal }) => {
-      if (!viewer.authed) return api.activity(limit, from, to, offset, type, filters, action, signal)
-      // The viewer's tags are an enhancement to the filter, never a
-      // requirement for the feed to render: a failed authed call falls back to
-      // the page a logged-out reader would see rather than an error.
-      try { return await userApi.activity(limit, from, to, offset, type, filters, action, signal) }
-      catch { return api.activity(limit, from, to, offset, type, filters, action, signal) }
-    },
+    queryFn: ({ signal }) => api.activity(limit, from, to, offset, type, filters, action, signal),
     refetchInterval: offset === 0 ? ri : false, staleTime: 2000, placeholderData: keepPreviousData,
   }), key, offset === 0)
 }
@@ -93,16 +70,9 @@ export function useActivity(limit = 30, from?: string, to?: string, offset = 0, 
 // source carry a real total; every category carries the servable depth. Never polls
 // — a total that moved under the reader would renumber pages mid-walk.
 export function useActivityCount(type = 'all', from?: string, to?: string, filters?: ValueFilters, action?: string) {
-  const viewer = useViewerFeed(filters)
   return useQuery({
-    queryKey: viewer.authed
-      ? ['activity-count', 'viewer', viewer.accountId, viewer.version, type, from, to, filters, action]
-      : ['activity-count', type, from, to, filters, action],
-    queryFn: async ({ signal }) => {
-      if (!viewer.authed) return api.activityCount(type, from, to, filters, action, signal)
-      try { return await userApi.activityCount(type, from, to, filters, action, signal) }
-      catch { return api.activityCount(type, from, to, filters, action, signal) }
-    },
+    queryKey: ['activity-count', type, from, to, filters, action],
+    queryFn: ({ signal }) => api.activityCount(type, from, to, filters, action, signal),
     staleTime: 120_000,
   })
 }
@@ -134,25 +104,6 @@ export function useExtrinsic(id: string | null) {
     staleTime: 60_000,
     refetchInterval: q => pendingRefetchMs(q.state.data),
   })
-}
-// Gas for one EVM transaction. Asked only for an `Ethereum.transact` extrinsic a
-// reader actually opened, so it is one call per view rather than fan-out, and held
-// for the hour a receipt stays immutable. Never retried: a node that cannot answer
-// leaves the page's gas rows out, which is the honest rendering (see evmReceipt.ts).
-export function useEvmReceipt(txHash: string | null | undefined) {
-  return useQuery({
-    queryKey: ['evm-receipt', txHash],
-    queryFn: ({ signal }) => api.evmReceipt(txHash as string, signal),
-    enabled: !!txHash,
-    staleTime: 3_600_000,
-    retry: false,
-  })
-}
-export function useDcaSchedule(scheduleId: number, offset = 0) {
-  return useQuery({ queryKey: ['dca-schedule', scheduleId, offset], queryFn: ({ signal }) => api.dcaSchedule(scheduleId, offset, 25, signal), staleTime: 8000 })
-}
-export function useDcaExecution(height: number, eventIndex: number) {
-  return useQuery({ queryKey: ['dca-execution', height, eventIndex], queryFn: ({ signal }) => api.dcaExecution(height, eventIndex, signal), retry: false, staleTime: 60_000 })
 }
 export function useExtrinsicActivity(id: string | null, enabled = true) {
   return useQuery({
@@ -192,35 +143,13 @@ export function useEventAt(id: string | null) {
 export function useAsset(assetId: number | null) {
   return useQuery({ queryKey: ['asset', assetId], queryFn: ({ signal }) => api.asset(assetId as number, signal), enabled: assetId != null, refetchInterval: useInterval(30_000), staleTime: 20_000 })
 }
-// Folded under the viewer's own tags too when a session with a loaded,
-// non-empty tag map is present — the same endpoint switch, gating, and
-// fall-back-to-public-on-failure contract as useAccounts below (see its
-// comment for why this reads getSession()/tagMapStatus() as plain values and
-// why the key changes SHAPE between the two paths).
 export function useHolders(assetId: number | null, offset: number, limit: number, enabled = true) {
   const ri = useInterval(30_000)
-  const tagMapVersion = useTagMapVersion()
-  const session = getSession()
-  const authed = !!session && tagMapStatus() === 'ready' && hasUserTagMembers()
   return useQuery({
-    queryKey: authed ? ['holders', 'viewer', session.accountId, tagMapVersion, assetId, offset, limit] : ['holders', assetId, offset, limit],
-    queryFn: async ({ signal }) => {
-      if (!authed) return api.holders(assetId as number, offset, limit, signal)
-      try {
-        return await userApi.holders(assetId as number, offset, limit, signal)
-      } catch (err) {
-        if (signal?.aborted) throw err
-        return api.holders(assetId as number, offset, limit, signal)
-      }
-    },
+    queryKey: ['holders', assetId, offset, limit],
+    queryFn: ({ signal }) => api.holders(assetId as number, offset, limit, signal),
     enabled: assetId != null && enabled, refetchInterval: offset === 0 ? ri : false, staleTime: 20_000, placeholderData: keepPreviousData,
   })
-}
-// The asset page's DCAs tab — fetched only while the tab is open, polled at the
-// detail cadence so "next trade" plans stay current.
-export function useAssetDcas(assetId: number | null, enabled = true) {
-  const ri = useInterval(DETAIL_POLL_MS)
-  return useQuery({ queryKey: ['asset-dcas', assetId], queryFn: ({ signal }) => api.assetDcas(assetId as number, signal), enabled: assetId != null && enabled, refetchInterval: enabled ? ri : false, staleTime: BLOCK_STALE_MS })
 }
 // A tag's members as directory rows — the same table /accounts renders, so a
 // tag reads as the slice of the directory it is.
@@ -296,17 +225,10 @@ export function useTagCloseAccounts(tagId: string | null, enabled = false) {
 }
 export function useAccountActivity(address: string | null, type = 'all', offset = 0, action?: string, from?: string, to?: string, filters?: ValueFilters) {
   const ri = useInterval()
-  const viewer = useViewerFeed(filters)
-  const key = viewer.authed
-    ? ['account-activity', 'viewer', viewer.accountId, viewer.version, address, type, offset, action, from, to, filters]
-    : ['account-activity', address, type, offset, action, from, to, filters]
+  const key = ['account-activity', address, type, offset, action, from, to, filters]
   return useHeldRows(useQuery({
     queryKey: key,
-    queryFn: async ({ signal }) => {
-      if (!viewer.authed) return api.accountActivity(address as string, type, offset, undefined, action, from, to, filters, signal)
-      try { return await userApi.accountActivity(address as string, type, offset, undefined, action, from, to, filters, signal) }
-      catch { return api.accountActivity(address as string, type, offset, undefined, action, from, to, filters, signal) }
-    },
+    queryFn: ({ signal }) => api.accountActivity(address as string, type, offset, undefined, action, from, to, filters, signal),
     enabled: !!address, refetchInterval: offset === 0 ? ri : false, staleTime: BLOCK_STALE_MS, placeholderData: keepPreviousData,
   }), key, offset === 0)
 }
@@ -373,14 +295,6 @@ export function useReferendum(pallet: 'opengov' | 'democracy', index: number) {
 // Lazy per-account / per-tag activity totals (extrinsic + event counts). The
 // first hit can take a few seconds server-side, so no live polling and a long
 // staleTime — badges simply appear once the count query resolves.
-// The Protocol Revenue tab payload. Derived-table freshness (~2h tail), so no
-// polling — a long staleTime keeps tab flips free.
-export function useAccountRevenueBreakdown(address: string | null) {
-  return useQuery({ queryKey: ['account-revenue-breakdown', address], queryFn: ({ signal }) => api.accountRevenueBreakdown(address as string, signal), enabled: !!address, staleTime: 300_000 })
-}
-export function useTagRevenueBreakdown(tagId: string | null) {
-  return useQuery({ queryKey: ['tag-revenue-breakdown', tagId], queryFn: ({ signal }) => api.tagRevenueBreakdown(tagId as string, signal), enabled: !!tagId, staleTime: 300_000 })
-}
 export function useAccountActivityCounts(address: string | null) {
   return useQuery({ queryKey: ['account-activity-counts', address], queryFn: ({ signal }) => api.accountActivityCounts(address as string, signal), enabled: !!address, staleTime: 600_000 })
 }
@@ -425,17 +339,10 @@ export function useTagSummary(tagId: string | null) {
 }
 export function useTagActivity(tagId: string | null, type = 'all', offset = 0, action?: string, from?: string, to?: string, filters?: ValueFilters) {
   const ri = useInterval()
-  const viewer = useViewerFeed(filters)
-  const key = viewer.authed
-    ? ['tag-activity', 'viewer', viewer.accountId, viewer.version, tagId, type, offset, action, from, to, filters]
-    : ['tag-activity', tagId, type, offset, action, from, to, filters]
+  const key = ['tag-activity', tagId, type, offset, action, from, to, filters]
   return useHeldRows(useQuery({
     queryKey: key,
-    queryFn: async ({ signal }) => {
-      if (!viewer.authed) return api.tagActivity(tagId as string, type, offset, undefined, action, from, to, filters, signal)
-      try { return await userApi.tagActivity(tagId as string, type, offset, undefined, action, from, to, filters, signal) }
-      catch { return api.tagActivity(tagId as string, type, offset, undefined, action, from, to, filters, signal) }
-    },
+    queryFn: ({ signal }) => api.tagActivity(tagId as string, type, offset, undefined, action, from, to, filters, signal),
     enabled: !!tagId, refetchInterval: offset === 0 ? ri : false, staleTime: BLOCK_STALE_MS, placeholderData: keepPreviousData,
   }), key, offset === 0)
 }
@@ -478,32 +385,11 @@ export function useAssets() {
 export function useAssetFilterOptions() {
   return useQuery({ queryKey: ['assets-filter'], queryFn: ({ signal }) => api.assetFilterOptions(signal), staleTime: 30_000 })
 }
-// The call/event name catalogue behind the name filters and the alert form's
-// pallet/name pickers. Cached an hour by the API and never polled: the list moves
-// only when a runtime upgrade adds or removes a name.
+// The call/event name catalogue behind the name filters. Cached an hour by the
+// API and never polled: the list moves only when a runtime upgrade adds or
+// removes a name.
 export function useFilterNames() {
   return useQuery({ queryKey: ['filter-names'], queryFn: ({ signal }) => api.filterNames(signal), staleTime: 3_600_000 })
-}
-export function useHdxDashboard() {
-  return useQuery({ queryKey: ['hdx-dashboard'], queryFn: ({ signal }) => api.hdx(signal), staleTime: 120_000 })
-}
-export function useRevenueDashboard(range: RevenueRange) {
-  return useQuery({ queryKey: ['revenue-dashboard', range], queryFn: ({ signal }) => api.revenue(range, signal), staleTime: 60_000 })
-}
-export function useHollarDashboard() {
-  return useQuery({ queryKey: ['hollar-dashboard'], queryFn: ({ signal }) => api.hollar(signal), staleTime: 120_000 })
-}
-// The circuit-breaker snapshot behind this refreshes every 60s on the API's
-// coordinated node-full refresher, so a matching poll keeps the fuse fills and
-// the egress meter within one refresh of the chain without ever out-running it.
-export function useSecurityDashboard() {
-  return useQuery({ queryKey: ['security-dashboard'], queryFn: ({ signal }) => api.security(signal), refetchInterval: 60_000, staleTime: 30_000 })
-}
-// Wormhole backing detail. The custody snapshot behind it is rebuilt every 120s
-// on the API's background refresher, so a 60s poll keeps the beams within one
-// cycle of the origin chains without ever out-running the reader.
-export function useWormholeBridge() {
-  return useQuery({ queryKey: ['security-wormhole'], queryFn: ({ signal }) => api.securityWormhole(signal), refetchInterval: 60_000, staleTime: 30_000 })
 }
 // Pool surfaces follow the dashboard shape: one query, no polling — pool
 // history advances on a ~2h grid, so 120s staleness costs nothing.
@@ -522,125 +408,15 @@ export function usePoolLps(poolId: number, offset: number, limit: number) {
     staleTime: 120_000, placeholderData: keepPreviousData,
   })
 }
-export function useOmnipoolLps(assetId: number, offset: number, limit: number, enabled: boolean) {
-  return useQuery({
-    queryKey: ['omnipool-lps', assetId, offset, limit],
-    queryFn: ({ signal }) => api.omnipoolLps(assetId, offset, limit, signal),
-    staleTime: 120_000, enabled, placeholderData: keepPreviousData,
-  })
-}
-export function useOmnipool() {
-  return useQuery({ queryKey: ['omnipool'], queryFn: ({ signal }) => api.omnipool(signal), staleTime: 120_000 })
-}
-// The directory folds a viewer's OWN tags server-side too (exact values and
-// ranks, not just the shared system-tag grouping) — but only once there's a
-// session, its tag map has actually loaded ('ready', not still 'loading' or
-// 'error'), and it has at least one member: a logged-out, still-loading, or
-// tagless viewer gets nothing from the per-viewer endpoint the shared one
-// doesn't already answer, so this reaches for it unconditionally rather than
-// flashing unfolded rows first. The query key changes SHAPE (not just a value)
-// between the two paths, so a viewer whose tag map finishes loading — or who
-// adds their first tagged member — mid-session switches endpoints on its own;
-// held-rows-through-a-key-change (below) keeps the outgoing rows on screen
-// while the new endpoint answers, exactly as a page/sort change already does.
-//
-// Reads the session with `getSession()` rather than the `useSession()` hook:
-// every session change already runs through useTagMapSync's effect, which
-// calls setTagMap() on every branch (session gone, map loading, map in), so
-// subscribing to `useTagMapVersion()` alone already re-renders this on login
-// and logout too — and, like tagMapStatus()/hasUserTagMembers() beside it, a
-// plain read stays exercisable from a static render (see accounts.test.tsx),
-// where useSyncExternalStore's getServerSnapshot would otherwise pin
-// useSession() to null regardless of what a test seeds.
+// Ranked directory (fixed-size page, rows replaced in rank order): slow poll,
+// held previous page.
 export function useAccounts(offset = 0, limit = 50, sort: AccountSort = 'value') {
-  const tagMapVersion = useTagMapVersion()
-  const session = getSession()
-  const authed = !!session && tagMapStatus() === 'ready' && hasUserTagMembers()
   return useQuery({
-    queryKey: authed ? ['accounts', 'viewer', session.accountId, tagMapVersion, offset, limit, sort] : ['accounts', offset, limit, sort],
-    queryFn: async ({ signal }) => {
-      if (!authed) return api.accounts(offset, limit, sort, signal)
-      // The per-viewer fold is a strict enhancement over the shared page,
-      // never a requirement for the directory to render at all — a failure
-      // (a cold rebuild that outran the proxy's timeout, a transient 5xx, a
-      // fold past its server-side pair cap that still reached this far) must
-      // fall back to exactly the page a logged-out visitor would see, never
-      // an empty directory. A real cancellation (unmount, params changed)
-      // still propagates as an abort rather than firing a second request.
-      try {
-        return await userApi.accounts(offset, limit, sort, signal)
-      } catch (err) {
-        if (signal?.aborted) throw err
-        return api.accounts(offset, limit, sort, signal)
-      }
-    },
+    queryKey: ['accounts', offset, limit, sort],
+    queryFn: ({ signal }) => api.accounts(offset, limit, sort, signal),
     refetchInterval: useInterval(SLOW_POLL_MS),
     staleTime: 20_000,
     placeholderData: keepPreviousData,
-  })
-}
-// Ranked directory like useAccounts (fixed-size page, rows replaced in rank
-// order): slow poll, held previous page, no per-viewer variant.
-export function useContracts(offset = 0, limit = 50, sort: ContractSort = 'created') {
-  return useQuery({
-    queryKey: ['contracts', offset, limit, sort],
-    queryFn: ({ signal }) => api.contracts(offset, limit, sort, signal),
-    refetchInterval: useInterval(SLOW_POLL_MS),
-    staleTime: 20_000,
-    placeholderData: keepPreviousData,
-  })
-}
-// Lazy verified-contract artifacts: fetched only when the Code/Read sub-tabs
-// need them (extrinsic-bytes pattern), long-lived (they change only on
-// re-verification), and a 404 for an unverified contract stays cheap.
-export function useContractAbi(address: string | null | undefined, enabled = true) {
-  return useQuery({
-    queryKey: ['contract-abi', address],
-    queryFn: ({ signal }) => api.contractAbi(address!, signal),
-    staleTime: 3_600_000,
-    retry: false,
-    enabled: !!address && enabled,
-  })
-}
-export function useContractSources(address: string | null | undefined, enabled = true) {
-  return useQuery({
-    queryKey: ['contract-sources', address],
-    queryFn: ({ signal }) => api.contractSources(address!, signal),
-    staleTime: 3_600_000,
-    retry: false,
-    enabled: !!address && enabled,
-  })
-}
-// Contract-tab activity pages. The api holds these for 30s and the responses
-// ride the /explorer/contract/ 300s cache-control, so there is nothing to poll;
-// held previous pages keep the pager from collapsing while a page loads.
-export function useContractTransactions(address: string | null | undefined, offset = 0, limit = 25) {
-  return useQuery({
-    queryKey: ['contract-txs', address, offset, limit],
-    queryFn: ({ signal }) => api.contractTransactions(address!, offset, limit, signal),
-    staleTime: 30_000,
-    retry: false,
-    enabled: !!address,
-    placeholderData: keepPreviousData,
-  })
-}
-export function useContractEvents(address: string | null | undefined, offset = 0, limit = 25) {
-  return useQuery({
-    queryKey: ['contract-events', address, offset, limit],
-    queryFn: ({ signal }) => api.contractEvents(address!, offset, limit, signal),
-    staleTime: 30_000,
-    retry: false,
-    enabled: !!address,
-    placeholderData: keepPreviousData,
-  })
-}
-export function useCompilerVersions(enabled = true) {
-  return useQuery({
-    queryKey: ['compiler-versions'],
-    queryFn: ({ signal }) => api.compilerVersions(signal),
-    staleTime: 3_600_000,
-    retry: false,
-    enabled,
   })
 }
 export function useDaily(scope: string, params?: { type?: string; action?: string; token?: string }) {

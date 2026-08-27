@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { usePools } from '../hooks/useExplorerData'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
-import { paths, Link } from '../router'
+import { paths } from '../router'
 import { AssetIcon, Crumbs, Dash, EmptyRow, F, PoolBadge, rowNav, TableSkeleton } from '../components/ui'
 import { useAssetColors } from '../utils/iconColor'
 import type { PoolCompositionEntry, PoolListEntry } from '../types'
@@ -45,7 +45,7 @@ function CompositionBar({ composition, colors }: { composition: PoolCompositionE
 function PoolRow({ p }: { p: PoolListEntry }) {
   const colorFor = useAssetColors(p.composition.map(c => c.asset))
   const colors = p.composition.map(c => colorFor(c.asset))
-  const to = p.kind === 'omnipool' ? paths.omnipool() : p.poolId != null ? paths.pool(p.poolId) : undefined
+  const to = p.poolId != null ? paths.pool(p.poolId) : undefined
   // Four icons is where a row stops reading as a set and starts reading as a
   // crowd; the rest is a count, and the bar already shows the whole mixture.
   const shown = p.composition.slice(0, 4)
@@ -121,7 +121,7 @@ export function Liquidity() {
 
       <div className="liq-foot muted">
         Reserves come from the newest chain snapshot. A pool whose legs have no price shows no TVL —
-        it still holds tokens, they just have nothing to be worth. <Link to={paths.omnipool()} className="hash">Open the Omnipool →</Link>
+        it still holds tokens, they just have nothing to be worth.
       </div>
     </div>
   )

@@ -154,8 +154,7 @@ describe('ActivityBadge', () => {
     valueUsd: null,
   }
 
-  it('splits the Trade category into Swap and DCA row badges', () => {
+  it('badges a trade row as a Swap', () => {
     expect(renderToStaticMarkup(<ActivityBadge r={tradeRow} />)).toContain('Swap')
-    expect(renderToStaticMarkup(<ActivityBadge r={{ ...tradeRow, dca: true }} />)).toContain('DCA')
   })
 })

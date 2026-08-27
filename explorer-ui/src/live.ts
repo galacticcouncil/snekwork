@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { NOMINAL_BLOCK_SECONDS } from './utils/dca'
+import { NOMINAL_BLOCK_SECONDS } from './utils/blockTime'
 
 // The explorer is always live. A block lands every ~6s today (2s planned) and
 // the pages follow it: the SSE head stream drives the refetches, and LIVE_MS is
@@ -29,14 +29,8 @@ export const BLOCK_STALE_MS = NOMINAL_BLOCK_SECONDS * 1000
 // The LIVE_MS interval polling stays as the fallback — a closed stream (older
 // browser, mocked test env, proxy hiccup) degrades to today's behavior.
 export const LIVE_PUSH_KEYS = ['stats', 'blocks', 'extrinsics', 'events', 'activity'] as const
-// A pool-only frame moves no block, so only the two feeds that merge
-// transaction-pool rows have anything new to show. Refetching all five on a
-// pool that churns several times a second would be most of a refetch storm for
-// data that did not change.
-export const POOL_PUSH_KEYS = ['extrinsics', 'events', 'activity'] as const
 
-// `poolOnly` — the frame carried a transaction-pool change and no new block.
-export interface HeadPush { head: number; poolOnly: boolean }
+export interface HeadPush { head: number }
 type HeadListener = (push: HeadPush) => void
 const headListeners = new Set<HeadListener>()
 let source: EventSource | null = null
@@ -45,19 +39,11 @@ let lastHead = 0
 // pending rows, so a best-head advance must refetch them just like a newly
 // ingested finalized block.
 let lastBest = 0
-// The api's transaction-pool generation: it changes whenever a pool entry
-// appears, drops or gets judged, so mempool rows surface and update between
-// blocks. A counter, not a height — compared for difference, not order (an api
-// restart resets it).
-let lastPool = 0
 // A head that arrived while the tab was hidden: dispatch is deferred to the
 // next visibilitychange, so a background tab does no work but catches up the
 // moment it is looked at (interval polling is paused while streaming, so
 // silently dropping the event would leave the tab stale until the NEXT head).
 let pendingHiddenHead = 0
-// ...and whether everything deferred so far was pool-only. One real block among
-// them makes the catch-up a full refetch.
-let pendingHiddenPoolOnly = true
 
 // The newest pushed heads while the stream is healthy, or ''. The api client
 // stamps this onto live-feed URLs (`h=`): the nginx micro-cache keys on the
@@ -67,26 +53,22 @@ let pendingHiddenPoolOnly = true
 // along so pending-row updates bust the cache too.
 export function liveHeadTag(): string {
   if (!streamHealthy || lastHead === 0) return ''
-  const heads = lastBest > lastHead ? `${lastHead}-${lastBest}` : `${lastHead}`
-  return lastPool > 0 ? `${heads}.p${lastPool}` : heads
+  return lastBest > lastHead ? `${lastHead}-${lastBest}` : `${lastHead}`
 }
 
-function dispatchHead(head: number, poolOnly: boolean): void {
+function dispatchHead(head: number): void {
   if (typeof document !== 'undefined' && document.hidden) {
     pendingHiddenHead = head
-    pendingHiddenPoolOnly = pendingHiddenPoolOnly && poolOnly
     return
   }
   pendingHiddenHead = 0
-  pendingHiddenPoolOnly = true
-  headListeners.forEach(l => l({ head, poolOnly }))
+  headListeners.forEach(l => l({ head }))
 }
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden || pendingHiddenHead === 0) return
-    const push = { head: pendingHiddenHead, poolOnly: pendingHiddenPoolOnly }
+    const push = { head: pendingHiddenHead }
     pendingHiddenHead = 0
-    pendingHiddenPoolOnly = true
     headListeners.forEach(l => l(push))
   })
 }
@@ -113,17 +95,15 @@ export function useHeadStream(): boolean {
 // A pushed frame only counts when a watermark moves — reconnect replays the
 // current frame, which must not trigger a redundant refetch storm. `head` is
 // the finalized-ingested checkpoint, `best` the newest unfinalized block; both
-// only ever advance. `pool` is the transaction-pool generation and merely
-// CHANGES (an api restart resets it), so it compares for difference.
-export interface HeadFrame { head: number; best: number; pool: number }
+// only ever advance.
+export interface HeadFrame { head: number; best: number }
 export function parseHeadEvent(data: string, prev: HeadFrame): HeadFrame | null {
   try {
-    const raw = JSON.parse(data) as { head?: unknown; best?: unknown; pool?: unknown }
+    const raw = JSON.parse(data) as { head?: unknown; best?: unknown }
     const head = Number.isSafeInteger(Number(raw.head)) ? Number(raw.head) : 0
     const best = Number.isSafeInteger(Number(raw.best)) ? Number(raw.best) : 0
-    const pool = Number.isSafeInteger(Number(raw.pool)) ? Number(raw.pool) : prev.pool
-    if (head <= prev.head && best <= prev.best && pool === prev.pool) return null
-    return { head: Math.max(head, prev.head), best: Math.max(best, prev.best), pool }
+    if (head <= prev.head && best <= prev.best) return null
+    return { head: Math.max(head, prev.head), best: Math.max(best, prev.best) }
   } catch { return null }
 }
 
@@ -132,13 +112,11 @@ function connectHead(): void {
   source = new EventSource('/api/explorer/live')
   source.addEventListener('open', () => setStreamHealthy(true))
   source.addEventListener('head', e => {
-    const frame = parseHeadEvent((e as MessageEvent<string>).data, { head: lastHead, best: lastBest, pool: lastPool })
+    const frame = parseHeadEvent((e as MessageEvent<string>).data, { head: lastHead, best: lastBest })
     if (frame == null) return
-    const poolOnly = frame.head === lastHead && frame.best === lastBest
     lastHead = frame.head
     lastBest = frame.best
-    lastPool = frame.pool
-    dispatchHead(Math.max(frame.head, frame.best), poolOnly)
+    dispatchHead(Math.max(frame.head, frame.best))
   })
   // Network drops auto-reconnect (server sends `retry:`); a non-200 response
   // (e.g. the mocked test API) closes the source for good. Either way the

@@ -12,9 +12,6 @@ import {
   useTagActivity,
   useTagListCount,
 } from '../hooks/useExplorerData'
-import {
-  useListTagActivityCounts, useListTagListCount, useListTagActivity, useListTagExtrinsics, useListTagEvents,
-} from '../hooks/useUser'
 import { useNow } from '../hooks/useNow'
 import { setQuery, useQuery, useQueryValue } from '../router'
 import { FilterZone, useFilters } from './Filters'
@@ -28,11 +25,10 @@ import type { ListCountQuery } from '../api/explorer'
 type ActivityScope =
   | { kind: 'account'; address: string }
   | { kind: 'tag'; tagId: string }
-  | { kind: 'list-tag'; listId: string; tagId: string }
 
-// Account, system-tag and list-tag detail pages expose the same activity
-// controls. All three APIs are queried through disabled hooks here so one
-// implementation owns their filtering, pagination, totals, and table layout.
+// Account and tag detail pages expose the same activity controls. Both APIs are
+// queried through disabled hooks here so one implementation owns their
+// filtering, pagination, totals, and table layout.
 //
 // Which of the three lists shows is the PAGE's decision: Activity, Extrinsics
 // and Events are first-level detail tabs (`?view=`), so the host passes the one
@@ -40,19 +36,14 @@ type ActivityScope =
 export function ScopedActivity({ scope, tab }: { scope: ActivityScope; tab: 'activity' | 'extrinsics' | 'events' }) {
   const accountAddress = scope.kind === 'account' ? scope.address : null
   const systemTagId = scope.kind === 'tag' ? scope.tagId : null
-  const listId = scope.kind === 'list-tag' ? scope.listId : null
-  const listTagId = scope.kind === 'list-tag' ? scope.tagId : null
   const now = useNow()
   const accountCounts = useAccountActivityCounts(accountAddress)
   const tagCounts = useTagActivityCounts(systemTagId)
-  const listTagCounts = useListTagActivityCounts(listId, listTagId)
-  const counts = scope.kind === 'account' ? accountCounts : scope.kind === 'tag' ? tagCounts : listTagCounts
+  const counts = scope.kind === 'account' ? accountCounts : tagCounts
   const activeTab = tab
   const activityType = normalizeActivityType(useQueryValue('type', 'all'))
-  // `contract` is the account page's contract sub-tab key — reserved so a
-  // lingering ?contract=read never reads as a filter value here.
-  const filterOptions = { reservedKeys: ['page', 'tab', 'view', 'atab', 'type', 'apage', 'contract'], pageKey: 'apage' }
-  const activityFilters = useFilters({ ...filterOptions, keys: ['action', 'token', 'from', 'to', 'min', 'minRevenue', 'identity'] })
+  const filterOptions = { reservedKeys: ['page', 'tab', 'view', 'atab', 'type', 'apage'], pageKey: 'apage' }
+  const activityFilters = useFilters({ ...filterOptions, keys: ['action', 'token', 'from', 'to', 'min', 'identity'] })
   const extrinsicFilters = useFilters({ ...filterOptions, keys: ['call', 'result', 'origin', 'from', 'to'] })
   const eventFilters = useFilters({ ...filterOptions, keys: ['event', 'from', 'to'] })
   const activityAction = normalizeActivityAction(activityType, activityFilters.values.action ?? '')
@@ -75,8 +66,7 @@ export function ScopedActivity({ scope, tab }: { scope: ActivityScope; tab: 'act
       : eventListCount(eventFilters.values)
   const accountTotal = useAccountListCount(accountAddress, activeCountQuery)
   const tagTotal = useTagListCount(systemTagId, activeCountQuery)
-  const listTagTotal = useListTagListCount(listId, listTagId, activeCountQuery)
-  const count = (scope.kind === 'account' ? accountTotal : scope.kind === 'tag' ? tagTotal : listTagTotal).data
+  const count = (scope.kind === 'account' ? accountTotal : tagTotal).data
   const total = count?.total
   const totalPages = pageCount(total)
   // A total the API marked incomplete is exact for the pages it numbers, but the
@@ -96,14 +86,12 @@ export function ScopedActivity({ scope, tab }: { scope: ActivityScope; tab: 'act
     {
       token: activityFilters.values.token,
       min: minimumUsd,
-      minRevenue: activityFilters.values.minRevenue || undefined,
       identity: activityFilters.values.identity,
     },
   ] as const
   const accountActivity = useAccountActivity(activeTab === 'activity' ? accountAddress : null, ...commonActivityArgs)
   const tagActivity = useTagActivity(activeTab === 'activity' ? systemTagId : null, ...commonActivityArgs)
-  const listTagActivity = useListTagActivity(listId, activeTab === 'activity' ? listTagId : null, ...commonActivityArgs)
-  const activity = scope.kind === 'account' ? accountActivity : scope.kind === 'tag' ? tagActivity : listTagActivity
+  const activity = scope.kind === 'account' ? accountActivity : tagActivity
   const activityRows = activity.data ?? []
   const accountExtrinsics = useAccountExtrinsics(
     activeTab === 'extrinsics' ? accountAddress : null,
@@ -119,15 +107,7 @@ export function ScopedActivity({ scope, tab }: { scope: ActivityScope; tab: 'act
     extrinsicFilters.values.to,
     { call: extrinsicFilters.values.call, result: extrinsicFilters.values.result, origin: extrinsicFilters.values.origin },
   )
-  const listTagExtrinsics = useListTagExtrinsics(
-    listId,
-    activeTab === 'extrinsics' ? listTagId : null,
-    offset,
-    extrinsicFilters.values.from,
-    extrinsicFilters.values.to,
-    { call: extrinsicFilters.values.call, result: extrinsicFilters.values.result, origin: extrinsicFilters.values.origin },
-  )
-  const extrinsics = scope.kind === 'account' ? accountExtrinsics : scope.kind === 'tag' ? tagExtrinsics : listTagExtrinsics
+  const extrinsics = scope.kind === 'account' ? accountExtrinsics : tagExtrinsics
   const accountEvents = useAccountEvents(
     activeTab === 'events' ? accountAddress : null,
     offset,
@@ -142,22 +122,14 @@ export function ScopedActivity({ scope, tab }: { scope: ActivityScope; tab: 'act
     eventFilters.values.to,
     { event: eventFilters.values.event },
   )
-  const listTagEvents = useListTagEvents(
-    listId,
-    activeTab === 'events' ? listTagId : null,
-    offset,
-    eventFilters.values.from,
-    eventFilters.values.to,
-    { event: eventFilters.values.event },
-  )
-  const events = scope.kind === 'account' ? accountEvents : scope.kind === 'tag' ? tagEvents : listTagEvents
+  const events = scope.kind === 'account' ? accountEvents : tagEvents
   // On-behalf rows (proxy/multisig) carry a real sender and an origin badge;
   // both columns appear only when the account has such history, so ordinary
   // accounts keep the compact layout. Count-driven (not row-presence) so it
   // stays stable across pages/filters and doesn't flash while the rows query
   // resolves before the slower counts query.
   const showOrigin = (counts.data?.extrinsicsOnBehalf ?? 0) > 0
-  const showSigner = scope.kind === 'tag' || scope.kind === 'list-tag' || showOrigin
+  const showSigner = scope.kind === 'tag' || showOrigin
   const extrinsicColumns = 6 + (showSigner ? 1 : 0) + (showOrigin ? 1 : 0)
 
   const setActivityType = (value: string) => setQuery({ type: value === 'all' ? null : value, action: null, apage: null })

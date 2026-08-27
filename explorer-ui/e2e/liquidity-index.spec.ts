@@ -46,12 +46,6 @@ test('the long tail is named and unfolds in place', async ({ page }) => {
   expect(await page.locator('table.liq-tbl tbody tr').count()).toBe(before)
 })
 
-test('a row opens the pool it names', async ({ page }) => {
-  await page.goto('/liquidity')
-  await page.locator('table.liq-tbl tbody tr', { hasText: 'Omnipool' }).first().click()
-  await expect(page).toHaveURL(/\/omnipool$/)
-})
-
 test('reaches /liquidity from the nav, and the nav says where you are', async ({ page }) => {
   await page.goto('/assets')
   await page.getByRole('navigation').getByRole('link', { name: 'Liquidity' }).click()

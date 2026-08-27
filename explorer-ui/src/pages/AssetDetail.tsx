@@ -1,40 +1,14 @@
-import { Suspense, lazy, useEffect, useState } from 'react'
-import { useActivityCount, useAsset, useAssetActivity, useAssetDcas, useHolders, useStats } from '../hooks/useExplorerData'
+import { useActivityCount, useAsset, useAssetActivity, useHolders } from '../hooks/useExplorerData'
 import { useNow } from '../hooks/useNow'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
-import { Link, paths, navigate, useQuery, useQueryValue, setQuery } from '../router'
+import { paths, navigate, useQuery, useQueryValue, setQuery } from '../router'
 import { Crumbs, F, AssetIcon, AssetAmount, AddrPill, AssetDetailSkeleton, TableSkeleton, EmptyRow, rowNav, accountHref, TagGroupPill, ActivityChips, Pager, normalizeActivityType, normalizeActivityAction, Dash, pendingRows } from '../components/ui'
-import { ActiveDcaTable } from '../components/AccountSections'
 import { AssetLiquidityTab } from '../components/AssetLiquidity'
 import { FilterZone, useFilters } from '../components/Filters'
 import { activityFilterFields } from '../components/activityFilters'
 import { PriceChart, ema7 } from '../components/PriceChart'
 import { ActivityTable } from '../components/ActivityTable'
-import { BellIcon } from '../components/NotifyButton'
-import type { AlertPreset } from '../components/NewAlertDialog'
-import { ASSET_ALERT_MIN_USD, assetRuleCount } from '../notificationKinds'
-import { useNotificationMutation, useNotificationsOverview } from '../hooks/useNotifications'
-import { userApi } from '../api/explorer'
-import { useSession } from '../session'
-import { requestConnect } from '../connectDialog'
-import { stashPendingNotification } from '../pendingNotification'
 import { offeredPages } from '../utils/activityPaging'
-import type { AssetListItem, NotificationKind, NotificationRuleInput } from '../types'
-
-// The alert dialog is only reached by clicking one of the header's buttons, so it
-// costs this page nothing until then — the same lazy mount the notifications page
-// gives it.
-const NewAlertDialog = lazy(() => import('../components/NewAlertDialog').then(m => ({ default: m.NewAlertDialog })))
-
-const PREIS_URL = (import.meta.env.VITE_PREIS_URL as string | undefined) || 'http://localhost:5173'
-const PREIS_DEFAULT_QUOTE_ID = 10
-const PREIS_STABLE_FALLBACK_QUOTE: Record<number, number> = { 10: 22, 22: 10 }
-
-function preisPairUrl(assetId: number): string {
-  const base = PREIS_URL.replace(/\/+$/, '')
-  const quoteId = PREIS_STABLE_FALLBACK_QUOTE[assetId] ?? PREIS_DEFAULT_QUOTE_ID
-  return `${base}/${assetId}-${quoteId}`
-}
 
 export function AssetDetail({ assetId, initialTab = 'activity' }: { assetId: number; initialTab?: 'holders' | 'activity' }) {
   const { data, isLoading, isError } = useAsset(assetId)
@@ -42,11 +16,11 @@ export function AssetDetail({ assetId, initialTab = 'activity' }: { assetId: num
   const now = useNow()
   const q = useQuery()
   const rawTab = q.get('tab')
-  const tab = (rawTab === 'holders' || rawTab === 'activity' || rawTab === 'dcas' || rawTab === 'liquidity' ? rawTab : initialTab) as 'holders' | 'activity' | 'dcas' | 'liquidity'
+  const tab = (rawTab === 'holders' || rawTab === 'activity' || rawTab === 'liquidity' ? rawTab : initialTab) as 'holders' | 'activity' | 'liquidity'
   const activityType = normalizeActivityType(useQueryValue('type', 'all'))
   // Activities filters — the same set as the global feed minus the token combo
   // (this page IS the token filter). `page` resets whenever a filter changes.
-  const activityFilters = useFilters({ reservedKeys: ['tab', 'type', 'page', 'hpage'], pageKey: 'page', keys: ['action', 'from', 'to', 'min', 'minRevenue'] })
+  const activityFilters = useFilters({ reservedKeys: ['tab', 'type', 'page', 'hpage'], pageKey: 'page', keys: ['action', 'from', 'to', 'min'] })
   const activityAction = normalizeActivityAction(activityType, activityFilters.values.action ?? '')
   const requestedPage = parseInt(q.get('page') ?? '', 10)
   const activityPage = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 0
@@ -66,7 +40,7 @@ export function AssetDetail({ assetId, initialTab = 'activity' }: { assetId: num
   // one page further is a refused request. Only `maxOffset` is read here: the total
   // that comes with it is the chain-wide feed's length, not this asset's.
   const activityBound = useActivityCount(activityType, activityFilters.values.from, activityFilters.values.to,
-    { min: activityFilters.values.min || undefined, minRevenue: activityFilters.values.minRevenue || undefined },
+    { min: activityFilters.values.min || undefined },
     activityAction || undefined)
   const activityPages = offeredPages({ page: activityPage, rowsOnPage: assetActivity.length, maxOffset: activityBound.data?.maxOffset, pageSize: ACTIVITY_PAGE })
   // Holders are paginated server-side (no cap) — fetched only while the tab is open.
@@ -78,32 +52,12 @@ export function AssetDetail({ assetId, initialTab = 'activity' }: { assetId: num
   const holderRows = holders.data?.holders ?? []
   const holderCount = data?.holderCount ?? 0
   const holderPages = Math.max(1, Math.ceil((holders.data?.total ?? holderCount) / HOLDERS_PAGE))
-  // Ongoing DCA orders trading this asset — fetched only while the tab is open.
-  // Stats (head block, measured block time) feed the live "next trade" cells.
-  const dcas = useAssetDcas(assetId, tab === 'dcas')
-  const dcaBuys = dcas.data?.buys ?? []
-  const dcaSells = dcas.data?.sells ?? []
-  const { data: stats } = useStats(tab === 'dcas' && !!(dcaBuys.length || dcaSells.length))
-  // A /hdx "N orders" deep link lands with ?side=buys|sells: scroll that section
-  // into view once there are rows to scroll to. The path navigation has already
-  // reset scroll to the top, so this fires at most once per landing; switching
-  // tabs clears `side`, so a later return to the tab stays where the reader is.
-  // Readiness needs BOTH payloads: the sections mount only once the asset detail
-  // is in (the page-level skeleton gate), and the DCA rows can win that race.
-  const side = q.get('side')
-  const dcasReady = !!dcas.data && !!data
-  useEffect(() => {
-    if (tab !== 'dcas' || !dcasReady || (side !== 'buys' && side !== 'sells')) return
-    document.getElementById(`dca-${side}`)?.scrollIntoView()
-  }, [tab, side, dcasReady])
-
   return (
     <div className="wrap">
       <div className="page-head">
         <Crumbs items={[{ label: 'Home', to: paths.dashboard() }, { label: 'Assets', to: paths.assets() }, { label: a?.symbol ?? String(assetId) }]} />
         <div className="detail-header">
           <div className="page-title">{a && <AssetIcon assetId={a.assetId} iconAssetId={a.iconAssetId} symbol={a.symbol} size={30} parachainId={a.parachainId} origin={a.origin} />} {a?.symbol ?? a?.name ?? `Asset`} <span className="sub muted">#{a?.assetId ?? assetId}</span></div>
-          {a && <AssetAlertActions asset={a} />}
         </div>
       </div>
 
@@ -130,19 +84,16 @@ export function AssetDetail({ assetId, initialTab = 'activity' }: { assetId: num
 
             {data.priceSeries.length > 1 && (
               <>
-                <div className="sec-title" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>Price
-                  <a className="ext-link" style={{ marginLeft: 'auto', textTransform: 'none', letterSpacing: 0 }} href={preisPairUrl(assetId)} target="_blank" rel="noopener">Open in preis ↗</a>
-                </div>
+                <div className="sec-title">Price</div>
                 <PriceChart data={data.priceSeries} dates={data.priceDates} price={a.price} change24h={a.change24h}
                   liquidations={data.liquidations} asset={a} />
               </>
             )}
 
             <div className="tabs">
-              <button className={tab === 'activity' ? 'active' : ''} onClick={() => initialTab === 'holders' ? navigate(paths.asset(assetId)) : setQuery({ tab: null, page: null, hpage: null, side: null })}>Activities</button>
-              <button className={tab === 'holders' ? 'active' : ''} onClick={() => setQuery({ tab: 'holders', page: null, hpage: null, side: null })}>Holders <span className="cnt">{F.int(data.holderCount)}</span></button>
-              <button className={tab === 'liquidity' ? 'active' : ''} onClick={() => setQuery({ tab: 'liquidity', page: null, hpage: null, side: null })}>Liquidity {data.liquiditySourceCount != null && <span className="cnt">{F.int(data.liquiditySourceCount)}</span>}</button>
-              <button className={tab === 'dcas' ? 'active' : ''} onClick={() => setQuery({ tab: 'dcas', page: null, hpage: null, side: null })}>DCAs <span className="cnt">{F.int(data.dcaCount)}</span></button>
+              <button className={tab === 'activity' ? 'active' : ''} onClick={() => initialTab === 'holders' ? navigate(paths.asset(assetId)) : setQuery({ tab: null, page: null, hpage: null })}>Activities</button>
+              <button className={tab === 'holders' ? 'active' : ''} onClick={() => setQuery({ tab: 'holders', page: null, hpage: null })}>Holders <span className="cnt">{F.int(data.holderCount)}</span></button>
+              <button className={tab === 'liquidity' ? 'active' : ''} onClick={() => setQuery({ tab: 'liquidity', page: null, hpage: null })}>Liquidity {data.liquiditySourceCount != null && <span className="cnt">{F.int(data.liquiditySourceCount)}</span>}</button>
             </div>
 
             {tab === 'activity' && <>
@@ -177,157 +128,8 @@ export function AssetDetail({ assetId, initialTab = 'activity' }: { assetId: num
             )}
 
             {tab === 'liquidity' && <AssetLiquidityTab asset={a} />}
-
-            {/* The same table an account's active orders use, one section per
-                side of THIS asset, each an anchor for the /hdx "N orders" links.
-                Empty sections stay visible: "no ongoing sells" is an answer. */}
-            {tab === 'dcas' && (
-              dcas.isLoading && !dcas.data
-                ? <div className="panel"><table className="tbl"><tbody><TableSkeleton cols={8} rows={6} /></tbody></table></div>
-                : dcas.isError
-                  ? <div className="detail-card" style={{ padding: 32, textAlign: 'center', color: 'var(--text-medium)' }}>Failed to load the DCA orders</div>
-                  : <>
-                    {/* scrollMarginTop keeps a scrolled-to section title clear of
-                        the 61px sticky topbar. */}
-                    <div id="dca-buys" style={{ scrollMarginTop: 74 }}>
-                      <ActiveDcaTable dcas={dcaBuys} showOwner totals headBlock={stats?.headBlock ?? 0} headTime={stats?.headTime} now={now} blockSec={stats?.avgBlockSec}
-                        title={<>Buys · {dcaBuys.length} <span style={{ color: 'var(--text-low)', textTransform: 'none', letterSpacing: 0 }}>· ongoing orders buying {a.symbol}</span></>}
-                        emptyText={`No ongoing DCA orders buying ${a.symbol}`} />
-                    </div>
-                    <div id="dca-sells" style={{ scrollMarginTop: 74 }}>
-                      <ActiveDcaTable dcas={dcaSells} showOwner totals headBlock={stats?.headBlock ?? 0} headTime={stats?.headTime} now={now} blockSec={stats?.avgBlockSec}
-                        title={<>Sells · {dcaSells.length} <span style={{ color: 'var(--text-low)', textTransform: 'none', letterSpacing: 0 }}>· ongoing orders selling {a.symbol}</span></>}
-                        emptyText={`No ongoing DCA orders selling ${a.symbol}`} />
-                    </div>
-                  </>
-            )}
           </>
         )}
-    </div>
-  )
-}
-
-/* ── the header's alert buttons ───────────────────────────────────────────── */
-
-// The three alerts this page can prefill from what it already shows: a price
-// threshold seeded from the live price, and a value floor on this token's trades
-// and on its transfers.
-//
-// Each button OPENS the shared new-alert dialog with the token locked in and the
-// fields filled, rather than creating a rule on the spot. That is the difference
-// from NotifyButton (which every other surface still uses): here a second alert
-// at another level is an ordinary thing to want — "$0.025 as well as $0.02" — so
-// there is nothing for an exact-parameters toggle to be right about. Duplicates
-// cost nothing anyway: the create is idempotent server-side, and the dialog says
-// so in place when it happens.
-//
-// The subscribed state this surface DOES show is a count: how many alerts of that
-// kind already watch this token, whatever their threshold, linking to where they
-// are managed.
-function AssetAlertActions({ asset }: { asset: AssetListItem }) {
-  const session = useSession()
-  const overview = useNotificationsOverview()
-  const createRule = useNotificationMutation(userApi.createNotificationRule)
-  const [preset, setPreset] = useState<AlertPreset | null>(null)
-  const [open, setOpen] = useState(false)
-  // Mounted separately from `open` so the lazy chunk is fetched on the first click
-  // and the dialog's close animation still has a component to run on.
-  const [mounted, setMounted] = useState(false)
-  const rules = overview.data?.rules ?? []
-  const lockAsset = { assetId: asset.assetId, symbol: asset.symbol, price: asset.price }
-
-  const buttons: { label: string; title: string; preset: AlertPreset }[] = [
-    // A price alert needs a price to be prefilled FROM; without a feed for this
-    // token there is no meaningful default and the button would open on a blank.
-    ...(asset.price != null ? [{
-      label: 'Price alert',
-      title: `Alert me when ${asset.symbol} crosses a price — now ${F.priceUsd(asset.price)}`,
-      preset: {
-        kind: 'price' as NotificationKind,
-        label: 'Price alert',
-        lockAsset,
-        params: { price: asset.price, direction: 'above' },
-        name: `${asset.symbol} price`,
-      },
-    }] : []),
-    {
-      label: 'Trade alert',
-      title: `Alert me on ${asset.symbol} trades over ${F.usd(ASSET_ALERT_MIN_USD)}`,
-      preset: {
-        kind: 'large-trade' as NotificationKind,
-        label: 'Trade alert',
-        lockAsset,
-        params: { minUsd: ASSET_ALERT_MIN_USD },
-        name: `Large ${asset.symbol} trades`,
-      },
-    },
-    {
-      label: 'Transfer alert',
-      title: `Alert me on ${asset.symbol} transfers over ${F.usd(ASSET_ALERT_MIN_USD)}`,
-      preset: {
-        kind: 'large-transfer' as NotificationKind,
-        label: 'Transfer alert',
-        lockAsset,
-        params: { minUsd: ASSET_ALERT_MIN_USD },
-        name: `Large ${asset.symbol} transfers`,
-      },
-    },
-  ]
-
-  return (
-    <div className="notify-actions">
-      {buttons.map(b => {
-        const count = session ? assetRuleCount(rules, b.preset.kind, asset.assetId) : 0
-        return (
-          <span key={b.label} className="notify-wrap">
-            <button
-              type="button"
-              className="btn sm notify-btn"
-              title={b.title}
-              onClick={() => { setPreset(b.preset); setMounted(true); setOpen(true) }}
-            >
-              <BellIcon /> {b.label}
-            </button>
-            {count > 0 && (
-              <Link to={paths.notifications('alerts')} className="notify-count"
-                title={`${count} ${b.label.toLowerCase()}${count === 1 ? '' : 's'} on ${asset.symbol} — manage`}
-              >{F.int(count)}</Link>
-            )}
-          </span>
-        )
-      })}
-
-      {mounted && preset && (
-        <Suspense fallback={null}>
-          <NewAlertDialog
-            open={open}
-            onOpenChange={setOpen}
-            // The token is locked, so the dialog needs no token directory here.
-            assets={[]}
-            pending={createRule.isPending}
-            preset={preset}
-            submitLabel={session ? undefined : 'Log in to save this alert'}
-            onSubmit={async (input: NotificationRuleInput) => {
-              // Logged out this is still a real save: the rule the dialog just
-              // built is parked and the login dialog takes over, and the pending
-              // handoff creates it once the wallet round trip finishes. A "log in
-              // first" dead end would throw away the numbers just chosen.
-              if (!session) {
-                stashPendingNotification({ kind: input.kind, params: input.params, ...(input.name ? { name: input.name } : {}) })
-                setOpen(false)
-                requestConnect()
-                return
-              }
-              const created = await createRule.mutateAsync([input])
-              // Already had exactly this one: the dialog stays open and says so,
-              // which is a gentler answer than a closed dialog that appears to
-              // have made a duplicate.
-              if (created.existing) return { existing: true }
-              setOpen(false)
-            }}
-          />
-        </Suspense>
-      )}
     </div>
   )
 }

@@ -1,8 +1,6 @@
-import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { DcaNextExec } from '../src/components/AccountSections'
 import { estimateBlockCountdown } from '../src/utils/blockCountdown'
-import { NOMINAL_BLOCK_SECONDS, blockSeconds } from '../src/utils/dca'
+import { NOMINAL_BLOCK_SECONDS, blockSeconds } from '../src/utils/blockTime'
 
 describe('block-time countdowns', () => {
   const headTime = '2026-07-10 12:00:00'
@@ -30,18 +28,5 @@ describe('block-time countdowns', () => {
     // What a caller passes when the chain's measured pace is not (yet) known.
     expect(estimateBlockCountdown(110, 100, headTime, headMs, blockSeconds(undefined)))
       .toEqual({ etaMs: headMs + 10 * NOMINAL_BLOCK_SECONDS * 1000, secondsUntil: 10 * NOMINAL_BLOCK_SECONDS })
-  })
-
-  it('drives the DCA label from the same stable chain-time anchor', () => {
-    const first = renderToStaticMarkup(<DcaNextExec nextBlock={110} headBlock={100} headTime={headTime} now={headMs + 2_000} />)
-    const later = renderToStaticMarkup(<DcaNextExec nextBlock={110} headBlock={100} headTime={headTime} now={headMs + 5_000} />)
-
-    expect(first).toContain('in 58s')
-    expect(later).toContain('in 55s')
-  })
-
-  it('says the same distance in the chain measured pace', () => {
-    const faster = renderToStaticMarkup(<DcaNextExec nextBlock={110} headBlock={100} headTime={headTime} now={headMs + 2_000} blockSec={2} />)
-    expect(faster).toContain('in 18s')
   })
 })
