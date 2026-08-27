@@ -19,13 +19,14 @@ describe('origin asset icons', () => {
   const ethereumUsdc = { ecosystem: 'ethereum', chainId: '1', assetId: '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' } as const
 
   it('prefers the canonical Ethereum contract icon over the missing local icon', () => {
-    const sources = assetIconCandidates(1000766, ethereumUsdc)
+    const sources = assetIconCandidates('USDC', ethereumUsdc)
     expect(sources[0]).toContain('/ethereum/1/assets/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/icon.svg')
     // `not.toContain(expect.stringContaining(...))` compares array members with
     // Object.is, and an asymmetric matcher is never identical to a string, so that
     // form passed for every input. Map to booleans instead: the list length is part
     // of the assertion, so a candidate appearing or vanishing both fail here.
-    expect(sources.map(source => source.includes('/polkadot/2034/assets/1000766/'))).toEqual([false, false])
+    expect(sources.map(source => source.includes('/polkadot/'))).toEqual([false, false, false, false])
+    expect(sources[2]).toContain('/v1/assets/usdc.svg')
   })
 
   it('derives the matching origin-chain badge', () => {
