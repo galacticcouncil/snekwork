@@ -60,7 +60,7 @@ services:
       schema-bootstrap:
         condition: service_completed_successfully
     environment:
-      - RPC_URL=${RPC_URL:-https://hydration-rpc.neckwork.net}
+      - RPC_URL=${RPC_URL:-https://rpc.basilisk.cloud}
       - CLICKHOUSE_HOST=http://clickhouse:8123
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-dev}
       - RPC_RATE_LIMIT=${INDEXER_RPC_RATE_LIMIT:-100}
@@ -86,7 +86,7 @@ services:
       clickhouse:
         condition: service_healthy
     environment:
-      - RPC_URL=${RAW_RPC_URL:-https://rpc.coke.hydration.cloud}
+      - RPC_URL=${RAW_RPC_URL:-https://rpc.basilisk.cloud}
       - CLICKHOUSE_HOST=http://clickhouse:8123
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-dev}
       - RPC_RATE_LIMIT=${RAW_RPC_RATE_LIMIT:-50}
@@ -126,7 +126,7 @@ services:
       schema-bootstrap:
         condition: service_completed_successfully
     environment:
-      - RPC_URL=${RAW_LIVE_RPC_URL:-https://hydration-rpc.neckwork.net}
+      - RPC_URL=${RAW_LIVE_RPC_URL:-https://rpc.basilisk.cloud}
       - CLICKHOUSE_HOST=http://clickhouse:8123
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-dev}
       - RPC_RATE_LIMIT=${RAW_LIVE_RPC_RATE_LIMIT:-50}
@@ -170,7 +170,7 @@ services:
       schema-bootstrap:
         condition: service_completed_successfully
     environment:
-      - RPC_URL=${IDENTITY_RPC_URL:-https://hydration-rpc.neckwork.net}
+      - RPC_URL=${IDENTITY_RPC_URL:-https://rpc.basilisk.cloud}
       - CLICKHOUSE_HOST=http://clickhouse:8123
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-dev}
       - RPC_RATE_LIMIT=${IDENTITY_RPC_RATE_LIMIT:-20}
@@ -196,7 +196,7 @@ services:
     environment:
       # Metadata fetches are heavy and the public endpoints throttle hard when the other
       # snapshot services are busy; this one is not rate limited.
-      - RPC_URL=${REFERENDUM_PROPOSAL_RPC_URL:-https://hydration-rpc.neckwork.net}
+      - RPC_URL=${REFERENDUM_PROPOSAL_RPC_URL:-https://rpc.basilisk.cloud}
       - CLICKHOUSE_HOST=http://clickhouse:8123
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-dev}
       - RPC_RATE_LIMIT=${REFERENDUM_PROPOSAL_RPC_RATE_LIMIT:-20}
@@ -209,7 +209,7 @@ services:
 
   # Referendum titles from SubSquare. The chain has no human title for a
   # referendum, so "#369" is all the explorer could show without this. Live
-  # referenda are re-read every LIVE_REFRESH_MINUTES (Hydration usually has 0-2
+  # referenda are re-read every LIVE_REFRESH_MINUTES (Basilisk usually has 0-2
   # open); concluded ones are fetched once and then never requested again, which is
   # what keeps the 576 settled referenda from being re-crawled every cycle.
   referendum-titles:
@@ -225,7 +225,7 @@ services:
     environment:
       - CLICKHOUSE_HOST=http://clickhouse:8123
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-dev}
-      - SUBSQUARE_BASE_URL=${SUBSQUARE_BASE_URL:-https://hydration.subsquare.io}
+      - SUBSQUARE_BASE_URL=${SUBSQUARE_BASE_URL:-https://basilisk.subsquare.io}
     command: ["src/scripts/snapshot-referendum-titles.ts", "--loop",
       "--cycle-minutes=${REFERENDUM_TITLE_CYCLE_MINUTES:-15}",
       "--live-refresh-minutes=${REFERENDUM_TITLE_LIVE_REFRESH_MINUTES:-30}",
@@ -245,7 +245,7 @@ services:
       clickhouse:
         condition: service_healthy
     environment:
-      - RPC_URL=${BALANCES_SNAPSHOT_RPC_URL:-https://hydration-rpc.neckwork.net}
+      - RPC_URL=${BALANCES_SNAPSHOT_RPC_URL:-https://rpc.basilisk.cloud}
       - CLICKHOUSE_HOST=http://clickhouse:8123
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-dev}
       - RPC_RATE_LIMIT=${BALANCES_SNAPSHOT_RPC_RATE_LIMIT:-20}
@@ -290,13 +290,13 @@ services:
       - RAW_BALANCE_READ_BATCH_CONCURRENCY=${RAW_BALANCE_READ_BATCH_CONCURRENCY:-4}
       - RAW_SNAPSHOT_READ_BATCH_SIZE=${RAW_SNAPSHOT_READ_BATCH_SIZE:-100}
       - RAW_SNAPSHOT_READ_BATCH_CONCURRENCY=${RAW_SNAPSHOT_READ_BATCH_CONCURRENCY:-2}
-      - MAIN_RPC_URL=${MAIN_RPC_URL:-https://hydration-rpc.neckwork.net}
+      - MAIN_RPC_URL=${MAIN_RPC_URL:-https://rpc.basilisk.cloud}
       - MAIN_RATE_LIMIT=${MAIN_RATE_LIMIT:-40}
       - MAIN_CAPACITY=${MAIN_CAPACITY:-8}
       - LIVE_MAIN_ENABLED=${LIVE_MAIN_ENABLED:-true}
       - LIVE_MAIN_NAME=${LIVE_MAIN_NAME:-snekwork-main-live}
       - LIVE_MAIN_PIPELINE_ID=${LIVE_MAIN_PIPELINE_ID:-main-live}
-      - LIVE_MAIN_RPC_URL=${LIVE_MAIN_RPC_URL:-https://hydration-rpc.neckwork.net}
+      - LIVE_MAIN_RPC_URL=${LIVE_MAIN_RPC_URL:-https://rpc.basilisk.cloud}
       - LIVE_MAIN_RATE_LIMIT=${LIVE_MAIN_RATE_LIMIT:-100}
       - LIVE_MAIN_CAPACITY=${LIVE_MAIN_CAPACITY:-20}
       - LIVE_MAIN_BATCH_SIZE=${LIVE_MAIN_BATCH_SIZE:-50000}

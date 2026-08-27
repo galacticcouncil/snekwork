@@ -14,7 +14,7 @@ interface BlockHeader {
   number: string
 }
 
-// Defaults to the Hydration endpoint; pass a URL for a snapshot that reads
+// Defaults to the Basilisk endpoint; pass a URL for a snapshot that reads
 // another chain's state (see identityChains.ts).
 export function createSnapshotRpcClient(url = config.RPC_URL): RpcClient {
   return new RpcClient({

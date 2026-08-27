@@ -18,18 +18,19 @@ import {
 //
 // The polling policy is deliberately lopsided, because the data is:
 //   - A LIVE referendum's title is edited while the vote runs, so it is re-read
-//     every --live-refresh-minutes. Hydration usually has 0-2 open at a time (at
-//     the time of writing: exactly one, 369), so this is a couple of requests.
+//     every --live-refresh-minutes. Basilisk usually has 0-2 open at a time, so
+//     this is a couple of requests.
 //   - A CONCLUDED referendum's title is frozen. Once stored it is never requested
-//     again, which is what keeps this from hammering SubSquare for the 576 settled
-//     referenda (OpenGov 0-369 plus Democracy 0-206).
+//     again, which is what keeps this from hammering SubSquare for the whole
+//     settled backlog (OpenGov from spec 117 onward, plus the earlier Democracy
+//     referenda).
 // The first run therefore backfills at --max-fetches per cycle and then goes
 // nearly silent.
 //
 // Usage:
 //   npx tsx src/scripts/snapshot-referendum-titles.ts [--loop] [--dry-run]
 //     [--max-fetches=40] [--delay-ms=1500] [--live-refresh-minutes=30]
-//     [--cycle-minutes=15] [--base-url=https://hydration.subsquare.io]
+//     [--cycle-minutes=15] [--base-url=https://basilisk.subsquare.io]
 
 const dryRun = hasFlag('dry-run')
 const loop = hasFlag('loop')
@@ -39,7 +40,7 @@ const liveRefreshMinutes = integerOption('live-refresh-minutes', 30, { min: 1, m
 const cycleMinutes = integerOption('cycle-minutes', 15, { min: 1, max: 1_440, clamp: true })
 const flushEvery = integerOption('flush', 25, { min: 1, max: 500, clamp: true })
 const requestTimeoutMs = integerOption('timeout-ms', 20_000, { min: 1_000, max: 120_000, clamp: true })
-const baseUrl = stringOption('base-url') ?? process.env.SUBSQUARE_BASE_URL ?? 'https://hydration.subsquare.io'
+const baseUrl = stringOption('base-url') ?? process.env.SUBSQUARE_BASE_URL ?? 'https://basilisk.subsquare.io'
 
 const client = createClickHouseClient()
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))

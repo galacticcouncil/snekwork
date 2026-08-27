@@ -17,7 +17,7 @@ describe('trade event decoder', () => {
   })
 
   it('decodes nested Broadcast accounts and bigint-compatible amounts', () => {
-    expect(decodeRawTrade(event('Broadcast.Swapped2', {
+    expect(decodeRawTrade(event('Broadcast.Swapped3', {
       swapper: { value: '0xaccount' },
       inputs: [{ asset: 0, amount: '100' }],
       outputs: [{ asset: 5, amount: 200 }],
@@ -28,7 +28,7 @@ describe('trade event decoder', () => {
     })
   })
 
-  it('corrects legacy exact-output XYK Broadcast amounts', () => {
+  it('corrects exact-output XYK Broadcast amounts', () => {
     expect(decodeRawTrade(event('Broadcast.Swapped', {
       swapper: '0xaccount',
       fillerType: { __kind: 'XYK' },

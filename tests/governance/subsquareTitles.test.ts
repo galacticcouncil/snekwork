@@ -9,7 +9,7 @@ import {
 } from '../../src/governance/subsquareTitles.ts'
 
 describe('subsquare referendum urls', () => {
-  // Hydration has voted through both pallets and both index from 0 (Democracy
+  // Basilisk has voted through both pallets and both index from 0 (Democracy
   // 0-206, OpenGov 0-369), so the path — and every key derived from it — has to
   // carry the pallet or the two get cross-labelled.
   it('routes each pallet to its own path', () => {
@@ -19,8 +19,8 @@ describe('subsquare referendum urls', () => {
   })
 
   it('joins a base url without doubling the slash', () => {
-    expect(subsquareReferendumUrl('https://hydration.subsquare.io', 'opengov', 1)).toBe('https://hydration.subsquare.io/referenda/1')
-    expect(subsquareReferendumUrl('https://hydration.subsquare.io/', 'opengov', 1)).toBe('https://hydration.subsquare.io/referenda/1')
+    expect(subsquareReferendumUrl('https://basilisk.subsquare.io', 'opengov', 1)).toBe('https://basilisk.subsquare.io/referenda/1')
+    expect(subsquareReferendumUrl('https://basilisk.subsquare.io/', 'opengov', 1)).toBe('https://basilisk.subsquare.io/referenda/1')
   })
 })
 
@@ -35,9 +35,9 @@ describe('parseSubsquareTitle', () => {
   // ref 9999's name — the same absent-value-looks-real trap that made a missing
   // order render as HDX->HDX.
   it('rejects the generic site title a missing referendum returns', () => {
-    expect(parseSubsquareTitle('<title>SubSquare | hydradx governance platform</title>')).toBeNull()
+    expect(parseSubsquareTitle('<title>SubSquare | basilisk governance platform</title>')).toBeNull()
     expect(parseSubsquareTitle('<title>  SubSquare  </title>')).toBeNull()
-    expect(parseSubsquareTitle('<title>Hydration governance platform</title>')).toBeNull()
+    expect(parseSubsquareTitle('<title>Basilisk governance platform</title>')).toBeNull()
   })
 
   it('decodes the entities SubSquare emits', () => {

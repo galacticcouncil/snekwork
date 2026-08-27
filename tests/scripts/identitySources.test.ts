@@ -10,7 +10,7 @@ import {
 } from '../../src/scripts/identitySources.ts'
 
 // Shapes here are the ones the live chains actually return: identity v2 on the
-// People chains (matrix/github/discord, no `additional`) and v1 on Hydration
+// People chains (matrix/github/discord, no `additional`) and v1 on Basilisk
 // (`additional`/`riot`). Both must decode through one path, or a chain added later
 // silently contributes nothing.
 const raw = (text: string) => {
@@ -26,7 +26,7 @@ const peopleRegistration = (display: string, judgements: unknown[] = []) => ({
   info: { display: raw(display), legal: none, web: raw('https://a.example'), matrix: raw('@a:matrix.org'), email: raw('a@example.com'), image: none, twitter: raw('@a'), github: none, discord: none },
 })
 
-const hydrationRegistration = (display: string, judgements: unknown[] = []) => ({
+const basiliskRegistration = (display: string, judgements: unknown[] = []) => ({
   judgements,
   deposit: '50000000000000',
   info: { additional: [[raw('Discord'), raw('someone')]], display: raw(display), legal: none, web: raw('https://h.example'), riot: none, email: raw('h@example.com'), image: none, twitter: raw('@h') },
@@ -55,7 +55,7 @@ describe('identity registration decoding', () => {
   })
 
   it('reads the same fields from identity v1', () => {
-    expect(registrationFrom(hydrationRegistration('Snakenet #1', [[0, { __kind: 'KnownGood' }]]))).toEqual({
+    expect(registrationFrom(basiliskRegistration('Snakenet #1', [[0, { __kind: 'KnownGood' }]]))).toEqual({
       display: 'Snakenet #1', verified: true, email: 'h@example.com', web: 'https://h.example', twitter: '@h',
     })
   })
@@ -141,10 +141,10 @@ describe('identity display resolution', () => {
 
   it('stamps every row with its chain and display priority', () => {
     const state = emptyState()
-    state.registrations.set(account(5), decoded(hydrationRegistration('Local')))
+    state.registrations.set(account(5), decoded(basiliskRegistration('Local')))
 
-    expect(rowsByAccount(state, chain('hydration', 0)).get(account(5))).toMatchObject({
-      chain: 'hydration', priority: 0, updated_at: UPDATED_AT,
+    expect(rowsByAccount(state, chain('basilisk', 0)).get(account(5))).toMatchObject({
+      chain: 'basilisk', priority: 0, updated_at: UPDATED_AT,
     })
   })
 

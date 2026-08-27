@@ -2,106 +2,106 @@ import {sts, Result, Option, Bytes, BitSequence} from './support'
 
 export interface AssetLocation {
     parents: number
-    interior: V5Junctions
+    interior: V3Junctions
 }
 
-export type V5Junctions = V5Junctions_Here | V5Junctions_X1 | V5Junctions_X2 | V5Junctions_X3 | V5Junctions_X4 | V5Junctions_X5 | V5Junctions_X6 | V5Junctions_X7 | V5Junctions_X8
+export type V3Junctions = V3Junctions_Here | V3Junctions_X1 | V3Junctions_X2 | V3Junctions_X3 | V3Junctions_X4 | V3Junctions_X5 | V3Junctions_X6 | V3Junctions_X7 | V3Junctions_X8
 
-export interface V5Junctions_Here {
+export interface V3Junctions_Here {
     __kind: 'Here'
 }
 
-export interface V5Junctions_X1 {
+export interface V3Junctions_X1 {
     __kind: 'X1'
-    value: V5Junction[]
+    value: V3Junction
 }
 
-export interface V5Junctions_X2 {
+export interface V3Junctions_X2 {
     __kind: 'X2'
-    value: V5Junction[]
+    value: [V3Junction, V3Junction]
 }
 
-export interface V5Junctions_X3 {
+export interface V3Junctions_X3 {
     __kind: 'X3'
-    value: V5Junction[]
+    value: [V3Junction, V3Junction, V3Junction]
 }
 
-export interface V5Junctions_X4 {
+export interface V3Junctions_X4 {
     __kind: 'X4'
-    value: V5Junction[]
+    value: [V3Junction, V3Junction, V3Junction, V3Junction]
 }
 
-export interface V5Junctions_X5 {
+export interface V3Junctions_X5 {
     __kind: 'X5'
-    value: V5Junction[]
+    value: [V3Junction, V3Junction, V3Junction, V3Junction, V3Junction]
 }
 
-export interface V5Junctions_X6 {
+export interface V3Junctions_X6 {
     __kind: 'X6'
-    value: V5Junction[]
+    value: [V3Junction, V3Junction, V3Junction, V3Junction, V3Junction, V3Junction]
 }
 
-export interface V5Junctions_X7 {
+export interface V3Junctions_X7 {
     __kind: 'X7'
-    value: V5Junction[]
+    value: [V3Junction, V3Junction, V3Junction, V3Junction, V3Junction, V3Junction, V3Junction]
 }
 
-export interface V5Junctions_X8 {
+export interface V3Junctions_X8 {
     __kind: 'X8'
-    value: V5Junction[]
+    value: [V3Junction, V3Junction, V3Junction, V3Junction, V3Junction, V3Junction, V3Junction, V3Junction]
 }
 
-export type V5Junction = V5Junction_AccountId32 | V5Junction_AccountIndex64 | V5Junction_AccountKey20 | V5Junction_GeneralIndex | V5Junction_GeneralKey | V5Junction_GlobalConsensus | V5Junction_OnlyChild | V5Junction_PalletInstance | V5Junction_Parachain | V5Junction_Plurality
+export type V3Junction = V3Junction_AccountId32 | V3Junction_AccountIndex64 | V3Junction_AccountKey20 | V3Junction_GeneralIndex | V3Junction_GeneralKey | V3Junction_GlobalConsensus | V3Junction_OnlyChild | V3Junction_PalletInstance | V3Junction_Parachain | V3Junction_Plurality
 
-export interface V5Junction_AccountId32 {
+export interface V3Junction_AccountId32 {
     __kind: 'AccountId32'
-    network?: (V5NetworkId | undefined)
+    network?: (V3NetworkId | undefined)
     id: Bytes
 }
 
-export interface V5Junction_AccountIndex64 {
+export interface V3Junction_AccountIndex64 {
     __kind: 'AccountIndex64'
-    network?: (V5NetworkId | undefined)
+    network?: (V3NetworkId | undefined)
     index: bigint
 }
 
-export interface V5Junction_AccountKey20 {
+export interface V3Junction_AccountKey20 {
     __kind: 'AccountKey20'
-    network?: (V5NetworkId | undefined)
+    network?: (V3NetworkId | undefined)
     key: Bytes
 }
 
-export interface V5Junction_GeneralIndex {
+export interface V3Junction_GeneralIndex {
     __kind: 'GeneralIndex'
     value: bigint
 }
 
-export interface V5Junction_GeneralKey {
+export interface V3Junction_GeneralKey {
     __kind: 'GeneralKey'
     length: number
     data: Bytes
 }
 
-export interface V5Junction_GlobalConsensus {
+export interface V3Junction_GlobalConsensus {
     __kind: 'GlobalConsensus'
-    value: V5NetworkId
+    value: V3NetworkId
 }
 
-export interface V5Junction_OnlyChild {
+export interface V3Junction_OnlyChild {
     __kind: 'OnlyChild'
 }
 
-export interface V5Junction_PalletInstance {
+export interface V3Junction_PalletInstance {
     __kind: 'PalletInstance'
     value: number
 }
 
-export interface V5Junction_Parachain {
+export interface V3Junction_Parachain {
     __kind: 'Parachain'
     value: number
 }
 
-export interface V5Junction_Plurality {
+export interface V3Junction_Plurality {
     __kind: 'Plurality'
     id: V3BodyId
     part: V3BodyPart
@@ -180,77 +180,112 @@ export interface V3BodyId_Unit {
     __kind: 'Unit'
 }
 
-export type V5NetworkId = V5NetworkId_BitcoinCash | V5NetworkId_BitcoinCore | V5NetworkId_ByFork | V5NetworkId_ByGenesis | V5NetworkId_Ethereum | V5NetworkId_Kusama | V5NetworkId_Polkadot | V5NetworkId_PolkadotBulletin
+export type V3NetworkId = V3NetworkId_BitcoinCash | V3NetworkId_BitcoinCore | V3NetworkId_ByFork | V3NetworkId_ByGenesis | V3NetworkId_Ethereum | V3NetworkId_Kusama | V3NetworkId_Polkadot | V3NetworkId_Rococo | V3NetworkId_Westend | V3NetworkId_Wococo
 
-export interface V5NetworkId_BitcoinCash {
+export interface V3NetworkId_BitcoinCash {
     __kind: 'BitcoinCash'
 }
 
-export interface V5NetworkId_BitcoinCore {
+export interface V3NetworkId_BitcoinCore {
     __kind: 'BitcoinCore'
 }
 
-export interface V5NetworkId_ByFork {
+export interface V3NetworkId_ByFork {
     __kind: 'ByFork'
     blockNumber: bigint
     blockHash: Bytes
 }
 
-export interface V5NetworkId_ByGenesis {
+export interface V3NetworkId_ByGenesis {
     __kind: 'ByGenesis'
     value: Bytes
 }
 
-export interface V5NetworkId_Ethereum {
+export interface V3NetworkId_Ethereum {
     __kind: 'Ethereum'
     chainId: bigint
 }
 
-export interface V5NetworkId_Kusama {
+export interface V3NetworkId_Kusama {
     __kind: 'Kusama'
 }
 
-export interface V5NetworkId_Polkadot {
+export interface V3NetworkId_Polkadot {
     __kind: 'Polkadot'
 }
 
-export interface V5NetworkId_PolkadotBulletin {
-    __kind: 'PolkadotBulletin'
+export interface V3NetworkId_Rococo {
+    __kind: 'Rococo'
 }
+
+export interface V3NetworkId_Westend {
+    __kind: 'Westend'
+}
+
+export interface V3NetworkId_Wococo {
+    __kind: 'Wococo'
+}
+
+export interface AssetDetails {
+    name: Bytes
+    assetType: AssetType
+    existentialDeposit: bigint
+    xcmRateLimit?: (bigint | undefined)
+}
+
+export type AssetType = AssetType_PoolShare | AssetType_Token
+
+export interface AssetType_PoolShare {
+    __kind: 'PoolShare'
+    value: [number, number]
+}
+
+export interface AssetType_Token {
+    __kind: 'Token'
+}
+
+export const AssetDetails: sts.Type<AssetDetails> = sts.struct(() => {
+    return  {
+        name: sts.bytes(),
+        assetType: AssetType,
+        existentialDeposit: sts.bigint(),
+        xcmRateLimit: sts.option(() => sts.bigint()),
+    }
+})
 
 export const AssetLocation: sts.Type<AssetLocation> = sts.struct(() => {
     return  {
         parents: sts.number(),
-        interior: V5Junctions,
+        interior: V3Junctions,
     }
 })
 
-export const V5Junctions: sts.Type<V5Junctions> = sts.closedEnum(() => {
+export const V3Junctions: sts.Type<V3Junctions> = sts.closedEnum(() => {
     return  {
         Here: sts.unit(),
-        X1: sts.array(() => V5Junction),
-        X2: sts.array(() => V5Junction),
-        X3: sts.array(() => V5Junction),
-        X4: sts.array(() => V5Junction),
-        X5: sts.array(() => V5Junction),
-        X6: sts.array(() => V5Junction),
-        X7: sts.array(() => V5Junction),
-        X8: sts.array(() => V5Junction),
+        X1: V3Junction,
+        X2: sts.tuple(() => [V3Junction, V3Junction]),
+        X3: sts.tuple(() => [V3Junction, V3Junction, V3Junction]),
+        X4: sts.tuple(() => [V3Junction, V3Junction, V3Junction, V3Junction]),
+        X5: sts.tuple(() => [V3Junction, V3Junction, V3Junction, V3Junction, V3Junction]),
+        X6: sts.tuple(() => [V3Junction, V3Junction, V3Junction, V3Junction, V3Junction, V3Junction]),
+        X7: sts.tuple(() => [V3Junction, V3Junction, V3Junction, V3Junction, V3Junction, V3Junction, V3Junction]),
+        X8: sts.tuple(() => [V3Junction, V3Junction, V3Junction, V3Junction, V3Junction, V3Junction, V3Junction, V3Junction]),
     }
 })
 
-export const V5Junction: sts.Type<V5Junction> = sts.closedEnum(() => {
+export const V3Junction: sts.Type<V3Junction> = sts.closedEnum(() => {
     return  {
         AccountId32: sts.enumStruct({
-            network: sts.option(() => V5NetworkId),
+            network: sts.option(() => V3NetworkId),
             id: sts.bytes(),
         }),
         AccountIndex64: sts.enumStruct({
-            network: sts.option(() => V5NetworkId),
+            network: sts.option(() => V3NetworkId),
             index: sts.bigint(),
         }),
         AccountKey20: sts.enumStruct({
-            network: sts.option(() => V5NetworkId),
+            network: sts.option(() => V3NetworkId),
             key: sts.bytes(),
         }),
         GeneralIndex: sts.bigint(),
@@ -258,7 +293,7 @@ export const V5Junction: sts.Type<V5Junction> = sts.closedEnum(() => {
             length: sts.number(),
             data: sts.bytes(),
         }),
-        GlobalConsensus: V5NetworkId,
+        GlobalConsensus: V3NetworkId,
         OnlyChild: sts.unit(),
         PalletInstance: sts.number(),
         Parachain: sts.number(),
@@ -305,7 +340,7 @@ export const V3BodyId: sts.Type<V3BodyId> = sts.closedEnum(() => {
     }
 })
 
-export const V5NetworkId: sts.Type<V5NetworkId> = sts.closedEnum(() => {
+export const V3NetworkId: sts.Type<V3NetworkId> = sts.closedEnum(() => {
     return  {
         BitcoinCash: sts.unit(),
         BitcoinCore: sts.unit(),
@@ -319,6 +354,15 @@ export const V5NetworkId: sts.Type<V5NetworkId> = sts.closedEnum(() => {
         }),
         Kusama: sts.unit(),
         Polkadot: sts.unit(),
-        PolkadotBulletin: sts.unit(),
+        Rococo: sts.unit(),
+        Westend: sts.unit(),
+        Wococo: sts.unit(),
+    }
+})
+
+export const AssetType: sts.Type<AssetType> = sts.closedEnum(() => {
+    return  {
+        PoolShare: sts.tuple(() => [sts.number(), sts.number()]),
+        Token: sts.unit(),
     }
 })

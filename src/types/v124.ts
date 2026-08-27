@@ -1,57 +1,51 @@
 import {sts, Result, Option, Bytes, BitSequence} from './support'
 
-export interface PoolPegInfo {
-    source: PegSource[]
-    maxPegUpdate: Permill
-    current: [bigint, bigint][]
+export interface AssetDetails {
+    name: Bytes
+    assetType: AssetType
+    existentialDeposit: bigint
+    xcmRateLimit?: (bigint | undefined)
 }
 
-export type Permill = number
+export type AssetType = AssetType_Bond | AssetType_Erc20 | AssetType_External | AssetType_PoolShare | AssetType_StableSwap | AssetType_Token | AssetType_XYK
 
-export type PegSource = PegSource_MMOracle | PegSource_Oracle | PegSource_Value
-
-export interface PegSource_MMOracle {
-    __kind: 'MMOracle'
-    value: H160
+export interface AssetType_Bond {
+    __kind: 'Bond'
 }
 
-export interface PegSource_Oracle {
-    __kind: 'Oracle'
-    value: [Bytes, OraclePeriod, number]
+export interface AssetType_Erc20 {
+    __kind: 'Erc20'
 }
 
-export interface PegSource_Value {
-    __kind: 'Value'
-    value: [bigint, bigint]
+export interface AssetType_External {
+    __kind: 'External'
 }
 
-export type OraclePeriod = OraclePeriod_Day | OraclePeriod_Hour | OraclePeriod_LastBlock | OraclePeriod_Short | OraclePeriod_TenMinutes | OraclePeriod_Week
-
-export interface OraclePeriod_Day {
-    __kind: 'Day'
+export interface AssetType_PoolShare {
+    __kind: 'PoolShare'
+    value: [number, number]
 }
 
-export interface OraclePeriod_Hour {
-    __kind: 'Hour'
+export interface AssetType_StableSwap {
+    __kind: 'StableSwap'
 }
 
-export interface OraclePeriod_LastBlock {
-    __kind: 'LastBlock'
+export interface AssetType_Token {
+    __kind: 'Token'
 }
 
-export interface OraclePeriod_Short {
-    __kind: 'Short'
+export interface AssetType_XYK {
+    __kind: 'XYK'
 }
 
-export interface OraclePeriod_TenMinutes {
-    __kind: 'TenMinutes'
-}
-
-export interface OraclePeriod_Week {
-    __kind: 'Week'
-}
-
-export type H160 = Bytes
+export const AssetDetails: sts.Type<AssetDetails> = sts.struct(() => {
+    return  {
+        name: sts.bytes(),
+        assetType: AssetType,
+        existentialDeposit: sts.bigint(),
+        xcmRateLimit: sts.option(() => sts.bigint()),
+    }
+})
 
 export const ExecutionType: sts.Type<ExecutionType> = sts.closedEnum(() => {
     return  {
@@ -176,8 +170,6 @@ export interface TradeOperation_LiquidityRemove {
 
 export const Filler: sts.Type<Filler> = sts.closedEnum(() => {
     return  {
-        AAVE: sts.unit(),
-        HSM: sts.unit(),
         LBP: sts.unit(),
         OTC: sts.number(),
         Omnipool: sts.unit(),
@@ -186,15 +178,7 @@ export const Filler: sts.Type<Filler> = sts.closedEnum(() => {
     }
 })
 
-export type Filler = Filler_AAVE | Filler_HSM | Filler_LBP | Filler_OTC | Filler_Omnipool | Filler_Stableswap | Filler_XYK
-
-export interface Filler_AAVE {
-    __kind: 'AAVE'
-}
-
-export interface Filler_HSM {
-    __kind: 'HSM'
-}
+export type Filler = Filler_LBP | Filler_OTC | Filler_Omnipool | Filler_Stableswap | Filler_XYK
 
 export interface Filler_LBP {
     __kind: 'LBP'
@@ -221,35 +205,14 @@ export interface Filler_XYK {
 
 export const AccountId32 = sts.bytes()
 
-export const PoolPegInfo: sts.Type<PoolPegInfo> = sts.struct(() => {
+export const AssetType: sts.Type<AssetType> = sts.closedEnum(() => {
     return  {
-        source: sts.array(() => PegSource),
-        maxPegUpdate: Permill,
-        current: sts.array(() => sts.tuple(() => [sts.bigint(), sts.bigint()])),
+        Bond: sts.unit(),
+        Erc20: sts.unit(),
+        External: sts.unit(),
+        PoolShare: sts.tuple(() => [sts.number(), sts.number()]),
+        StableSwap: sts.unit(),
+        Token: sts.unit(),
+        XYK: sts.unit(),
     }
 })
-
-export const PegSource: sts.Type<PegSource> = sts.closedEnum(() => {
-    return  {
-        MMOracle: H160,
-        Oracle: sts.tuple(() => [sts.bytes(), OraclePeriod, sts.number()]),
-        Value: sts.tuple(() => [sts.bigint(), sts.bigint()]),
-    }
-})
-
-export const OraclePeriod: sts.Type<OraclePeriod> = sts.closedEnum(() => {
-    return  {
-        Day: sts.unit(),
-        Hour: sts.unit(),
-        LastBlock: sts.unit(),
-        Short: sts.unit(),
-        TenMinutes: sts.unit(),
-        Week: sts.unit(),
-    }
-})
-
-export const H160 = sts.bytes()
-
-export const Permill = sts.number()
-
-export const NonZeroU16 = sts.number()

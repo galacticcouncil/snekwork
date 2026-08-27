@@ -6,7 +6,7 @@
 // uncompressed, 31 GiB compressed) and, identically, of raw_extrinsics.call_args_json.
 //
 // The proof exists so a relay-chain validator can re-execute the candidate. It says
-// nothing about Hydration that is not already indexed, no consumer in this
+// nothing about Basilisk that is not already indexed, no consumer in this
 // repository reads it, and everything an explorer can render about the inherent —
 // the relay parent header, the DMP/HRMP messages, the relay parent descendants, the
 // collator peer id — lives in the other 3-5%. Storing it also made every unrelated

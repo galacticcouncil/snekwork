@@ -34,7 +34,7 @@ export interface AssetRow {
   symbol: string
   name: string
   decimals: number
-  parachain_id: number | null  // XCM origin parachain ID, null for native Hydration assets
+  parachain_id: number | null  // XCM origin parachain ID, null for native Basilisk assets
   origin_ecosystem?: string | null
   origin_chain_id?: string | null
   origin_asset_id?: string | null

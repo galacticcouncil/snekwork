@@ -6,12 +6,11 @@ import type {
 } from '@subsquid/substrate-processor'
 import { SubstrateBatchProcessor } from '@subsquid/substrate-processor'
 import { config } from '../config.js'
+import { basiliskTypesBundle } from '../basiliskTypesBundle.js'
 
+// RPC-only ingestion, permanently — see src/processor.ts.
 export const rawProcessor = new SubstrateBatchProcessor()
-  .setGateway({
-    url: config.SQD_GATEWAY,
-    apiKey: config.SQD_GATEWAY_API_KEY,
-  })
+  .setTypesBundle(basiliskTypesBundle)
   .setRpcEndpoint({
     url: config.RPC_URL,
     rateLimit: config.RPC_RATE_LIMIT,

@@ -4,7 +4,7 @@ import type { IdentityChain } from './identityChains.js'
 // Decoding and resolution for the Identity pallet, shared by every configured
 // chain. The pallet ships in two shapes and both are live:
 //
-//   v1 (Hydration)      info = { additional, display, legal, web, riot, email, … }
+//   v1 (Basilisk)       info = { additional, display, legal, web, riot, email, … }
 //                       IdentityOf = Registration
 //   v2 (People chains)  info = { display, legal, web, matrix, email, image,
 //                                twitter, github, discord }
@@ -153,7 +153,7 @@ export function resolveIdentityRows(state: ChainIdentityState, chain: IdentityCh
     }
 
     const sub = state.subs.get(accountId)
-    // One hop only. An account can be its own super (it happens on Hydration),
+    // One hop only. An account can be its own super (it happens on Basilisk),
     // and rule 1 already claimed it if it had a display name of its own.
     const parent = sub && sub.parent !== accountId ? state.registrations.get(sub.parent) : undefined
     if (sub && parent?.display) {

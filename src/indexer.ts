@@ -7,7 +7,7 @@ import { config } from './config.js'
 import { validateBlockRange } from './blockRange.js'
 import type { XYKPool } from './price/types.ts'
 import type { Block } from './types/support.ts'
-import * as storage from './types/storage.ts'
+import { readXykPoolReserves } from './pool/reserves.js'
 import { hasAssetRegistryMetadataEvent } from './registry/events.js'
 import { isSwapEvent } from './registry/swapEvents.js'
 import { extractTradeVolumeFromSwaps, extractVolumeFromSwaps, mergePriceAndVolumeRows } from './blocks/extractVolume.js'
@@ -23,7 +23,7 @@ import {
   nativeAssetInfoToRow,
 } from './nativeAsset.js'
 import { toClickHouseBlockTime } from './db/timestamp.js'
-import { fetchChainHead } from './rpc/head.js'
+import { assertChainIdentity, fetchChainHead } from './rpc/head.js'
 import { detectPoolAffectingSetStorage } from './raw/snapshot.js'
 import { createSnapshotRpcClient, loadRuntimeAt } from './scripts/snapshotRuntime.js'
 import { extractRuntimeErrorNames } from './raw/runtimeErrorNames.js'
@@ -83,46 +83,30 @@ async function readXYKState(
   block: Block,
   pools: Array<{ poolAccount: string; assetA: number; assetB: number }>
 ): Promise<XYKPool[]> {
-  const xykPools: XYKPool[] = []
-
-  if (!storage.tokens.accounts.v108.is(block)) {
-    throw new Error(`Unsupported Tokens.Accounts storage for XYK pools at block ${block.height}`)
-  }
-
   try {
-    // Batch-read all pool balances in one call (2 keys per pool)
-    const keys: [string, number][] = []
-    for (const { poolAccount, assetA, assetB } of pools) {
-      keys.push([poolAccount, assetA])
-      keys.push([poolAccount, assetB])
-    }
-
-    const balances = await storage.tokens.accounts.v108.getMany(block, keys)
-
-    // Process results in pairs (index i*2 and i*2+1 for pool i)
+    const reserves = await readXykPoolReserves(block, pools)
+    const xykPools: XYKPool[] = []
     for (let i = 0; i < pools.length; i++) {
       const { assetA, assetB } = pools[i]
-      const balanceA = balances[i * 2]
-      const balanceB = balances[i * 2 + 1]
-
-      if (balanceA && balanceB) {
-        xykPools.push({
-          assetA,
-          assetB,
-          reserveA: balanceA.free,
-          reserveB: balanceB.free,
-        })
+      const { reserveA, reserveB } = reserves[i]
+      // A leg with no storage entry is unknown, not zero: pricing off a missing
+      // reserve would invent a price, so the pool is skipped for this block.
+      if (reserveA != null && reserveB != null) {
+        xykPools.push({ assetA, assetB, reserveA, reserveB })
       }
     }
+    return xykPools
   } catch (error) {
     throw new Error(`Failed to read XYK state at block ${block.height}`, { cause: error })
   }
-
-  return xykPools
 }
 
 export async function run(options: RunOptions = {}): Promise<void> {
   validateBlockRange(options)
+  // Fail before a single block is requested if RPC_URL is not Basilisk: every
+  // codec in src/types is Basilisk-generated, and another chain would decode a
+  // plausible subset of them into wrong rows.
+  await assertChainIdentity(config.RPC_URL, 'Prices')
   const pipelineId = options.pipelineId ?? process.env.INDEXER_PIPELINE_ID ?? 'main'
   const requireFinalizedRaw = options.requireFinalizedRaw ?? process.env.MAIN_REQUIRE_FINALIZED_RAW !== 'false'
   const deferHistoricalPublication = options.toBlock != null && requireFinalizedRaw

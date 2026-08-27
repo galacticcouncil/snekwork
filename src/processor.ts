@@ -1,11 +1,14 @@
 import { SubstrateBatchProcessor } from '@subsquid/substrate-processor'
 import { config } from './config.js'
+import { basiliskTypesBundle } from './basiliskTypesBundle.js'
 
+// RPC-only ingestion, permanently: SQD publishes no Basilisk archive, so there is
+// no gateway to fall back to and no API key to configure. The types bundle supplies
+// the definitions the pre-V14 metadata (specs 16 and 19, blocks 1-395,663) cannot
+// describe on its own; typegen reads the same bundle, so the generated codecs and
+// the ingested blocks are decoded by one set of definitions.
 export const processor = new SubstrateBatchProcessor()
-  .setGateway({
-    url: config.SQD_GATEWAY,
-    apiKey: config.SQD_GATEWAY_API_KEY,
-  })
+  .setTypesBundle(basiliskTypesBundle)
   .setRpcEndpoint({
     url: config.RPC_URL,
     rateLimit: config.RPC_RATE_LIMIT,
@@ -26,8 +29,9 @@ export const processor = new SubstrateBatchProcessor()
       'Tokens.Transfer',
       'XYK.SellExecuted',
       'XYK.BuyExecuted',
+      // Basilisk's Broadcast pallet emits Swapped (spec 124+) then Swapped3
+      // (spec 128+). It never had a Swapped2.
       'Broadcast.Swapped',
-      'Broadcast.Swapped2',
       'Broadcast.Swapped3',
       // Asset-registry changes (a rename, a new registration, a location fix)
       // must reach the live block's event list: the indexer forces a registry

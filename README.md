@@ -67,11 +67,11 @@ Docker Compose provides working defaults. Override them in an untracked `.env` f
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `RPC_URL` | see `docker-compose.yml` | Price indexer RPC |
-| `RAW_LIVE_RPC_URL` | see `docker-compose.yml` | Live raw-indexer RPC |
-| `RAW_RPC_URL` | see `docker-compose.yml` | Historical raw-worker RPC |
-| `IDENTITY_RPC_URL` | see `docker-compose.yml` | Identity snapshot RPC |
-| `SUBSQUARE_BASE_URL` | see `docker-compose.yml` | Source of referendum titles |
+| `RPC_URL` | `https://rpc.basilisk.cloud` | Price indexer RPC |
+| `RAW_LIVE_RPC_URL` | `https://rpc.basilisk.cloud` | Live raw-indexer RPC |
+| `RAW_RPC_URL` | `https://rpc.basilisk.cloud` | Historical raw-worker RPC |
+| `IDENTITY_RPC_URL` | `https://rpc.basilisk.cloud` | Identity snapshot RPC |
+| `SUBSQUARE_BASE_URL` | `https://basilisk.subsquare.io` | Source of referendum titles |
 | `CLICKHOUSE_HOST` | `http://localhost:18123` outside Compose | ClickHouse HTTP endpoint |
 | `CLICKHOUSE_PASSWORD` | empty outside Compose; `dev` in Compose | ClickHouse password |
 | `CLICKHOUSE_VOLUME_NAME` | see `docker-compose.yml` | Docker volume containing ClickHouse data |
@@ -79,6 +79,13 @@ Docker Compose provides working defaults. Override them in an untracked `.env` f
 | `RANGE_SIZE` | `1000` | Blocks per raw historical range |
 | `MAIN_WORKERS` | `3` | Concurrent historical price workers |
 | `MAIN_MAX_RANGES` | `3` | Raw ranges consumed per price batch |
+
+Every RPC endpoint must serve Basilisk. Both indexers read `state_getRuntimeVersion`
+at startup and abort unless `specName` is `basilisk`, because the generated codecs in
+`src/types` would otherwise decode another chain into plausible-looking wrong rows.
+
+Ingestion is RPC-only and permanently so: SQD publishes no Basilisk archive, so there
+is no gateway URL or API key.
 
 See [`docker-compose.yml`](docker-compose.yml) for service-specific tuning variables. Keep credentials in `.env`, never in tracked files.
 
@@ -165,6 +172,37 @@ npm run start:raw -- --help
 npm run detect-gaps
 npm run snapshot:balances -- --dry-run
 ```
+
+### Runtime types
+
+`src/types/` is generated from Basilisk runtime metadata by
+[`typegen.json`](typegen.json), which reads a spec-version index that is not tracked
+(it is ~19 MB). Regenerate both after a runtime upgrade introduces a shape this
+indexer decodes:
+
+```bash
+npx squid-substrate-metadata-explorer --rpc wss://rpc.basilisk.cloud --out typegen/basiliskVersions.jsonl
+npm run typegen
+```
+
+Both inputs are build artifacts and untracked. The type bundle comes from
+[`src/basiliskTypesBundle.ts`](src/basiliskTypesBundle.ts) — the bundle shipped by
+`@subsquid/substrate-runtime` plus the orml-tokens alias it is missing — and supplies
+the definitions the pre-V14 metadata of specs 16 and 19 (blocks 1–395,663) cannot
+describe on its own. The same module is what the processors pass to
+`.setTypesBundle()`, so generation and ingestion cannot drift apart.
+
+Generated version modules are named for the Basilisk spec version that introduced the
+shape (`v16`, `v25`, … `v128`), and the decode call sites select among them with the
+metadata-driven `.is(block)` probes rather than block-height comparisons. The era
+boundaries those probes correspond to are named in
+[`src/chainEras.ts`](src/chainEras.ts), for logging and comments only — never for
+branching.
+
+`npm run typegen` also re-applies the one local edit to the generated
+`src/types/support.ts` (`src/scripts/patch-typegen-support.ts`), so regeneration
+cannot silently drop it. Everything under `src/types/` is otherwise generated: edit
+`typegen.json` and regenerate rather than editing it by hand.
 
 ## Database model
 

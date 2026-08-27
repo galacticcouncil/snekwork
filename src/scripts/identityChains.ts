@@ -6,7 +6,7 @@
 // to be called here, and pulling in ecosystem-wide names is a product surface
 // this explorer does not carry.
 
-export const HYDRATION_CHAIN_KEY = 'hydration'
+export const BASILISK_CHAIN_KEY = 'basilisk'
 
 export interface IdentityChain {
   key: string           // stored in account_identities.chain
@@ -16,5 +16,5 @@ export interface IdentityChain {
 }
 
 export function localIdentityChain(url: string): IdentityChain {
-  return { key: HYDRATION_CHAIN_KEY, url, block: null, priority: 0 }
+  return { key: BASILISK_CHAIN_KEY, url, block: null, priority: 0 }
 }

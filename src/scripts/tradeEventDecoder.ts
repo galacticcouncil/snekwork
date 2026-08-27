@@ -3,9 +3,10 @@ export const LEGACY_SWAP_EVENT_NAMES = [
   'XYK.BuyExecuted',
 ] as const
 
+// Basilisk's Broadcast pallet emits `Swapped` from spec 124 and `Swapped3` from
+// spec 128. It never had a `Swapped2` — see src/registry/swapEvents.ts.
 export const BROADCAST_SWAP_EVENT_NAMES = [
   'Broadcast.Swapped',
-  'Broadcast.Swapped2',
   'Broadcast.Swapped3',
 ] as const
 
@@ -73,7 +74,10 @@ export function decodeRawTrade(row: RawTradeEventRow): DecodedRawTrade | null {
   const outputs = parseAssetAmounts(args.outputs)
   const fillerType = (args.fillerType as { __kind?: string } | undefined)?.__kind
   const operation = (args.operation as { __kind?: string } | undefined)?.__kind
-  if (row.event_name === 'Broadcast.Swapped' && operation === 'ExactOut' && (fillerType === 'XYK' || fillerType === 'LBP') && inputs.length === 1 && outputs.length === 1) {
+  // Both Basilisk Broadcast events report exact-out XYK/LBP fills with the two
+  // amounts against the wrong legs. This must stay identical to the correction in
+  // src/blocks/extractVolume.ts, or a volume repair would restate live ingestion.
+  if (operation === 'ExactOut' && (fillerType === 'XYK' || fillerType === 'LBP') && inputs.length === 1 && outputs.length === 1) {
     return {
       account: normalizeAccount(args.swapper),
       inputs: [{ assetId: inputs[0].assetId, amount: outputs[0].amount }],

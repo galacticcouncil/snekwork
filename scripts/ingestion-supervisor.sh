@@ -34,26 +34,27 @@ RAW_BALANCE_READ_BATCH_CONCURRENCY="${RAW_BALANCE_READ_BATCH_CONCURRENCY:-4}"
 RAW_SNAPSHOT_READ_BATCH_SIZE="${RAW_SNAPSHOT_READ_BATCH_SIZE:-100}"
 RAW_SNAPSHOT_READ_BATCH_CONCURRENCY="${RAW_SNAPSHOT_READ_BATCH_CONCURRENCY:-2}"
 
-MAIN_RPC_URL="${MAIN_RPC_URL:-https://hydration-rpc.neckwork.net}"
+MAIN_RPC_URL="${MAIN_RPC_URL:-https://rpc.basilisk.cloud}"
 MAIN_RATE_LIMIT="${MAIN_RATE_LIMIT:-10}"
 MAIN_CAPACITY="${MAIN_CAPACITY:-3}"
 
 LIVE_MAIN_ENABLED="${LIVE_MAIN_ENABLED:-true}"
 LIVE_MAIN_NAME="${LIVE_MAIN_NAME:-snekwork-main-live}"
 LIVE_MAIN_PIPELINE_ID="${LIVE_MAIN_PIPELINE_ID:-main-live}"
-LIVE_MAIN_RPC_URL="${LIVE_MAIN_RPC_URL:-https://hydration-rpc.neckwork.net}"
+LIVE_MAIN_RPC_URL="${LIVE_MAIN_RPC_URL:-https://rpc.basilisk.cloud}"
 LIVE_MAIN_RATE_LIMIT="${LIVE_MAIN_RATE_LIMIT:-100}"
 LIVE_MAIN_CAPACITY="${LIVE_MAIN_CAPACITY:-20}"
 LIVE_MAIN_BATCH_SIZE="${LIVE_MAIN_BATCH_SIZE:-50000}"
 
 # Use an operator-selected raw RPC when configured; otherwise rotate public RPCs.
+# Every endpoint must serve Basilisk (specName 'basilisk') and keep archive state
+# from genesis — the raw workers read historical storage, not just events. Both
+# indexers verify specName at startup and abort on a mismatch.
 if [[ -n "${RAW_RPC_URL:-}" ]]; then
   RPC_ENDPOINTS=("$RAW_RPC_URL")
 else
   RPC_ENDPOINTS=(
-    "https://rpc.coke.hydration.cloud"
-    "https://rpc.sin.hydration.cloud"
-    "https://hydration.rotko.net"
+    "https://rpc.basilisk.cloud"
   )
 fi
 

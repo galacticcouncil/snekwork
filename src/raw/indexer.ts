@@ -24,7 +24,7 @@ import {
 } from './json.js'
 import { minutesFromEnvironment } from '../util/env.js'
 import { retainsSnapshotAtHeight, snapshotEveryNBlocksFromEnvironment } from './snapshotCadence.js'
-import { fetchChainHead, fetchFinalizedHead } from '../rpc/head.js'
+import { assertChainIdentity, fetchChainHead, fetchFinalizedHead } from '../rpc/head.js'
 import type {
   RawBlockRow,
   RawBlockSnapshotRow,
@@ -230,6 +230,8 @@ function liveFinalityPollIntervalMs(): number {
 
 export async function runRaw(options: RawRunOptions = {}): Promise<void> {
   validateBlockRange(options)
+  // See src/indexer.ts: a wrong-chain RPC pairing must fail loudly at startup.
+  await assertChainIdentity(config.RPC_URL, 'Raw')
 
   const pipelineId = options.pipelineId ?? process.env.RAW_PIPELINE_ID ?? 'raw-main'
   const boundedRange = boundedRawRangeFromOptions(options)

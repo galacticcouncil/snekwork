@@ -86,7 +86,7 @@ function isMissingTradeVolumeTable(error: unknown): boolean {
 
 function printHelp(): void {
   console.log(`
-Hydration Price Indexer
+Basilisk Price Indexer
 
 Usage:
   npx tsx src/cli.ts [options]
@@ -123,7 +123,7 @@ Examples:
   npm run detect-gaps
 
 Environment Variables:
-  RPC_URL               HTTP(S) or WebSocket RPC endpoint (default: https://hydration-rpc.neckwork.net)
+  RPC_URL               HTTP(S) or WebSocket RPC endpoint (default: https://rpc.basilisk.cloud)
   RPC_CAPACITY          Max concurrent RPC requests (default: 20)
   INDEXER_PIPELINE_ID   Main indexer checkpoint id (default: main)
   MAIN_REQUIRE_FINALIZED_RAW  Require finalized raw ranges for historical mode (default: true)
@@ -389,7 +389,7 @@ async function main(): Promise<void> {
 
   setupGracefulShutdown()
 
-  console.log('[CLI] Starting Hydration price indexer...')
+  console.log('[CLI] Starting Basilisk price indexer...')
 
   try {
     await run({

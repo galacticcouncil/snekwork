@@ -408,13 +408,18 @@ describe('mergePriceAndVolumeRows', () => {
 
 describe('isSwapEvent', () => {
   it('uses legacy swap events before unified runtime support', () => {
-    expect(isSwapEvent('XYK.SellExecuted', 201)).toBe(true);
-    expect(isSwapEvent('Broadcast.Swapped3', 201)).toBe(false);
+    expect(isSwapEvent('XYK.SellExecuted', 115)).toBe(true);
+    expect(isSwapEvent('Broadcast.Swapped3', 115)).toBe(false);
   });
 
-  it('switches to unified broadcast events from spec 282 onward', () => {
-    expect(isSwapEvent('XYK.SellExecuted', 282)).toBe(false);
-    expect(isSwapEvent('Broadcast.Swapped3', 323)).toBe(true);
+  it('switches to unified broadcast events from spec 124 onward', () => {
+    expect(isSwapEvent('XYK.SellExecuted', 124)).toBe(false);
+    expect(isSwapEvent('Broadcast.Swapped', 124)).toBe(true);
+    expect(isSwapEvent('Broadcast.Swapped3', 134)).toBe(true);
+  });
+
+  it('never treats Broadcast.Swapped2 as a swap: Basilisk has no such event', () => {
+    expect(isSwapEvent('Broadcast.Swapped2', 134)).toBe(false);
   });
 });
 
@@ -428,7 +433,7 @@ describe('extractVolumeFromSwaps', () => {
     [10, 12],
   ]);
 
-  it('extracts legacy swap events before the unified swap cutoff', () => {
+  it('extracts legacy XYK swap events before the unified swap cutoff', () => {
     const event = createMockEvent('XYK.SellExecuted', {
       assetIn: 5,
       assetOut: 10,
@@ -436,7 +441,7 @@ describe('extractVolumeFromSwaps', () => {
       salePrice: 2000000000000n,
     });
 
-    const rows = extractVolumeFromSwaps([event], 100, 201, prices, decimals);
+    const rows = extractVolumeFromSwaps([event], 100, 115, prices, decimals);
 
     expect(rows).toHaveLength(2);
     expect(rows[0].asset_id).toBe(5);
@@ -453,7 +458,7 @@ describe('extractVolumeFromSwaps', () => {
       salePrice: 2000000000000n,
     });
 
-    const rows = extractVolumeFromSwaps([event], 100, 282, prices, decimals);
+    const rows = extractVolumeFromSwaps([event], 100, 124, prices, decimals);
 
     expect(rows).toEqual([]);
   });
@@ -470,7 +475,7 @@ describe('extractVolumeFromSwaps', () => {
       operationStack: [],
     });
 
-    const rows = extractVolumeFromSwaps([event], 100, 323, prices, decimals);
+    const rows = extractVolumeFromSwaps([event], 100, 134, prices, decimals);
 
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
@@ -485,7 +490,53 @@ describe('extractVolumeFromSwaps', () => {
     });
   });
 
-  it('applies the v282 Broadcast.Swapped exact-out XYK amount correction', () => {
+  it('applies the exact-out XYK amount correction to Broadcast.Swapped3 too', () => {
+    // Basilisk kept the inversion when it renamed Swapped to Swapped3 at spec 128.
+    // Shape taken from block 12,668,315, cross-checked against the XYK.BuyExecuted
+    // emitted beside it (7.24M BSX paid for 18.3 KSM).
+    const event = createMockEvent('Broadcast.Swapped3', {
+      fillerType: { __kind: 'XYK', value: 4 },
+      operation: { __kind: 'ExactOut' },
+      inputs: [{ asset: 5, amount: 1000000000000n }],
+      outputs: [{ asset: 10, amount: 2000000000000n }],
+      fees: [],
+      swapper: 'alice',
+      filler: 'pool',
+      operationStack: [],
+    });
+
+    const rows = extractVolumeFromSwaps([event], 100, 134, prices, decimals);
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      asset_id: 5,
+      native_volume_sell: '2000000000000',
+    });
+    expect(rows[1]).toMatchObject({
+      asset_id: 10,
+      native_volume_buy: '1000000000000',
+    });
+  });
+
+  it('leaves exact-in Broadcast.Swapped3 amounts alone', () => {
+    const event = createMockEvent('Broadcast.Swapped3', {
+      fillerType: { __kind: 'XYK', value: 4 },
+      operation: { __kind: 'ExactIn' },
+      inputs: [{ asset: 5, amount: 1000000000000n }],
+      outputs: [{ asset: 10, amount: 2000000000000n }],
+      fees: [],
+      swapper: 'alice',
+      filler: 'pool',
+      operationStack: [],
+    });
+
+    const rows = extractVolumeFromSwaps([event], 100, 134, prices, decimals);
+
+    expect(rows[0]).toMatchObject({ asset_id: 5, native_volume_sell: '1000000000000' });
+    expect(rows[1]).toMatchObject({ asset_id: 10, native_volume_buy: '2000000000000' });
+  });
+
+  it('applies the spec-124 Broadcast.Swapped exact-out XYK amount correction', () => {
     const event = createMockEvent('Broadcast.Swapped', {
       fillerType: { __kind: 'XYK', value: 123 },
       operation: { __kind: 'ExactOut' },
@@ -497,7 +548,7 @@ describe('extractVolumeFromSwaps', () => {
       operationStack: [],
     });
 
-    const rows = extractVolumeFromSwaps([event], 100, 282, prices, decimals);
+    const rows = extractVolumeFromSwaps([event], 100, 124, prices, decimals);
 
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
@@ -533,7 +584,7 @@ describe('extractTradeVolumeFromSwaps', () => {
       salePrice: 2000000000000n,
     });
 
-    const rows = extractTradeVolumeFromSwaps([event], 100, 201, prices, decimals);
+    const rows = extractTradeVolumeFromSwaps([event], 100, 115, prices, decimals);
 
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
@@ -574,7 +625,7 @@ describe('extractTradeVolumeFromSwaps', () => {
       operationStack: [],
     });
 
-    const rows = extractTradeVolumeFromSwaps([first, second], 100, 323, prices, decimals);
+    const rows = extractTradeVolumeFromSwaps([first, second], 100, 134, prices, decimals);
 
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
@@ -608,7 +659,7 @@ describe('extractTradeVolumeFromSwaps', () => {
       operationStack: [],
     });
 
-    const rows = extractTradeVolumeFromSwaps([event], 100, 323, prices, decimals);
+    const rows = extractTradeVolumeFromSwaps([event], 100, 134, prices, decimals);
 
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({

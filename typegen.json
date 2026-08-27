@@ -1,34 +1,52 @@
 {
   "outDir": "src/types",
-  "specVersions": "https://v2.archive.subsquid.io/metadata/hydradx",
+  "specVersions": "typegen/basiliskVersions.jsonl",
+  "typesBundle": "typegen/basilisk-types.json",
   "pallets": {
-    "Omnipool": {
-      "storage": ["Assets", "HubAssetImbalance"],
-      "events": ["TokenAdded", "TokenRemoved", "SellExecuted", "BuyExecuted"]
+    "AssetRegistry": {
+      "storage": ["Assets", "AssetMetadataMap", "AssetLocations", "AssetIds", "NextAssetId"],
+      "events": ["Registered", "Updated", "MetadataSet", "LocationSet"]
     },
     "XYK": {
       "storage": ["PoolAssets", "TotalLiquidity", "ShareToken"],
-      "events": ["PoolCreated", "PoolDestroyed", "SellExecuted", "BuyExecuted"]
+      "events": ["PoolCreated", "PoolDestroyed", "SellExecuted", "BuyExecuted", "LiquidityAdded", "LiquidityRemoved"]
     },
-    "Stableswap": {
-      "storage": ["Pools", "AssetTradability", "PoolPegs"],
-      "events": ["PoolCreated", "LiquidityAdded", "SellExecuted", "BuyExecuted"]
+    "LBP": {
+      "storage": ["PoolData"],
+      "events": ["PoolCreated", "PoolUpdated", "SellExecuted", "BuyExecuted", "LiquidityAdded", "LiquidityRemoved"]
     },
     "Broadcast": {
-      "events": ["Swapped", "Swapped2", "Swapped3"]
+      "events": ["Swapped", "Swapped3"]
     },
-    "AssetRegistry": {
-      "storage": ["Assets", "AssetMetadataMap", "AssetLocations"]
+    "Exchange": {
+      "events": [
+        "IntentionRegistered",
+        "IntentionResolvedAMMTrade",
+        "IntentionResolvedDirectTrade",
+        "IntentionResolvedDirectTradeFees"
+      ]
+    },
+    "XYKLiquidityMining": {
+      "events": ["SharesDeposited", "SharesRedeposited", "SharesWithdrawn", "RewardClaimed"]
+    },
+    "XYKWarehouseLM": {
+      "storage": ["GlobalFarm", "YieldFarm", "Deposit", "ActiveYieldFarm"],
+      "events": ["GlobalFarmAccRPZUpdated", "YieldFarmAccRPVSUpdated"]
     },
     "Tokens": {
       "storage": ["Accounts", "TotalIssuance"],
-      "events": ["Transfer"]
+      "events": ["Transfer", "Deposited", "Withdrawn", "BalanceSet", "Endowed", "DustLost", "Reserved", "Unreserved"]
     },
-    "EVM": {
-      "storage": ["AccountStorages"]
+    "Balances": {
+      "storage": ["Account", "TotalIssuance"],
+      "events": ["Transfer", "Deposit", "Withdraw", "BalanceSet", "Endowed", "DustLost", "Reserved", "Unreserved"]
+    },
+    "Currencies": {
+      "events": ["Transferred", "BalanceUpdated", "Deposited", "Withdrawn"]
     },
     "System": {
-      "storage": ["Account"]
+      "storage": ["Account"],
+      "calls": ["set_storage"]
     }
   }
 }

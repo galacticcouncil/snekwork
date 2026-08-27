@@ -43,7 +43,7 @@ describe('raw balance storage key decoding', () => {
 })
 
 describe('raw balance event extraction', () => {
-  it('skips (and warns instead of fabricating HDX for) a multi-asset event whose asset id cannot be decoded', async () => {
+  it('skips (and warns instead of fabricating BSX for) a multi-asset event whose asset id cannot be decoded', async () => {
     const block = {
       height: 3,
       hash: '0x02',
@@ -85,19 +85,19 @@ describe('raw balance event extraction', () => {
 
   it('still assumes the native asset for a native-only Balances event with no asset args', async () => {
     const block = { height: 4, hash: '0x03' } as unknown as StorageBlock
-    const originalIs = systemStorage.account.v205.is
-    const originalGet = systemStorage.account.v205.get
-    const originalDefault = systemStorage.account.v205.getDefault
+    const originalIs = systemStorage.account.v108.is
+    const originalGet = systemStorage.account.v108.get
+    const originalDefault = systemStorage.account.v108.getDefault
 
-    ;(systemStorage.account.v205 as unknown as { is: typeof originalIs }).is = () => true
-    ;(systemStorage.account.v205 as unknown as { get: typeof originalGet }).get = async () => ({
+    ;(systemStorage.account.v108 as unknown as { is: typeof originalIs }).is = () => true
+    ;(systemStorage.account.v108 as unknown as { get: typeof originalGet }).get = async () => ({
       nonce: 0,
       consumers: 0,
       providers: 0,
       sufficients: 0,
       data: { free: 5n, reserved: 0n, frozen: 0n, flags: 0n },
     } as never)
-    ;(systemStorage.account.v205 as unknown as { getDefault: typeof originalDefault }).getDefault = () => ({
+    ;(systemStorage.account.v108 as unknown as { getDefault: typeof originalDefault }).getDefault = () => ({
       nonce: 0,
       consumers: 0,
       providers: 0,
@@ -129,25 +129,25 @@ describe('raw balance event extraction', () => {
       expect(result.observations[0].asset_id).toBe('0')
       expect(result.observations[0].account_id).toBe(ACCOUNT)
     } finally {
-      ;(systemStorage.account.v205 as unknown as { is: typeof originalIs }).is = originalIs
-      ;(systemStorage.account.v205 as unknown as { get: typeof originalGet }).get = originalGet
-      ;(systemStorage.account.v205 as unknown as { getDefault: typeof originalDefault }).getDefault = originalDefault
+      ;(systemStorage.account.v108 as unknown as { is: typeof originalIs }).is = originalIs
+      ;(systemStorage.account.v108 as unknown as { get: typeof originalGet }).get = originalGet
+      ;(systemStorage.account.v108 as unknown as { getDefault: typeof originalDefault }).getDefault = originalDefault
     }
   })
 
   it('still resolves the asset for a Tokens event whose currency id is decodable', async () => {
     const block = { height: 5, hash: '0x04' } as unknown as StorageBlock
-    const originalIs = tokensStorage.accounts.v108.is
-    const originalGet = tokensStorage.accounts.v108.get
-    const originalDefault = tokensStorage.accounts.v108.getDefault
+    const originalIs = tokensStorage.accounts.v16.is
+    const originalGet = tokensStorage.accounts.v16.get
+    const originalDefault = tokensStorage.accounts.v16.getDefault
 
-    ;(tokensStorage.accounts.v108 as unknown as { is: typeof originalIs }).is = () => true
-    ;(tokensStorage.accounts.v108 as unknown as { get: typeof originalGet }).get = async () => ({
+    ;(tokensStorage.accounts.v16 as unknown as { is: typeof originalIs }).is = () => true
+    ;(tokensStorage.accounts.v16 as unknown as { get: typeof originalGet }).get = async () => ({
       free: 7n,
       reserved: 0n,
       frozen: 0n,
     } as never)
-    ;(tokensStorage.accounts.v108 as unknown as { getDefault: typeof originalDefault }).getDefault = () => ({
+    ;(tokensStorage.accounts.v16 as unknown as { getDefault: typeof originalDefault }).getDefault = () => ({
       free: 0n,
       reserved: 0n,
       frozen: 0n,
@@ -178,9 +178,9 @@ describe('raw balance event extraction', () => {
       expect(result.observations[0].asset_id).toBe('5')
       expect(result.observations[0].account_id).toBe(ACCOUNT)
     } finally {
-      ;(tokensStorage.accounts.v108 as unknown as { is: typeof originalIs }).is = originalIs
-      ;(tokensStorage.accounts.v108 as unknown as { get: typeof originalGet }).get = originalGet
-      ;(tokensStorage.accounts.v108 as unknown as { getDefault: typeof originalDefault }).getDefault = originalDefault
+      ;(tokensStorage.accounts.v16 as unknown as { is: typeof originalIs }).is = originalIs
+      ;(tokensStorage.accounts.v16 as unknown as { get: typeof originalGet }).get = originalGet
+      ;(tokensStorage.accounts.v16 as unknown as { getDefault: typeof originalDefault }).getDefault = originalDefault
     }
   })
 })
@@ -188,20 +188,20 @@ describe('raw balance event extraction', () => {
 describe('raw balance call extraction', () => {
   it('compacts Balances.upgrade_accounts evidence instead of duplicating the account list', async () => {
     const block = { height: 42, hash: '0x2a' } as unknown as StorageBlock
-    const originalIs = systemStorage.account.v205.is
-    const originalGet = systemStorage.account.v205.get
-    const originalDefault = systemStorage.account.v205.getDefault
+    const originalIs = systemStorage.account.v108.is
+    const originalGet = systemStorage.account.v108.get
+    const originalDefault = systemStorage.account.v108.getDefault
     process.env.RAW_BALANCE_READ_BATCH_ENABLED = 'false'
 
-    ;(systemStorage.account.v205 as unknown as { is: typeof originalIs }).is = () => true
-    ;(systemStorage.account.v205 as unknown as { get: typeof originalGet }).get = async () => ({
+    ;(systemStorage.account.v108 as unknown as { is: typeof originalIs }).is = () => true
+    ;(systemStorage.account.v108 as unknown as { get: typeof originalGet }).get = async () => ({
       nonce: 0,
       consumers: 0,
       providers: 0,
       sufficients: 0,
       data: { free: 1n, reserved: 0n, frozen: 0n, flags: 0n },
     } as never)
-    ;(systemStorage.account.v205 as unknown as { getDefault: typeof originalDefault }).getDefault = () => ({
+    ;(systemStorage.account.v108 as unknown as { getDefault: typeof originalDefault }).getDefault = () => ({
       nonce: 0,
       consumers: 0,
       providers: 0,
@@ -241,14 +241,14 @@ describe('raw balance call extraction', () => {
       })
       expect(result.observations[0].evidence_json.length).toBeLessThan(200)
     } finally {
-      ;(systemStorage.account.v205 as unknown as { is: typeof originalIs }).is = originalIs
-      ;(systemStorage.account.v205 as unknown as { get: typeof originalGet }).get = originalGet
-      ;(systemStorage.account.v205 as unknown as { getDefault: typeof originalDefault }).getDefault = originalDefault
+      ;(systemStorage.account.v108 as unknown as { is: typeof originalIs }).is = originalIs
+      ;(systemStorage.account.v108 as unknown as { get: typeof originalGet }).get = originalGet
+      ;(systemStorage.account.v108 as unknown as { getDefault: typeof originalDefault }).getDefault = originalDefault
       delete process.env.RAW_BALANCE_READ_BATCH_ENABLED
     }
   })
 
-  it('skips (and emits a parser warning instead of fabricating HDX for) a multi-asset call whose asset id cannot be decoded', async () => {
+  it('skips (and emits a parser warning instead of fabricating BSX for) a multi-asset call whose asset id cannot be decoded', async () => {
     const block = {
       height: 6,
       hash: '0x05',

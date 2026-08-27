@@ -1,4 +1,7 @@
 export * as system from './system/storage'
-export * as assetRegistry from './asset-registry/storage'
+export * as balances from './balances/storage'
 export * as tokens from './tokens/storage'
+export * as assetRegistry from './asset-registry/storage'
 export * as xyk from './xyk/storage'
+export * as lbp from './lbp/storage'
+export * as xykWarehouseLm from './xyk-warehouse-lm/storage'

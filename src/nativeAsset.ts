@@ -9,7 +9,10 @@ export interface NativeAssetInfo {
   decimals: number
 }
 
-const NATIVE_ASSET_ID = 0
+// Asset 0 is the chain's native currency (BSX). It is registered in
+// AssetRegistry like any other asset, but its balances live in
+// Balances/System.Account rather than Tokens.Accounts.
+export const NATIVE_ASSET_ID = 0
 const RPC_TIMEOUT_MS = 10_000
 
 interface JsonRpcSuccess {

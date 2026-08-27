@@ -282,8 +282,8 @@ function decodeSwapEvent(event: EventLike): DecodedSwap | null {
   try {
     // XYK.SellExecuted
     if (name === 'XYK.SellExecuted') {
-      if (xyk.sellExecuted.v183.is(event)) {
-        const decoded = xyk.sellExecuted.v183.decode(event);
+      if (xyk.sellExecuted.v55.is(event)) {
+        const decoded = xyk.sellExecuted.v55.decode(event);
         return {
           trader: normalizeAccount(decoded.who),
           assetIn: decoded.assetIn,
@@ -296,8 +296,8 @@ function decodeSwapEvent(event: EventLike): DecodedSwap | null {
 
     // XYK.BuyExecuted
     if (name === 'XYK.BuyExecuted') {
-      if (xyk.buyExecuted.v183.is(event)) {
-        const decoded = xyk.buyExecuted.v183.decode(event);
+      if (xyk.buyExecuted.v55.is(event)) {
+        const decoded = xyk.buyExecuted.v55.decode(event);
         return {
           trader: normalizeAccount(decoded.who),
           assetIn: decoded.assetIn,
@@ -308,7 +308,10 @@ function decodeSwapEvent(event: EventLike): DecodedSwap | null {
       }
     }
 
-    // Unknown event or version mismatch
+    // Basilisk's pre-spec-55 XYK events are positional tuples (v16 and v19) and
+    // its genesis-era AMM was the `Exchange` pallet entirely. Neither is decoded
+    // yet — the legacy-decode phase adds them. Skipping is safe: the block still
+    // yields prices from pool reserves, it just carries no volume.
     console.warn(`[extractVolume] Unable to decode swap event: ${name} (no matching version)`);
     return null;
   } catch (error) {
@@ -330,30 +333,14 @@ function decodeTradeEvent(event: EventLike): DecodedTrade | null {
   const { name } = event;
 
   try {
-    if (name === 'Broadcast.Swapped' && broadcast.swapped.v282.is(event)) {
-      const decoded = broadcast.swapped.v282.decode(event);
-      return decorateLegacyBroadcastTrade({
-        eventName: name,
-        trader: normalizeAccount(decoded.swapper),
-        fillerType: decoded.fillerType.__kind,
-        operation: decoded.operation.__kind,
-        inputs: decoded.inputs.map(({ asset, amount }) => ({ assetId: asset, amount })),
-        outputs: decoded.outputs.map(({ asset, amount }) => ({ assetId: asset, amount })),
-      });
+    // Basilisk's Broadcast pallet emits `Swapped` from spec 124 (block 8,374,452)
+    // and `Swapped3` from spec 128 (block 12,663,601). It never had a `Swapped2`.
+    if (name === 'Broadcast.Swapped' && broadcast.swapped.v124.is(event)) {
+      return correctedBroadcastTrade(broadcast.swapped.v124.decode(event));
     }
 
-    if (name === 'Broadcast.Swapped2' && broadcast.swapped2.v305.is(event)) {
-      return broadcastTrade(broadcast.swapped2.v305.decode(event));
-    }
-
-    if (name === 'Broadcast.Swapped3') {
-      if (broadcast.swapped3.v323.is(event)) {
-        return broadcastTrade(broadcast.swapped3.v323.decode(event));
-      }
-
-      if (broadcast.swapped3.v313.is(event)) {
-        return broadcastTrade(broadcast.swapped3.v313.decode(event));
-      }
+    if (name === 'Broadcast.Swapped3' && broadcast.swapped3.v128.is(event)) {
+      return correctedBroadcastTrade(broadcast.swapped3.v128.decode(event));
     }
 
     console.warn(`[extractVolume] Unable to decode swap event: ${name} (no matching version)`);
@@ -364,37 +351,51 @@ function decodeTradeEvent(event: EventLike): DecodedTrade | null {
   }
 }
 
-function decorateLegacyBroadcastTrade({
-  eventName,
-  trader,
-  fillerType,
-  operation,
-  inputs,
-  outputs,
-}: {
-  eventName: string;
-  trader?: string | null;
-  fillerType: string;
-  operation: string;
-  inputs: DecodedTradeAssetAmount[];
-  outputs: DecodedTradeAssetAmount[];
+/**
+ * Decode a Broadcast swap event, undoing the exact-out XYK/LBP amount inversion.
+ *
+ * A Basilisk exact-out XYK fill reports the two amounts against the wrong legs:
+ * the input leg carries the amount received and the output leg the amount paid.
+ * Verified against the XYK.BuyExecuted emitted beside it at block 12,668,315
+ * (spec 128), where Broadcast.Swapped3 reads
+ *   inputs [{asset 0 (BSX), 18_298_693_290_747}]
+ *   outputs [{asset 1 (KSM), 7_235_359_533_940_195_064}]
+ * while XYK.BuyExecuted reads assetIn 0, assetOut 1, buyPrice (paid)
+ * 7_235_359_533_940_195_064, amount (received) 18_298_693_290_747 — 7.24M BSX
+ * paid for 18.3 KSM, which is also what the pool reserves and the 0.3% BSX fee
+ * of 21_706 BSX say.
+ *
+ * Unlike Hydration, Basilisk never shipped the `Swapped2` runtime that carried
+ * the upstream fix: it renamed `Swapped` straight to `Swapped3` at spec 128 and
+ * kept the inversion, despite the doc comment the rename inherited. The event
+ * definition is unchanged from spec 128 through 134 (typegen emits one codec for
+ * the whole span), so the correction applies to both names. Exact-in fills are
+ * reported correctly and are left alone.
+ */
+function correctedBroadcastTrade(decoded: {
+  swapper: unknown;
+  fillerType: { __kind: string };
+  operation: { __kind: string };
+  inputs: Array<{ asset: number; amount: bigint }>;
+  outputs: Array<{ asset: number; amount: bigint }>;
 }): DecodedTrade {
-  // Broadcast.Swapped had inverted exact-out XYK/LBP amounts. Swapped2+ fixed it.
+  const trade = broadcastTrade(decoded);
+  const { inputs, outputs } = trade;
+
   if (
-    eventName === 'Broadcast.Swapped' &&
-    operation === 'ExactOut' &&
-    (fillerType === 'XYK' || fillerType === 'LBP') &&
+    decoded.operation.__kind === 'ExactOut' &&
+    (decoded.fillerType.__kind === 'XYK' || decoded.fillerType.__kind === 'LBP') &&
     inputs.length === 1 &&
     outputs.length === 1
   ) {
     return {
-      trader,
+      trader: trade.trader,
       inputs: [{ assetId: inputs[0].assetId, amount: outputs[0].amount }],
       outputs: [{ assetId: outputs[0].assetId, amount: inputs[0].amount }],
     };
   }
 
-  return { trader, inputs, outputs };
+  return trade;
 }
 
 /**

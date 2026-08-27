@@ -26,7 +26,7 @@ function parseArgs(): { fromBlock?: number; toBlock?: number; pipelineId?: strin
 
 function printHelp(): void {
   console.log(`
-Hydration Raw Data Lake Indexer
+Basilisk Raw Data Lake Indexer
 
 Usage:
   npx tsx src/raw/cli.ts [options]
@@ -38,7 +38,7 @@ Options:
   --help, -h            Print this help message
 
 Environment Variables:
-  RPC_URL                       HTTP(S) or WebSocket RPC endpoint
+  RPC_URL                       HTTP(S) or WebSocket RPC endpoint (default: https://rpc.basilisk.cloud)
   RPC_RATE_LIMIT                RPC request rate limit (Docker Compose default: 50)
   RPC_CAPACITY                  Max concurrent RPC requests (default: 20; Docker Compose uses 10)
   CLICKHOUSE_HOST               ClickHouse HTTP endpoint
@@ -80,7 +80,7 @@ async function main(): Promise<void> {
   }
 
   setupGracefulShutdown()
-  console.log('[Raw] Starting Hydration raw data lake indexer...')
+  console.log('[Raw] Starting Basilisk raw data lake indexer...')
 
   await runRaw({
     fromBlock: args.fromBlock,

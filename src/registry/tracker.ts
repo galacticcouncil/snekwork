@@ -160,7 +160,7 @@ export function extractAssetOrigin(location: unknown): AssetOrigin | null {
 /**
  * Extract parachainId from an AssetLocation.
  * Matches: { parents: 1, interior: X1(Parachain(id)) } or X2(Parachain(id), ...)
- * Native Hydration assets have no location -> returns null.
+ * Native Basilisk assets have no location -> returns null.
  */
 export function extractParachainId(location: unknown): number | null {
   const locationRecord = objectRecord(location)
@@ -197,21 +197,50 @@ export function extractParachainId(location: unknown): number | null {
     : null
 }
 
-async function readAssetLocations(block: Block, assetIds: number[]): Promise<Array<[number, unknown]>> {
-  let locations: unknown[]
-  if (storage.assetRegistry.assetLocations.v394.is(block)) {
-    locations = await storage.assetRegistry.assetLocations.v394.getMany(block, assetIds)
-  } else if (storage.assetRegistry.assetLocations.v244.is(block)) {
-    locations = await storage.assetRegistry.assetLocations.v244.getMany(block, assetIds)
-  } else if (storage.assetRegistry.assetLocations.v160.is(block)) {
-    locations = await storage.assetRegistry.assetLocations.v160.getMany(block, assetIds)
-  } else if (storage.assetRegistry.assetLocations.v108.is(block)) {
-    locations = await storage.assetRegistry.assetLocations.v108.getMany(block, assetIds)
-  } else {
-    return []
-  }
+// AssetRegistry.AssetLocations, newest shape first. The XCM version the location
+// is stored in moved with the runtime: V0 junctions with no `parents` at genesis
+// (v16), V1 from spec 19, V3 from spec 101, V5 from spec 128. extractParachainId
+// requires `parents === 1`, so the genesis-era v16 shape yields no origin —
+// resolving those is part of the legacy-decode phase.
+interface AssetLocationsCodec {
+  getMany(block: Block, keys: number[]): Promise<unknown[]>
+}
 
+function assetLocationsCodec(block: Block): AssetLocationsCodec | null {
+  const codecs = storage.assetRegistry.assetLocations
+  if (codecs.v128.is(block)) return codecs.v128
+  if (codecs.v115.is(block)) return codecs.v115
+  if (codecs.v101.is(block)) return codecs.v101
+  if (codecs.v25.is(block)) return codecs.v25
+  if (codecs.v19.is(block)) return codecs.v19
+  if (codecs.v16.is(block)) return codecs.v16
+  return null
+}
+
+async function readAssetLocations(block: Block, assetIds: number[]): Promise<Array<[number, unknown]>> {
+  const codec = assetLocationsCodec(block)
+  if (codec == null) return []
+
+  const locations = await codec.getMany(block, assetIds)
   return assetIds.map((assetId, index) => [assetId, locations[index]])
+}
+
+// AssetRegistry.Assets, newest shape first. Every Basilisk era stores only
+// name/assetType here — unlike Hydration, symbol and decimals were never folded
+// into AssetDetails, so they always come from AssetMetadataMap below.
+interface AssetDetailsCodec {
+  getPairs(block: Block): Promise<[k: number, v: ({ name: Uint8Array | string; assetType: { __kind: string; value?: unknown } } | undefined)][]>
+}
+
+function assetDetailsCodec(block: Block): AssetDetailsCodec | null {
+  const codecs = storage.assetRegistry.assets
+  if (codecs.v124.is(block)) return codecs.v124
+  if (codecs.v115.is(block)) return codecs.v115
+  if (codecs.v108.is(block)) return codecs.v108
+  if (codecs.v101.is(block)) return codecs.v101
+  if (codecs.v25.is(block)) return codecs.v25
+  if (codecs.v16.is(block)) return codecs.v16
+  return null
 }
 
 export function isPlaceholderAssetMetadata(metadata: Pick<AssetMetadata, 'assetId' | 'symbol' | 'name' | 'assetType'>): boolean {
@@ -276,50 +305,16 @@ export class AssetRegistryTracker {
       }
       discoveredAssets.set(metadata.assetId, metadata)
     }
-    const addModernAssets = (pairs: Array<[number, {
-      symbol?: Uint8Array | string
-      name?: Uint8Array | string
-      decimals?: number | null
-      assetType: { __kind: string; value?: unknown }
-    } | undefined]>): void => {
-      for (const [assetId, details] of pairs) {
-        if (!details) continue
-        if (details.decimals == null && !this.includeUnresolvedAssets) {
-          unresolvedAssetsSkipped++
-          continue
-        }
-        addDiscoveredAsset({
-          assetId,
-          symbol: decodeBytes(details.symbol).trim() || `Asset${assetId}`,
-          name: decodeBytes(details.name).trim() || `Asset ${assetId}`,
-          decimals: details.decimals ?? DEFAULT_ASSET_DECIMALS,
-          assetType: formatAssetType(details.assetType),
-        })
-      }
-    }
 
-    // Strategy: Try newer versions first (v264 has everything in one place)
-    // Fall back to older versions that split AssetDetails and AssetMetadata
-
-    if (storage.assetRegistry.assets.v264.is(block)) {
-      addModernAssets(await storage.assetRegistry.assets.v264.getPairs(block))
-    } else if (storage.assetRegistry.assets.v222.is(block)) {
-      addModernAssets(await storage.assetRegistry.assets.v222.getPairs(block))
-    } else if (
-      storage.assetRegistry.assets.v176.is(block) ||
-      storage.assetRegistry.assets.v160.is(block) ||
-      storage.assetRegistry.assets.v108.is(block)
-    ) {
-      // v108-v176: AssetDetails has name/assetType, but symbol/decimals in separate AssetMetadataMap
-      let assetDetailsPairs: [number, any][]
-
-      if (storage.assetRegistry.assets.v176.is(block)) {
-        assetDetailsPairs = await storage.assetRegistry.assets.v176.getPairs(block)
-      } else if (storage.assetRegistry.assets.v160.is(block)) {
-        assetDetailsPairs = await storage.assetRegistry.assets.v160.getPairs(block)
-      } else {
-        assetDetailsPairs = await storage.assetRegistry.assets.v108.getPairs(block)
-      }
+    // Basilisk always splits asset metadata across two maps: AssetRegistry.Assets
+    // holds name + assetType, AssetRegistry.AssetMetadataMap holds symbol +
+    // decimals. That has been true from genesis through spec 134 — there is no
+    // merged-AssetDetails era to fall back from, so this is the only path.
+    const assetDetails = assetDetailsCodec(block)
+    if (assetDetails == null) {
+      console.warn(`[AssetRegistry] No matching AssetRegistry.Assets storage version at block ${blockHeight}`)
+    } else {
+      const assetDetailsPairs = await assetDetails.getPairs(block)
 
       // Build map of assetId -> name/assetType
       const detailsMap = new Map<number, { name: string, assetType: string }>()
@@ -331,9 +326,9 @@ export class AssetRegistryTracker {
         })
       }
 
-      // Get symbol/decimals from AssetMetadataMap
-      if (storage.assetRegistry.assetMetadataMap.v108.is(block)) {
-        const metadataPairs = await storage.assetRegistry.assetMetadataMap.v108.getPairs(block)
+      // Get symbol/decimals from AssetMetadataMap (one shape across all specs)
+      if (storage.assetRegistry.assetMetadataMap.v16.is(block)) {
+        const metadataPairs = await storage.assetRegistry.assetMetadataMap.v16.getPairs(block)
         const metadataAssetIds = new Set<number>()
 
         for (const [assetId, metadata] of metadataPairs) {
@@ -376,9 +371,9 @@ export class AssetRegistryTracker {
             }
           }
         }
+      } else {
+        console.warn(`[AssetRegistry] No matching AssetRegistry.AssetMetadataMap storage version at block ${blockHeight}`)
       }
-    } else {
-      console.warn(`[AssetRegistry] No matching storage version at block ${blockHeight}`)
     }
 
     // Read every location once, then derive origin chains and parachain ids.

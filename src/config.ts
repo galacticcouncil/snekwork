@@ -1,15 +1,10 @@
 import {
   integerFromEnvironment,
   minutesFromEnvironment,
-  optionalStringFromEnvironment,
   stringFromEnvironment,
 } from './util/env.js'
 
 export interface Config {
-  // Subsquid Network gateway for Hydration mainnet
-  SQD_GATEWAY: string
-  SQD_GATEWAY_API_KEY?: string
-
   // RPC endpoint for live data and finalization checks
   RPC_URL: string
   RPC_RATE_LIMIT: number
@@ -34,13 +29,10 @@ export interface Config {
 }
 
 export const config: Config = {
-  // SQD Network gateway for Hydration mainnet (50-100x faster than RPC)
-  // SQD archives use the original chain name 'hydradx'
-  SQD_GATEWAY: stringFromEnvironment('SQD_GATEWAY', 'https://v2.archive.subsquid.io/network/hydradx'),
-  SQD_GATEWAY_API_KEY: optionalStringFromEnvironment('SQD_GATEWAY_API_KEY'),
-
-  // RPC endpoint (falls back to the project's own unthrottled Hydration archive)
-  RPC_URL: stringFromEnvironment('RPC_URL', 'https://hydration-rpc.neckwork.net'),
+  // Ingestion is RPC-only and always will be: SQD publishes no Basilisk archive,
+  // so there is no gateway URL or API key to configure. The default is the public
+  // Basilisk archive node, which serves state from genesis.
+  RPC_URL: stringFromEnvironment('RPC_URL', 'https://rpc.basilisk.cloud'),
   RPC_RATE_LIMIT: integerFromEnvironment('RPC_RATE_LIMIT', 100), // requests per second
   RPC_CAPACITY: integerFromEnvironment('RPC_CAPACITY', 20), // max concurrent RPC requests
   // How often the SQD live follower polls the chain for a new head (the RPC

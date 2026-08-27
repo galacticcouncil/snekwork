@@ -13,8 +13,11 @@
  */
 
 import * as xyk from '../types/xyk/events'
+import { BASILISK_ERAS } from '../chainEras.ts'
 
-const UNIFIED_SWAP_EVENTS_SPEC_VERSION = 282
+// Basilisk routes every swap through the Broadcast pallet from spec 124
+// (block 8,374,452). Before that each AMM emitted its own *Executed event.
+const UNIFIED_SWAP_EVENTS_SPEC_VERSION = BASILISK_ERAS.BROADCAST_SWAPPED.specVersion
 
 /**
  * Schema version with first-appearance block height
@@ -54,25 +57,31 @@ enum EventCategory {
 /**
  * XYK swap events
  *
- * First appeared in v183 (block 3632973) when the XYK pallet was upgraded.
- * No schema changes detected by typegen after initial version.
+ * Present since genesis. Two schema changes: the genesis v16 tuple gains a
+ * trailing pool account in v19, and v55 turns the whole tuple into a named
+ * struct. Only the v55+ struct is decoded today (see extractVolume); the two
+ * tuple eras are decoded in the legacy-decode phase.
  */
 const XYK_SWAP_EVENTS: SwapEventEntry[] = [
   {
     name: 'XYK.SellExecuted',
     pallet: 'XYK',
-    firstBlock: 3632973,
+    firstBlock: BASILISK_ERAS.GENESIS.firstBlock,
     versions: [
-      { specVersion: 183, firstBlock: 3632973 },
+      { specVersion: BASILISK_ERAS.GENESIS.specVersion, firstBlock: BASILISK_ERAS.GENESIS.firstBlock },
+      { specVersion: BASILISK_ERAS.XYK_LIFECYCLE_POOL_ACCOUNT.specVersion, firstBlock: BASILISK_ERAS.XYK_LIFECYCLE_POOL_ACCOUNT.firstBlock },
+      { specVersion: BASILISK_ERAS.NAMED_EVENT_FIELDS.specVersion, firstBlock: BASILISK_ERAS.NAMED_EVENT_FIELDS.firstBlock },
     ],
     codec: xyk.sellExecuted,
   },
   {
     name: 'XYK.BuyExecuted',
     pallet: 'XYK',
-    firstBlock: 3632973,
+    firstBlock: BASILISK_ERAS.GENESIS.firstBlock,
     versions: [
-      { specVersion: 183, firstBlock: 3632973 },
+      { specVersion: BASILISK_ERAS.GENESIS.specVersion, firstBlock: BASILISK_ERAS.GENESIS.firstBlock },
+      { specVersion: BASILISK_ERAS.XYK_LIFECYCLE_POOL_ACCOUNT.specVersion, firstBlock: BASILISK_ERAS.XYK_LIFECYCLE_POOL_ACCOUNT.firstBlock },
+      { specVersion: BASILISK_ERAS.NAMED_EVENT_FIELDS.specVersion, firstBlock: BASILISK_ERAS.NAMED_EVENT_FIELDS.firstBlock },
     ],
     codec: xyk.buyExecuted,
   },
@@ -81,13 +90,14 @@ const XYK_SWAP_EVENTS: SwapEventEntry[] = [
 /**
  * Unified swap events emitted by the Broadcast pallet.
  *
- * These events supersede the legacy per-pallet *Executed events from spec v282
- * onward. We keep their metadata separate because the curated first-block
- * catalog above only tracks legacy pool-specific events today.
+ * These supersede the legacy per-pallet *Executed events from spec 124 onward.
+ * Basilisk only ever emitted two of the three names Hydration has: `Swapped`
+ * (spec 124-127) and `Swapped3` (spec 128+). There is no `Swapped2` in any
+ * Basilisk runtime, so it is deliberately absent here and from the typegen
+ * selection — an event by that name can only be a mis-paired chain.
  */
 const UNIFIED_SWAP_EVENT_NAMES = [
   'Broadcast.Swapped',
-  'Broadcast.Swapped2',
   'Broadcast.Swapped3',
 ] as const
 
@@ -114,7 +124,6 @@ const EVENT_CLASSIFICATION: Record<string, EventCategory> = {
 
   // Unified swap events
   'Broadcast.Swapped': EventCategory.SWAP,
-  'Broadcast.Swapped2': EventCategory.SWAP,
   'Broadcast.Swapped3': EventCategory.SWAP,
 }
 
@@ -123,16 +132,16 @@ const EVENT_CLASSIFICATION: Record<string, EventCategory> = {
  *
  * @param eventName - Full qualified event name (e.g., 'XYK.SellExecuted')
  * Runtime-aware behavior:
- * - pre-v282: legacy XYK *Executed events are swaps
- * - v282+: Broadcast.Swapped* events are swaps
+ * - pre-spec-124: legacy XYK *Executed events are swaps
+ * - spec 124+: Broadcast.Swapped* events are swaps
  *
  * @param specVersion - Runtime spec version for the block being processed
  * @returns True if the event is classified as a swap event for that runtime
  *
  * @example
- * isSwapEvent('XYK.SellExecuted', 201) // true
- * isSwapEvent('XYK.SellExecuted', 282) // false
- * isSwapEvent('Broadcast.Swapped3', 323) // true
+ * isSwapEvent('XYK.SellExecuted', 115) // true
+ * isSwapEvent('XYK.SellExecuted', 124) // false
+ * isSwapEvent('Broadcast.Swapped3', 134) // true
  */
 export function isSwapEvent(eventName: string, specVersion?: number): boolean {
   if (specVersion != null && specVersion >= UNIFIED_SWAP_EVENTS_SPEC_VERSION) {

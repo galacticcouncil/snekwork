@@ -14,6 +14,16 @@ function eventArgs(value: unknown, eventName: string): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
+// Basilisk's XYK lifecycle events were positional tuples until spec 55 (block
+// 1,322,823) — v16 carries [who, assetA, assetB, shares] with no pool account at
+// all, v19 appends [shareToken, pool]. The surgical cache update below reads the
+// named fields of the modern (v55+) struct, so anything that is not that shape
+// falls back to a full re-read of XYK.PoolAssets, which is era-agnostic. Decoding
+// the tuple forms in place is left to the legacy-decode phase.
+function isModernLifecycleArgs(args: Record<string, unknown>): boolean {
+  return !Array.isArray(args) && typeof args.pool === 'string'
+}
+
 function numberArg(args: Record<string, unknown>, name: string, eventName: string): number {
   const value = args[name]
   if (!Number.isSafeInteger(value) || (value as number) < 0) {
@@ -28,6 +38,24 @@ function stringArg(args: Record<string, unknown>, name: string, eventName: strin
     throw new Error(`${eventName}.${name} is not a non-empty string`)
   }
   return value
+}
+
+interface XYKPoolAssetsCodec {
+  getPairs(block: Block): Promise<[k: string, v: ([number, number] | undefined)][]>
+}
+
+/**
+ * Basilisk has two XYK.PoolAssets shapes: the genesis-era v16 codec (a `Default`
+ * map to an [AssetId, AssetId] tuple) and the v25 codec from spec 25 (block
+ * 395,664) onward (an `Optional` map to [u32, u32]). Both decode a pool account
+ * to the same pair of numbers, so only codec selection differs. Returns null
+ * when neither matches — the caller decides whether that is "not launched yet"
+ * or a regression.
+ */
+function xykPoolAssetsCodec(block: Block): XYKPoolAssetsCodec | null {
+  if (storage.xyk.poolAssets.v25.is(block)) return storage.xyk.poolAssets.v25
+  if (storage.xyk.poolAssets.v16.is(block)) return storage.xyk.poolAssets.v16
+  return null
 }
 
 export class PoolCompositionCache {
@@ -53,6 +81,12 @@ export class PoolCompositionCache {
       switch (event.name) {
         case 'XYK.PoolCreated': {
           const args = eventArgs(event.args, event.name)
+          if (!isModernLifecycleArgs(args)) {
+            this.xykBootstrapped = false
+            this.xykPools = null
+            xykChanged = true
+            break
+          }
           // Surgical add: push new pool entry
           if (this.xykPools !== null) {
             const entry = {
@@ -73,6 +107,12 @@ export class PoolCompositionCache {
         }
         case 'XYK.PoolDestroyed': {
           const args = eventArgs(event.args, event.name)
+          if (!isModernLifecycleArgs(args)) {
+            this.xykBootstrapped = false
+            this.xykPools = null
+            xykChanged = true
+            break
+          }
           const poolAccount = stringArg(args, 'pool', event.name)
           // Surgical remove: filter out pool by account
           if (this.xykPools !== null) {
@@ -101,17 +141,23 @@ export class PoolCompositionCache {
 
   /**
    * Get XYK pool entries. Bootstraps from storage on first call.
+   *
+   * Basilisk has two XYK.PoolAssets shapes: the genesis-era v16 codec (a
+   * `Default` map to a [AssetId, AssetId] tuple) and the v25 codec from spec 25
+   * (block 395,664) onward (an `Optional` map to [u32, u32]). Both decode to the
+   * same pair of numbers, so only the codec selection differs.
    */
   async getXYKPools(block: Block): Promise<XYKPoolEntry[] | null> {
-    if (!storage.xyk.poolAssets.v183.is(block)) {
+    const poolAssets = xykPoolAssetsCodec(block)
+    if (poolAssets == null) {
       if (this.xykSupported) throw new Error(`Unsupported XYK.PoolAssets storage at block ${block.height}`)
       return null
     }
     this.xykSupported = true
     if (!this.xykBootstrapped) {
-      const pairs = await storage.xyk.poolAssets.v183.getPairs(block)
+      const pairs = await poolAssets.getPairs(block)
       this.xykPools = pairs
-        .filter(([_, assetPair]) => assetPair !== undefined)
+        .filter(([, assetPair]) => assetPair !== undefined)
         .map(([poolAccount, assetPair]) => ({
           poolAccount: poolAccount as string,
           assetA: assetPair![0],

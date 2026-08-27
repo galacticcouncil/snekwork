@@ -1,7 +1,7 @@
 import { xxhashAsHex } from '@polkadot/util-crypto'
 import type { AssetMetadata } from '../registry/types.ts'
 import type { Block } from '../types/support.ts'
-import * as storage from '../types/storage.ts'
+import { readXykPoolReserves } from '../pool/reserves.js'
 import { toClickHouseDateTime } from './json.js'
 import type {
   SnapshotPayload,
@@ -70,28 +70,14 @@ export async function readXYKState(
   block: Block,
   pools: Array<{ poolAccount: string; assetA: number; assetB: number }>
 ): Promise<SnapshotXykPoolState[]> {
-  if (!storage.tokens.accounts.v108.is(block)) {
-    throw new Error(`Unsupported Tokens.Accounts storage for XYK pools at block ${block.height}`)
-  }
-
-  const keys: [string, number][] = []
-  for (const pool of pools) {
-    keys.push([pool.poolAccount, pool.assetA])
-    keys.push([pool.poolAccount, pool.assetB])
-  }
-
-  const balances = await getManyChunked(keys, page => storage.tokens.accounts.v108.getMany(block, page))
-  return pools.map((pool, index) => {
-    const balanceA = balances[index * 2]
-    const balanceB = balances[index * 2 + 1]
-    return {
-      pool_account: pool.poolAccount,
-      asset_a: pool.assetA,
-      asset_b: pool.assetB,
-      reserve_a: (balanceA?.free ?? 0n).toString(),
-      reserve_b: (balanceB?.free ?? 0n).toString(),
-    }
-  })
+  const reserves = await readXykPoolReserves(block, pools, getManyChunked)
+  return pools.map((pool, index) => ({
+    pool_account: pool.poolAccount,
+    asset_a: pool.assetA,
+    asset_b: pool.assetB,
+    reserve_a: (reserves[index].reserveA ?? 0n).toString(),
+    reserve_b: (reserves[index].reserveB ?? 0n).toString(),
+  }))
 }
 
 export function buildSnapshotState(input: {

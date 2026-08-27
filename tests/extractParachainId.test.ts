@@ -7,7 +7,7 @@ describe('extractParachainId', () => {
     expect(extractParachainId(undefined)).toBeNull()
   })
 
-  it('returns null for native Hydration assets (parents: 0)', () => {
+  it('returns null for native Basilisk assets (parents: 0)', () => {
     expect(extractParachainId({ parents: 0, interior: { __kind: 'Here' } })).toBeNull()
   })
 

@@ -210,7 +210,7 @@ function bigintOrZero(value: unknown): bigint {
   return stringValue == null ? 0n : BigInt(stringValue)
 }
 
-function nativeV205Balance(value: { data: { free: unknown; reserved: unknown; frozen: unknown; flags: unknown }; nonce: number }): BalanceReadResult {
+function nativeBalanceWithFlags(value: { data: { free: unknown; reserved: unknown; frozen: unknown; flags: unknown }; nonce: number }): BalanceReadResult {
   const free = bigintOrZero(value.data.free)
   const reserved = bigintOrZero(value.data.reserved)
   return {
@@ -223,16 +223,21 @@ function nativeV205Balance(value: { data: { free: unknown; reserved: unknown; fr
   }
 }
 
-function nativeV100Balance(value: { data: { free: unknown; reserved: unknown; miscFrozen: unknown; feeFrozen: unknown }; nonce: number }): BalanceReadResult {
+// Pre-`frozen` AccountData carried two independent locks (misc/fee); the single
+// `frozen` figure that replaced them is their max, so that is what we report.
+function splitFrozen(data: { miscFrozen: unknown; feeFrozen: unknown }): bigint {
+  const misc = bigintOrZero(data.miscFrozen)
+  const fee = bigintOrZero(data.feeFrozen)
+  return misc > fee ? misc : fee
+}
+
+function nativeBalanceWithSplitFrozen(value: { data: { free: unknown; reserved: unknown; miscFrozen: unknown; feeFrozen: unknown }; nonce: number }): BalanceReadResult {
   const free = bigintOrZero(value.data.free)
   const reserved = bigintOrZero(value.data.reserved)
-  const frozen = bigintOrZero(value.data.miscFrozen) > bigintOrZero(value.data.feeFrozen)
-    ? bigintOrZero(value.data.miscFrozen)
-    : bigintOrZero(value.data.feeFrozen)
   return {
     free: free.toString(),
     reserved: reserved.toString(),
-    frozen: frozen.toString(),
+    frozen: splitFrozen(value.data).toString(),
     total: (free + reserved).toString(),
     nonce: value.nonce,
     flags: null,
@@ -471,31 +476,98 @@ function parserWarning(
   }
 }
 
-async function readNativeBalance(block: StorageBlock, accountId: string): Promise<BalanceReadResult> {
-  if (systemStorage.account.v205.is(block)) {
-    const value = await systemStorage.account.v205.get(block, accountId) ?? systemStorage.account.v205.getDefault(block)
-    return nativeV205Balance(value)
-  }
+// ---------------------------------------------------------------------------
+// Basilisk balance-storage eras
+//
+//   System.Account   v16   AccountData{free, reserved, miscFrozen, feeFrozen}
+//                          genesis .. spec 105
+//                    v108  AccountData{free, reserved, frozen, flags}
+//                          spec 108 (block 5,030,935) onward
+//   Tokens.Accounts  v16   {free, reserved, frozen}
+//                          genesis .. spec 134 (orml-tokens never changed it)
+//
+// The selectors below probe the block's own metadata, so those heights are
+// documentation, not control flow: a runtime that re-orders or back-ports a
+// shape still routes to the codec that actually matches.
+// ---------------------------------------------------------------------------
 
-  if (systemStorage.account.v100.is(block)) {
-    const value = await systemStorage.account.v100.get(block, accountId) ?? systemStorage.account.v100.getDefault(block)
-    return nativeV100Balance(value)
-  }
-
-  throw new Error('No supported System.Account storage type at block')
+interface BalanceStorageAccessor<K> {
+  decode: (value: any) => BalanceReadResult
+  fallback: unknown
+  get: (block: StorageBlock, key: K) => Promise<unknown>
+  getMany: (block: StorageBlock, keys: K[]) => Promise<unknown[]>
+  keysPaged: (pageSize: number, block: StorageBlock) => AsyncIterable<K[]>
+  pairsPaged: (pageSize: number, block: StorageBlock) => AsyncIterable<[K, unknown][]>
 }
 
-async function readTokenBalance(block: StorageBlock, accountId: string, assetId: string): Promise<BalanceReadResult> {
+type NativeStorageAccessor = BalanceStorageAccessor<string>
+type TokenStorageAccessor = BalanceStorageAccessor<[string, number]>
+
+function nativeAccountStorage(block: StorageBlock): NativeStorageAccessor | null {
+  if (systemStorage.account.v108.is(block)) {
+    const item = systemStorage.account.v108
+    return {
+      decode: nativeBalanceWithFlags,
+      fallback: item.getDefault(block),
+      get: (b, key) => item.get(b, key),
+      getMany: (b, keys) => item.getMany(b, keys),
+      keysPaged: (size, b) => item.getKeysPaged(size, b),
+      pairsPaged: (size, b) => item.getPairsPaged(size, b),
+    }
+  }
+
+  if (systemStorage.account.v16.is(block)) {
+    const item = systemStorage.account.v16
+    return {
+      decode: nativeBalanceWithSplitFrozen,
+      fallback: item.getDefault(block),
+      get: (b, key) => item.get(b, key),
+      getMany: (b, keys) => item.getMany(b, keys),
+      keysPaged: (size, b) => item.getKeysPaged(size, b),
+      pairsPaged: (size, b) => item.getPairsPaged(size, b),
+    }
+  }
+
+  return null
+}
+
+function tokenAccountStorage(block: StorageBlock): TokenStorageAccessor | null {
+  if (tokensStorage.accounts.v16.is(block)) {
+    const item = tokensStorage.accounts.v16
+    return {
+      decode: tokenBalance,
+      fallback: item.getDefault(block),
+      get: (b, [account, assetId]) => item.get(b, account, assetId),
+      getMany: (b, keys) => item.getMany(b, keys),
+      keysPaged: (size, b) => item.getKeysPaged(size, b),
+      pairsPaged: (size, b) => item.getPairsPaged(size, b),
+    }
+  }
+
+  return null
+}
+
+function tokenStorageKey(accountId: string, assetId: string): [string, number] {
   const numericAssetId = Number.parseInt(assetId, 10)
   if (!Number.isSafeInteger(numericAssetId)) {
     throw new Error(`Asset id ${assetId} is not a safe integer for Tokens.Accounts`)
   }
-  if (!tokensStorage.accounts.v108.is(block)) {
-    throw new Error('No supported Tokens.Accounts storage type at block')
-  }
+  return [accountId, numericAssetId]
+}
 
-  const value = await tokensStorage.accounts.v108.get(block, accountId, numericAssetId) ?? tokensStorage.accounts.v108.getDefault(block)
-  return tokenBalance(value)
+async function readNativeBalance(block: StorageBlock, accountId: string): Promise<BalanceReadResult> {
+  const native = nativeAccountStorage(block)
+  if (native == null) throw new Error('No supported System.Account storage type at block')
+
+  return native.decode(await native.get(block, accountId) ?? native.fallback)
+}
+
+async function readTokenBalance(block: StorageBlock, accountId: string, assetId: string): Promise<BalanceReadResult> {
+  const key = tokenStorageKey(accountId, assetId)
+  const tokens = tokenAccountStorage(block)
+  if (tokens == null) throw new Error('No supported Tokens.Accounts storage type at block')
+
+  return tokens.decode(await tokens.get(block, key) ?? tokens.fallback)
 }
 
 async function readBalance(block: StorageBlock, candidate: BalanceCandidate): Promise<BalanceReadResult> {
@@ -536,67 +608,48 @@ async function readNativeBalances(block: StorageBlock, candidates: IndexedBalanc
   const accounts = [...idsByAccount.keys()]
   const pageSize = balanceReadBatchSize()
 
-  if (systemStorage.account.v205.is(block)) {
-    const fallback = systemStorage.account.v205.getDefault(block)
-    await forEachConcurrent(chunk(accounts, pageSize), balanceReadBatchConcurrency(), async (page) => {
-      const values = await systemStorage.account.v205.getMany(block, page)
-      for (let index = 0; index < page.length; index++) {
-        const balance = nativeV205Balance(values[index] ?? fallback)
-        for (const id of idsByAccount.get(page[index]) ?? []) balances.set(id, balance)
-      }
-    })
-    return balances
-  }
+  const native = nativeAccountStorage(block)
+  if (native == null) throw new Error('No supported System.Account storage type at block')
 
-  if (systemStorage.account.v100.is(block)) {
-    const fallback = systemStorage.account.v100.getDefault(block)
-    await forEachConcurrent(chunk(accounts, pageSize), balanceReadBatchConcurrency(), async (page) => {
-      const values = await systemStorage.account.v100.getMany(block, page)
-      for (let index = 0; index < page.length; index++) {
-        const balance = nativeV100Balance(values[index] ?? fallback)
-        for (const id of idsByAccount.get(page[index]) ?? []) balances.set(id, balance)
-      }
-    })
-    return balances
-  }
-
-  throw new Error('No supported System.Account storage type at block')
+  await forEachConcurrent(chunk(accounts, pageSize), balanceReadBatchConcurrency(), async (page) => {
+    const values = await native.getMany(block, page)
+    for (let index = 0; index < page.length; index++) {
+      const balance = native.decode(values[index] ?? native.fallback)
+      for (const id of idsByAccount.get(page[index]) ?? []) balances.set(id, balance)
+    }
+  })
+  return balances
 }
 
 async function readTokenBalances(block: StorageBlock, candidates: IndexedBalanceCandidate[]): Promise<Map<string, BalanceReadResult>> {
   const balances = new Map<string, BalanceReadResult>()
   if (candidates.length === 0) return balances
 
-  if (!tokensStorage.accounts.v108.is(block)) {
-    throw new Error('No supported Tokens.Accounts storage type at block')
-  }
+  const tokens = tokenAccountStorage(block)
+  if (tokens == null) throw new Error('No supported Tokens.Accounts storage type at block')
 
   const idsByKey = new Map<string, { accountId: string; assetId: number; ids: string[] }>()
   for (const { id, candidate } of candidates) {
-    const numericAssetId = Number.parseInt(candidate.assetId, 10)
-    if (!Number.isSafeInteger(numericAssetId)) {
-      throw new Error(`Asset id ${candidate.assetId} is not a safe integer for Tokens.Accounts`)
-    }
+    const [accountId, numericAssetId] = tokenStorageKey(candidate.accountId, candidate.assetId)
 
-    const key = `${candidate.accountId}:${numericAssetId}`
+    const key = `${accountId}:${numericAssetId}`
     const entry = idsByKey.get(key)
     if (entry == null) {
-      idsByKey.set(key, { accountId: candidate.accountId, assetId: numericAssetId, ids: [id] })
+      idsByKey.set(key, { accountId, assetId: numericAssetId, ids: [id] })
     } else {
       entry.ids.push(id)
     }
   }
 
   const keys = [...idsByKey.values()]
-  const fallback = tokensStorage.accounts.v108.getDefault(block)
   const pageSize = balanceReadBatchSize()
   await forEachConcurrent(chunk(keys, pageSize), balanceReadBatchConcurrency(), async (page) => {
-    const values = await tokensStorage.accounts.v108.getMany(
+    const values = await tokens.getMany(
       block,
-      page.map(({ accountId, assetId }) => [accountId, assetId]),
+      page.map(({ accountId, assetId }): [string, number] => [accountId, assetId]),
     )
     for (let index = 0; index < page.length; index++) {
-      const balance = tokenBalance(values[index] ?? fallback)
+      const balance = tokens.decode(values[index] ?? tokens.fallback)
       for (const id of page[index].ids) balances.set(id, balance)
     }
   })
@@ -786,13 +839,9 @@ async function genesisBootstrapCandidates(block: StorageBlock): Promise<BalanceC
   const pageSize = Number.parseInt(process.env.RAW_BALANCE_BOOTSTRAP_PAGE_SIZE ?? '1000', 10)
   const candidates: BalanceCandidate[] = []
 
-  const systemAccount = systemStorage.account.v205.is(block)
-    ? systemStorage.account.v205
-    : systemStorage.account.v100.is(block)
-      ? systemStorage.account.v100
-      : null
+  const systemAccount = nativeAccountStorage(block)
   if (systemAccount != null) {
-    for await (const page of systemAccount.getKeysPaged(pageSize, block)) {
+    for await (const page of systemAccount.keysPaged(pageSize, block)) {
       for (const account of page) {
         const accountId = normalizeAccountId(account)
         if (accountId != null) {
@@ -811,8 +860,9 @@ async function genesisBootstrapCandidates(block: StorageBlock): Promise<BalanceC
     }
   }
 
-  if (tokensStorage.accounts.v108.is(block)) {
-    for await (const page of tokensStorage.accounts.v108.getKeysPaged(pageSize, block)) {
+  const tokenAccounts = tokenAccountStorage(block)
+  if (tokenAccounts != null) {
+    for await (const page of tokenAccounts.keysPaged(pageSize, block)) {
       for (const [account, assetId] of page) {
         const accountId = normalizeAccountId(account)
         if (accountId != null) {
@@ -850,13 +900,6 @@ export interface BalanceSnapshotOptions {
   // Called for each page of observation rows. Ignored when countOnly is set.
   onObservations?: (rows: RawBalanceObservationRow[]) => Promise<void>
   onProgress?: (counts: BalanceSnapshotCounts) => void
-}
-
-interface NativeStorageAccessor {
-  decode: (value: any) => BalanceReadResult
-  keysPaged: (pageSize: number, block: StorageBlock) => AsyncIterable<unknown[]>
-  pairsPaged: (pageSize: number, block: StorageBlock) => AsyncIterable<[unknown, unknown][]>
-  fallback: unknown
 }
 
 function snapshotRow(
@@ -908,21 +951,7 @@ export async function streamBalanceSnapshot(
   }
 
   if (includeNative) {
-    const native: NativeStorageAccessor | null = systemStorage.account.v205.is(block)
-      ? {
-          decode: nativeV205Balance,
-          keysPaged: (size, b) => systemStorage.account.v205.getKeysPaged(size, b),
-          pairsPaged: (size, b) => systemStorage.account.v205.getPairsPaged(size, b),
-          fallback: systemStorage.account.v205.getDefault(block),
-        }
-      : systemStorage.account.v100.is(block)
-        ? {
-            decode: nativeV100Balance,
-            keysPaged: (size, b) => systemStorage.account.v100.getKeysPaged(size, b),
-            pairsPaged: (size, b) => systemStorage.account.v100.getPairsPaged(size, b),
-            fallback: systemStorage.account.v100.getDefault(block),
-          }
-        : null
+    const native = nativeAccountStorage(block)
     if (native == null) throw new Error('No supported System.Account storage type at snapshot block')
 
     if (countOnly) {
@@ -946,22 +975,22 @@ export async function streamBalanceSnapshot(
   }
 
   if (includeTokens) {
-    if (!tokensStorage.accounts.v108.is(block)) {
+    const tokens = tokenAccountStorage(block)
+    if (tokens == null) {
       throw new Error('No supported Tokens.Accounts storage type at snapshot block')
     }
     if (countOnly) {
-      for await (const page of tokensStorage.accounts.v108.getKeysPaged(pageSize, block)) {
+      for await (const page of tokens.keysPaged(pageSize, block)) {
         for (const [account] of page) if (normalizeAccountId(account) != null) counts.tokenEntries++
         options.onProgress?.(counts)
       }
     } else {
-      const fallback = tokensStorage.accounts.v108.getDefault(block)
-      for await (const page of tokensStorage.accounts.v108.getPairsPaged(pageSize, block)) {
+      for await (const page of tokens.pairsPaged(pageSize, block)) {
         const rows: RawBalanceObservationRow[] = []
         for (const [[account, assetId], value] of page) {
           const accountId = normalizeAccountId(account)
           if (accountId == null) continue
-          rows.push(snapshotRow(block, blockTimestamp, ingestSource, accountId, assetId.toString(), 'Tokens.Accounts', tokenBalance(value ?? fallback)))
+          rows.push(snapshotRow(block, blockTimestamp, ingestSource, accountId, assetId.toString(), 'Tokens.Accounts', tokens.decode(value ?? tokens.fallback)))
         }
         counts.tokenEntries += rows.length
         await emit(rows)

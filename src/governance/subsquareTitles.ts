@@ -24,7 +24,7 @@ export interface StoredTitleRow {
 }
 
 // OpenGov referenda live under /referenda/:index; the pre-OpenGov Democracy ones
-// under /democracy/referenda/:index. Both indexes start at 0 and Hydration has
+// under /democracy/referenda/:index. Both indexes start at 0 and Basilisk has
 // used both pallets (Democracy 0-206, OpenGov 0-369), so a title is only ever
 // identified by the PAIR — indexing by number alone would cross-label them.
 export function subsquareReferendumPath(pallet: ReferendumPallet, refIndex: number): string {
@@ -52,7 +52,7 @@ function decodeEntities(text: string): string {
 }
 
 // SubSquare answers 200 with its generic site title for a referendum that does not
-// exist (verified: /referenda/9999 returns "SubSquare | hydradx governance
+// exist (verified: /referenda/9999 returns "SubSquare | basilisk governance
 // platform"), so a naive parse would store that junk as ref 9999's name — the same
 // absent-value-looks-real trap that made a missing order read as HDX->HDX.
 // Anything that is only the site's own branding is therefore not a title.
@@ -99,7 +99,7 @@ export function planTitleFetches(
   }
 
   const newestFirst = <T extends { refIndex: number }>(rows: T[]) => rows.sort((a, b) => b.refIndex - a.refIndex)
-  // Live refreshes go first: they are few (Hydration usually has 0-2 open
+  // Live refreshes go first: they are few (Basilisk usually has 0-2 open
   // referenda) and they are the only ones whose stored value can be wrong.
   return [...newestFirst(refresh), ...newestFirst(missing)].slice(0, Math.max(0, options.maxFetches))
 }

@@ -3,8 +3,10 @@ import * as sts from '@subsquid/substrate-runtime/lib/sts'
 import assert from 'assert'
 
 
-// Option and Result defined locally to avoid ESM import issues with
-// '@subsquid/substrate-runtime/lib/sts' at runtime.
+// Option and Result are declared locally rather than re-exported from
+// '@subsquid/substrate-runtime/lib/sts': they are types, so re-exporting them
+// breaks `tsc --isolatedModules` and throws at ESM import time.
+// Re-applied after every run by npm run typegen (see this file's header).
 export type Option<T> = T | undefined
 export type Result<T, E> = { __kind: 'Ok'; value: T } | { __kind: 'Err'; value: E }
 
