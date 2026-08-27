@@ -1,23 +1,21 @@
-# Hydration Neckwork
+# Snekwork
 
-Hydration Neckwork is a ClickHouse-backed data platform containing two applications: the Explorer and Preis. It combines a block-level USD price indexer, a raw on-chain data lake, a shared API, a live block explorer, and market charts.
+Snekwork is a lightweight ClickHouse-backed block explorer for Basilisk. It combines a block-level USD price indexer, a raw on-chain data lake, an API, and the explorer UI. See [REMOVED.md](REMOVED.md) for what this fork deliberately does not do.
 
 ## Product surfaces
 
 - **Explorer:** blocks, extrinsics, events, assets, holders, accounts, identities, tags, proxies, multisigs, and portfolio history.
-- **Activity:** transfers, swaps, DCA schedules, OTC orders, cross-chain activity, liquidity, money markets, staking, and governance votes.
-- **Protocol dashboards:** HDX supply, locks, flows, and unlocks; HOLLAR peg, Stability Module, and liquidity.
-- **Security:** circuit-breaker limits and their consumption, deposit lockdowns, paused calls, tradability freezes, money-market solvency, and the origins that can lift each control.
-- **Preis charts:** block-level USD prices and OHLCV candles for Hydration assets.
-- **API:** Fastify endpoints for explorer data, prices, candles, volume, and indexer status.
+- **Activity:** transfers, swaps, cross-chain activity, liquidity, and governance votes.
+- **Charts:** block-level USD prices and OHLCV candles, rendered on the explorer's own asset pages.
+- **API:** Fastify endpoints for explorer data, prices, and indexer status.
 
 ## Quick start
 
 The containerized stack requires Docker with Compose. Local development additionally requires Node.js 22+.
 
 ```bash
-git clone https://github.com/1xGiraffe/hydration-neckwork.git
-cd hydration-neckwork
+git clone https://github.com/galacticcouncil/snekwork.git
+cd snekwork
 docker compose up --build -d
 ```
 
@@ -25,11 +23,8 @@ Local services:
 
 | Service | URL | Purpose |
 | --- | --- | --- |
-| Explorer | <http://localhost:5174> | Live chain explorer and protocol dashboards |
-| Preis | <http://localhost:5173> | Asset price and OHLCV charts |
-| API | <http://localhost:3000> | Explorer and market-data API |
-| Public API | <http://localhost:3002> | Versioned REST API for the Hydration UI and external feeds (Swagger at `/docs`) |
-| Public API cache | <http://localhost:8081> | nginx micro-cache in front of the public API |
+| Explorer | <http://localhost:5174> | Live chain explorer |
+| API | <http://localhost:3000> | Explorer and price API |
 | ClickHouse HTTP | <http://localhost:18123> | Local database endpoint |
 
 The live pipelines start immediately. Historical ingestion continues in the background, so a fresh installation fills older explorer and price history over time.
@@ -46,23 +41,22 @@ docker exec -it hydration-neckwork-clickhouse clickhouse-client \
 ## Architecture
 
 ```text
-SQD archive + Hydration RPC
-          │
-          ├─ raw-live + supervised backfill ── raw chain and derived tables
-          └─ live + historical price indexers ─ prices and OHLCV
-                                             │
-                                         ClickHouse
-                                             │
-                                      Fastify API (:3000)      Public API (:3002)
-                                         ┌───┴───┐                    │
-                                  Explorer UI   Preis UI      nginx cache (:8081)
-                                     (:5174)     (:5173)      Hydration UI / feeds
+Basilisk RPC
+     │
+     ├─ raw-live + supervised backfill ── raw chain and derived tables
+     └─ live + historical price indexers ─ prices and OHLCV
+                                        │
+                                    ClickHouse
+                                        │
+                                 Fastify API (:3000)
+                                        │
+                                   Explorer UI (:5174)
 ```
 
 - `src/` contains the price and raw-data indexers, ingestion utilities, and maintenance scripts.
 - `clickhouse/schema/` is the single declarative schema (tables + materialized views), applied once to an empty database by the `schema-bootstrap` service — see [Database model](#database-model). There are no migrations.
-- `api/` serves indexed data through cached read models; Compose snapshot services refresh bounded current-state datasets. `api/src/public/` is the separate `api-public` service — the versioned REST contract for the Hydration UI and external feeds (see the Public API section in [AGENTS.md](AGENTS.md)).
-- `explorer-ui/` is the block explorer; `preis-ui/` is the price-chart application.
+- `api/` serves indexed data through cached read models; Compose snapshot services refresh bounded current-state datasets.
+- `explorer-ui/` is the block explorer.
 - `ops/` contains the ingestion supervisor image.
 
 Historical raw ranges are finalized only after block counts and parent links validate. The supervisor promotes completed raw ranges into the price index and maintains the live pipelines. Writes and checkpoints are designed for replay and crash recovery.
@@ -73,26 +67,20 @@ Docker Compose provides working defaults. Override them in an untracked `.env` f
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `RPC_URL` | `https://hydration-rpc.neckwork.net` | Price indexer RPC |
-| `RAW_LIVE_RPC_URL` | `https://hydration-rpc.neckwork.net` | Live raw-indexer RPC |
-| `RAW_RPC_URL` | `https://rpc.coke.hydration.cloud` | Historical raw-worker RPC |
-| `RAW_EVM_RPC_URL` | `https://rpc.coke.hydration.cloud` | Historical EVM state reads |
-| `IDENTITY_RPC_URL` | `https://hydration-rpc.neckwork.net` | Hydration identity snapshot RPC |
-| `IDENTITY_CHAINS` | Polkadot/Kusama People chains and their testnets | Extra identity sources, `key=url[@block]` and highest display priority first; empty for Hydration only |
-| `SQD_GATEWAY` | Hydration SQD archive | Historical block source |
+| `RPC_URL` | see `docker-compose.yml` | Price indexer RPC |
+| `RAW_LIVE_RPC_URL` | see `docker-compose.yml` | Live raw-indexer RPC |
+| `RAW_RPC_URL` | see `docker-compose.yml` | Historical raw-worker RPC |
+| `IDENTITY_RPC_URL` | see `docker-compose.yml` | Identity snapshot RPC |
+| `SUBSQUARE_BASE_URL` | see `docker-compose.yml` | Source of referendum titles |
 | `CLICKHOUSE_HOST` | `http://localhost:18123` outside Compose | ClickHouse HTTP endpoint |
 | `CLICKHOUSE_PASSWORD` | empty outside Compose; `dev` in Compose | ClickHouse password |
-| `CLICKHOUSE_VOLUME_NAME` | `hydration-neckwork-clickhouse-data` | Docker volume containing ClickHouse data |
+| `CLICKHOUSE_VOLUME_NAME` | see `docker-compose.yml` | Docker volume containing ClickHouse data |
 | `RAW_WORKERS` | `6` | Concurrent raw historical workers |
 | `RANGE_SIZE` | `1000` | Blocks per raw historical range |
 | `MAIN_WORKERS` | `3` | Concurrent historical price workers |
 | `MAIN_MAX_RANGES` | `3` | Raw ranges consumed per price batch |
-| `VITE_EXPLORER_URL` | local fallback | Public Explorer URL embedded in Preis UI |
-| `VITE_PREIS_URL` | local fallback | Public Preis URL embedded in Explorer UI |
-| `EXPLORER_OCELLOIDS_TOKEN` | unset | Enables optional XCM journey enrichment |
-| `PUBLIC_API_MASTER` | `true` | `master` flag in the public API's `/rest/service/metadata` probe |
 
-See [`docker-compose.yml`](docker-compose.yml) for service-specific tuning variables. Keep credentials in `.env`, never in tracked files. Vite URL changes require rebuilding the corresponding UI image.
+See [`docker-compose.yml`](docker-compose.yml) for service-specific tuning variables. Keep credentials in `.env`, never in tracked files.
 
 ### Host-specific Compose overrides
 
@@ -160,7 +148,6 @@ Install each workspace, then run the repository-wide checks:
 npm ci
 npm --prefix api ci
 npm --prefix explorer-ui ci
-npm --prefix preis-ui ci
 npm run check:all
 ```
 
@@ -168,7 +155,6 @@ Browser tests are separate because they require the relevant services:
 
 ```bash
 npm --prefix explorer-ui run test:e2e
-npm --prefix preis-ui run test:e2e
 ```
 
 Common indexer commands:

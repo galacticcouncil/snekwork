@@ -1,6 +1,6 @@
 # Repository guide
 
-Hydration Neckwork indexes Hydration into ClickHouse and serves the Explorer and Preis through a Fastify API. `src/` owns price/raw ingestion and maintenance jobs, `clickhouse/schema/` owns storage, `api/` owns read models, `explorer-ui/` owns the explorer, and `preis-ui/` owns price charts.
+Snekwork indexes Basilisk into ClickHouse and serves the Explorer through a Fastify API. `src/` owns price/raw ingestion and maintenance jobs, `clickhouse/schema/` owns storage, `api/` owns read models, and `explorer-ui/` owns the explorer. [REMOVED.md](REMOVED.md) records what this fork deliberately does not do — do not reintroduce any of it.
 
 ## Working rules
 
@@ -13,15 +13,6 @@ Hydration Neckwork indexes Hydration into ClickHouse and serves the Explorer and
 - Existing deployments matter. Schema changes must be idempotent and safe for both fresh databases and upgrades; destructive migrations need an explicit offline procedure and validation.
 - Keep API response changes additive and backward-compatible unless a versioned break is explicitly planned.
 - Inject credentials through environment variables; never commit tokens, keys, or populated environment files.
-- Notifications evaluate only FORWARD, from a persisted cursor anchored on the live pipeline head (`raw_ingestion_state` where `pipeline_id = 'raw-live'`). Rows at or below that cursor never fire, so backfills, repair INSERTs, MV rebuilds and re-derivations — which all write below it by construction — are silent. This is the one place a forward high-water cursor is correct rather than wrong (contrast **Schema and derivations**); no code may widen the window past the clamp or fire from a backfill pipeline id.
-- Each trigger kind keeps its OWN cursor (`cursor:<kind>`). A kind reading a shared cached snapshot rather than a block window advances only to the newest block that snapshot actually contained: anchoring it on the head would step the cursor over everything the cache had not revealed yet, which silences the lane entirely. The blind spot below the cursor is unchanged, so backfill immunity holds either way.
-- Edge-triggered CURRENT-VALUE alerts (price, health factor) are the one sanctioned exception to window anchoring: they fire on a crossing of the value as it stands now, not on an indexed row, so there is no window to anchor and a repair that moves a current value is indistinguishable from the value moving. Persisted armed/hysteresis state per rule bounds how often one can refire. Every other source must be anchored on the live-head cursor.
-- A new trigger kind must be finality-safe (never `finalized === false` or `mempool === true`, never a raw window above the live head) and must carry a deterministic dedup identity, so re-evaluating the same window delivers nothing twice.
-- A lane advances its cursor only as far as its SOURCE has demonstrably reached, never to the ingestion head it anchored the window on. The two differ: the feed keys and builds on its own head (`indexedRawHead` — all pipelines, a 1.5s cache, an SSE-published floor) and ClickHouse orders nothing between the insert that moves `raw_ingestion_state` and the inserts carrying a block's rows, so a window can name blocks the page provably could not contain. Clamp with `windowCoveredTo` against a watermark that advances on EVERY block (`max(block_height)` over `raw_events`, not a source-specific max, which is only "the newest block that happened to hold one of these" and would strand the cursor through a quiet stretch).
-- A lane's source read must never be served from a cache whose key omits the live head. The cursor only moves forward, so a page that is stale by even one block is not a late render — it is a permanent silent loss of every row the lane stepped over, with no error, no log line and an advancing cursor. When a lane bounds its fetch (dates, block ranges, any filter that changes the cache key's shape), re-check that the key still turns over per block; adding a bound is exactly how a lane gets moved onto a constant tag by accident.
-- Notification channels, rules and inbox rows live in `user_*` tables — the backup-list obligation in **Schema and derivations** applies — and channel configs and rule params are private user data: never log, export, or surface a push endpoint/key, a Telegram chat id, or a rule's parameters.
-- Every notification message renders through the shared renderer (`api/src/notifications/render.ts`), which reproduces `AddrPill`'s account notation and the rough number scale. Do not format an account, an amount, or a link ad hoc at a trigger site.
-- The `user_*` tables are the only private data in the database; everything else is public chain data. A deployment may expose a read-only ClickHouse endpoint to people outside the project, so treat them as never-exportable: no new read path, role, view, export, fixture, or log line may surface their contents. `user_sessions` holds session token hashes, so `system.query_log` is privileged too.
 
 ## Performance engineering
 
@@ -35,7 +26,7 @@ Hydration Neckwork indexes Hydration into ClickHouse and serves the Explorer and
 
 ### Query and read-model design
 
-- Large raw event, EVM-log, balance, position, and price tables are ingestion sources, not request-time indexes. When a proven page shape repeatedly scans them, build the smallest projection whose `ORDER BY` starts with the request's selective dimensions (for example account-first, asset-first, reserve-first, or time-first).
+- Large raw event, balance, and price tables are ingestion sources, not request-time indexes. When a proven page shape repeatedly scans them, build the smallest projection whose `ORDER BY` starts with the request's selective dimensions (for example account-first, asset-first, or time-first).
 - Store the decoded fields and exact integer values the response needs. Avoid reparsing JSON, broad joins, global `FINAL`, or float conversion on hot paths. Use `FINAL` only where replacement deduplication is required and the primary-key predicate keeps it bounded.
 - Prefer stable event/observation/leg identities in `ReplacingMergeTree` projections. For aggregate projections, use mergeable states whose result is idempotent under replay. Never feed replayable rows into an additive sum/count materialized view without first establishing unique replacement semantics.
 - Define every table and materialized view in `clickhouse/schema/` — the single declarative schema, applied to an empty database before ingestion. Create the destination table before its MV and use a stable replacement key. Do not add completion-marker or backfill tables; there are no migrations or backfills (see **Schema and derivations**).
@@ -56,9 +47,9 @@ The database is a rebuildable projection of the chain; there are no migrations. 
 - **Declarative schema** — `clickhouse/schema/*.sql` is the single source of truth for every table and MV. It is regenerated from a known-good database (`SHOW CREATE`), then applied in numeric order and idempotently by the `schema-bootstrap` service to an empty database before ingestion. Add or change a model by editing these files; never define schema in application code.
 - **Derivations** — three mechanisms, in order of preference:
   1. **Materialized views** for anything expressible row-wise; they populate automatically from raw in any insertion order (live-forward and backward backfill alike), so a model's completeness tracks raw's completeness for free.
-  2. **Bounded request-time reconstruction, or an in-memory snapshot on the existing coordinated refresher**, for per-entity stateful models an MV cannot express. Prefer a pure domain function over the entity's own rows in account-first MV-fed tables, with page-scoped enrichment via primary-key lookups. Reach for a small in-memory snapshot on the existing coordinated refresher only when TS-side computation is unavoidable (for example deriving a multisig address via `createKeyMulti`), or for current-state directory values neither an MV nor request-time reconstruction compute (account-directory Omnipool claims, money-market account values).
+  2. **Bounded request-time reconstruction, or an in-memory snapshot on the existing coordinated refresher**, for per-entity stateful models an MV cannot express. Prefer a pure domain function over the entity's own rows in account-first MV-fed tables, with page-scoped enrichment via primary-key lookups. Reach for a small in-memory snapshot on the existing coordinated refresher only when TS-side computation is unavoidable (for example deriving a multisig address via `createKeyMulti`), or for current-state directory values neither an MV nor request-time reconstruction compute.
   3. **A swept per-entity model** when the value is neither row-wise (no MV) nor affordable per request, and its definition lives in application code rather than SQL. Entities are recounted continuously on the existing coordinated refresher — one at a time, ordered by staleness and by an ingest-time watermark — into a keyed table the read path `LEFT JOIN`s. `account_activity_totals` is the case: an activity total IS the feed's classification, so it is produced by calling the same scoped-total function the detail page calls, and at ~0.76s per account the directory's 114k rows can be neither counted per request nor restated in SQL. Its obligations are in **Swept models** below.
-  4. **The `derivations` service** (`api/src/derivations/`) ONLY for global, heavy models none of the above can express — avoid adding new scheduled batch recompute jobs. `account_trade_volume` and `pool_swap_hourly` are partition-incremental — they recompute only the month-partitions whose raw changed, detected by an ingest-time watermark (`max(raw.ingested_at) > max(derived.computed_at)`), which is subset-safe and correct under backward backfill. `pool_swap_hourly` is also the case where an MV is impossible rather than merely awkward: its source is a `ReplacingMergeTree`, so the legs must be deduplicated BEFORE they are summed, and an insert-trigger MV cannot do a cross-row deduplication. Readers of a partition-incremental model take the closed part from it and the tail from raw, so a lagging partition costs time rather than rows — but raw backfilled BELOW the reader's cut under-reports until the next cycle, which is a freshness bound to state, not to hide. The LP reconstructions (`omnipool_position_owner_intervals`, `xyk_farm_principal_intervals`, `xyk_lp_total_shares_history`) do a bounded full recompute with atomic replace (staging table + `EXCHANGE TABLES`), because a forward cursor is wrong while backfill fills lower blocks and shifted keys would otherwise leave stale rows.
+  4. **The `derivations` service** (`api/src/derivations/`) ONLY for global, heavy models none of the above can express — avoid adding new scheduled batch recompute jobs. `account_trade_volume` is partition-incremental — it recomputes only the month-partitions whose raw changed, detected by an ingest-time watermark (`max(raw.ingested_at) > max(derived.computed_at)`), which is subset-safe and correct under backward backfill. Readers of a partition-incremental model take the closed part from it and the tail from raw, so a lagging partition costs time rather than rows — but raw backfilled BELOW the reader's cut under-reports until the next cycle, which is a freshness bound to state, not to hide. The LP reconstructions (`xyk_farm_principal_intervals`, `xyk_lp_total_shares_history`) do a bounded full recompute with atomic replace (staging table + `EXCHANGE TABLES`), because a forward cursor is wrong while backfill fills lower blocks and shifted keys would otherwise leave stale rows.
 
 **Swept models.** A swept per-entity model earns its keep only under all of these:
 - **It calls the surface's own function.** The stored value must come from the same code path the entity's detail page calls, never a SQL re-statement of it. A directory that computes a number a second way will disagree with the page it links to, which is the symmetry rule under **Explorer semantics**.
@@ -70,9 +61,7 @@ The database is a rebuildable projection of the chain; there are no migrations. 
 
 Keep in mind for new models:
 - Prefer an MV; for per-entity stateful needs an MV cannot express, prefer bounded request-time reconstruction or an in-memory snapshot on the existing coordinated refresher; reach for a swept per-entity model only when the value's definition lives in application code and cannot be afforded per request; add a new `derivations` job only for genuinely global, heavy models none of the above can express, and avoid new scheduled batch recompute jobs.
-- Every derived table must be reproducible from raw — no derived-only state.
-- Exception: `user_*` tables (`clickhouse/schema/004_user.sql`) are user-authored source-of-record, written only by the api service — they are NOT reproducible from raw, are excluded from every drop-and-refill/projection rebuild, and are exported nightly by the user-backup service.
-- Adding a `user_*` table means declaring it in `clickhouse/schema/004_user.sql` **and** adding it to `TABLES=` in `ops/backup-user-tables.sh` — the two lists must agree, or the table is silently never backed up despite being unreproducible. Where a deployment exposes the read-only ClickHouse endpoint, its host-side grant script (outside this repo) derives the reader's revokes from `004_user.sql` and must be re-run so the new table is unreadable; it also aborts if the two lists have diverged.
+- Every derived table must be reproducible from raw — no derived-only state. The whole database is public chain data and carries no private state.
 - A new or evolved MV table gets its history on an existing deployment through a one-time ad-hoc `INSERT … SELECT` from raw mirroring the MV's exact `SELECT`/`WHERE` (replay-safe through the table's replacement key), run during rollout and not committed — no migration or backfill scripts live in the repo, and a fresh database is complete from the declaration alone.
 - Recompute jobs must be idempotent and correct under out-of-order raw (partition-diff or atomic full-replace — never a forward high-water cursor).
 - Evolving a model means editing the declaration and rebuilding the projection (drop and let it refill, or reset the derived layer) — never a version-numbered migration or an in-place data patch.
@@ -89,49 +78,13 @@ Keep in mind for new models:
 ## Explorer semantics
 
 - Render the user's highest-level economic action and suppress internal plumbing legs. Classification must remain symmetric across global, block, extrinsic, account, asset, and tag activity surfaces.
-- Every activity needs a stable event identity and canonical URL. DCA activity links represent schedules; an individual execution is addressable via its execution event (`/dca/<block>-e<eventIndex>`) from the schedule page and from the block/extrinsic pages, whose DCA rows link to executions (a scheduling extrinsic shows only its schedule's first execution). OTC cancellation is called **Pull** in product copy. Always write **HOLLAR** in uppercase.
-- The Omnipool hub asset (registry id 1) is called **H2O** everywhere — UI copy, API field descriptions, docs, comments. Never write LRNA (its legacy name) except when quoting an on-chain identifier that literally spells it.
+- Every activity needs a stable event identity and canonical URL.
 - Activity is the sole domain and API term; do not restore Stream names, routes, or compatibility aliases.
-- Display and copy user addresses as canonical SS58 or H160 forms, never raw AccountId public-key hex. Preserve real identity/tag context across local and cross-chain account pills.
-- The primary and GIGAHDX money markets are isolated. Never blend their health factors. Primary-market directory/DefiSim figures stay primary-only; supplemental collateral backing must not be counted twice; tag risk uses the lowest real member health factor.
+- Display and copy user addresses as canonical SS58, never raw AccountId public-key hex. Preserve real identity/tag context across local and cross-chain account pills.
 - Avoid request-time shortcuts that silently omit older history. Pagination, filtering, totals, and chart windows must operate on the full requested dataset.
 - Multi-asset activity filters must match every referenced asset, including nested pool assets and both sides of a pair.
-- Keep unresolved XCM origins and destinations explicit; enrichment runs asynchronously and must not delay explorer requests.
-- Default tags and structural accounts must be reproducible and idempotent from a clean database. Vesting uses relay-chain height; conviction and GIGAHDX timing use parachain height.
-
-## Public API
-
-The `api-public` service (`api/src/public/`, same image as `api`, own process behind the
-`api-public-nginx` micro-cache) serves the official Hydration UI and external data feeds. It is a
-**versioned frozen contract**, unlike the explorer/preis routes:
-
-- Changes within `/v1` are additive-only; renaming, retyping, or removing a field or route
-  requires a `/v2`. The data-lake-compatible surfaces (`/rest/service/metadata`, `/proxy/*`) are
-  pinned to what the Hydration UI's provider-selection and proxy clients expect.
-- Every public route declares zod request/response schemas (published via OpenAPI at
-  `/openapi.json` and `/docs`) and an explicit entry in `api/src/public/cacheControl.ts`, anchored
-  to the exact registered path so a neighbouring future route cannot inherit its TTL — unmatched
-  routes deliberately ship `no-store`. The one exception is `/proxy/*`, which has no entry on
-  purpose: those responses are cached in-process per upstream and must stay out of any shared
-  cache, so they take the `no-store` default.
-- `api/src/public/**` may import only the allow-list pinned by `api/tests/public/isolation.test.ts`
-  (`db/client`, `config`, `types`, and the `cache`/`explorerAssets`/`ohlcvService`/`poolService`/
-  `volumeService`/`valuation`/`revenueStreams` services). Never `explorerService`. The one sanctioned transitive coupling —
-  `initPoolService` wiring an explorerService client when none is set — is documented at the
-  guard in `poolService.ts`; keep it non-clobbering.
-- Numeric semantics (single-side netted volume, fee/protocol-fee split, APR/APY definitions,
-  window anchoring) are normative in
-  `docs/superpowers/specs/2026-08-12-public-rest-api-design.md` § Semantics, including the
-  documented deviations from the Hydration Data Lake. Swagger descriptions must stay in sync with
-  that section; do not "fix" a deviation without updating both.
-- The public read models live in `clickhouse/schema/006_public.sql` (`pool_swap_legs` with its
-  `op_key` routed-trade key, `farm_config_events`, `otc_order_events`, and the `pool_swap_hourly`
-  pre-aggregate that keeps the fees charts and the DefiLlama backfill off a full leg scan).
-  External-feed facades
-  (CoinGecko/DefiLlama) reuse `pool_swap_legs`, which covers the FULL era: the modern
-  `Broadcast.Swapped*` MV plus four legacy per-pallet MVs (< 6,837,788, back to block 1,708,104).
-  The legacy omnipool buy-fee side flips at the runtime upgrade at block 4,221,778 (fee on the IN
-  asset before, OUT asset after) — the MV and its tests pin this; see the spec's legacy-era note.
+- Keep unresolved XCM origins and destinations explicit rather than guessing at them.
+- Default tags and structural accounts must be reproducible and idempotent from a clean database. Vesting uses relay-chain height; conviction timing uses parachain height.
 
 ## UI
 
@@ -149,11 +102,10 @@ Run the smallest relevant checks while iterating, then the package check for eve
 npm run check
 npm --prefix api run check
 npm --prefix explorer-ui run check
-npm --prefix preis-ui run check
 npm run check:all
 ```
 
-Playwright is separate: `npm --prefix explorer-ui run test:e2e` and `npm --prefix preis-ui run test:e2e`. Runtime claims require rebuilding the affected Compose service and checking the real API/UI; otherwise state that only static/unit checks ran.
+Playwright is separate: `npm --prefix explorer-ui run test:e2e`. Runtime claims require rebuilding the affected Compose service and checking the real API/UI; otherwise state that only static/unit checks ran.
 
 ## Hygiene
 
@@ -165,5 +117,5 @@ Playwright is separate: `npm --prefix explorer-ui run test:e2e` and `npm --prefi
 
 ## Commits
 
-- Use Conventional Commits, matching the existing history: `type(scope): subject`, with the subject in lowercase imperative and no trailing period. Types: `feat`, `fix`, `refactor`, `perf`, `style`, `chore`, `docs`. Common scopes: `explorer`, `api`, `ui`, `prices`, `indexer`, `raw`, `preis`, `schema`, `compose`. Keep each commit focused on a single change.
+- Use Conventional Commits, matching the existing history: `type(scope): subject`, with the subject in lowercase imperative and no trailing period. Types: `feat`, `fix`, `refactor`, `perf`, `style`, `chore`, `docs`. Common scopes: `explorer`, `api`, `ui`, `prices`, `indexer`, `raw`, `schema`, `compose`. Keep each commit focused on a single change.
 - Never add co-author trailers or tool/assistant attribution (`Co-Authored-By`, "Generated with", and the like) to commit messages or PR descriptions. This holds unconditionally, including when a commit was AI-assisted — the commit author is the only attribution.

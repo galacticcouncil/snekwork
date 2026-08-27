@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Regenerate the two-part web faces both UIs serve from `fonts-src/`.
+"""Regenerate the two-part web faces the explorer serves from `fonts-src/`.
 
 Each licensed face in `fonts-src/` is split into two woff2 files declared with
-complementary `unicode-range`s in `explorer-ui/src/styles/global.css` and
-`preis-ui/src/styles/global.css`:
+complementary `unicode-range`s in `explorer-ui/src/styles/global.css`:
 
-  <Face>-latin.woff2  ASCII + Latin-1 Supplement + every symbol the apps draw
+  <Face>-latin.woff2  ASCII + Latin-1 Supplement + every symbol the app draws
                       (dashes, quotes, ellipsis, arrows, triangles, math
                       relations, currency, and the U+2080-2089 subscript digits
                       behind the 0.0(5)7191 notation). This is what real pages
@@ -43,10 +42,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "fonts-src")
 OUT_DIRS = [
     os.path.join(ROOT, "explorer-ui", "public", "fonts"),
-    os.path.join(ROOT, "preis-ui", "public", "fonts"),
 ]
 
-# The faces the two stylesheets actually declare. GazpachoBlack and GeistBold
+# The faces the stylesheet actually declares. GazpachoBlack and GeistBold
 # are licensed but unreferenced, so they are not shipped.
 FACES = [
     "GazpachoRegular", "GazpachoMedium", "GazpachoBold",
