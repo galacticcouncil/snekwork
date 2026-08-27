@@ -11,7 +11,7 @@ import { assetDescriptor, allExplorerAssets, PRICE_ALIAS_ID, SHARE_TOKEN_UNDERLY
 import { accountVolumeSource } from './accountTradeVolume.ts'
 import { tagForAccount, taggedAccountByH160, ammPoolAccounts, getTag as getTagRecord, allTags } from './tagService.ts'
 import { identityForAccount, searchIdentitiesByDisplay, type AccountIdentity } from './identityService.ts'
-import { normalizeAddress, hydrationAddress, polkadotAddress, reservedH160AccountId } from './addressIdentity.ts'
+import { normalizeAddress, basiliskAddress, reservedH160AccountId } from './addressIdentity.ts'
 import { accountIcon, emojisMatchingName, emojiNameFor, parseSuffixEmojiQuery } from './omniwatchIdentity.ts'
 import { encodeAddress } from '@polkadot/util-crypto'
 import { hexToU8a } from '@polkadot/util'
@@ -41,8 +41,8 @@ export function hasExplorerClient(): boolean { return client != null }
 export type AssetRef = ExplorerAsset
 export interface AccountRef {
   accountId: string
-  address: string                                   // Hydration SS58
-  emoji: string                                     // Omniwatch/snakewatch identity emoji (keyed by SS58 prefix-63 address)
+  address: string                                   // Basilisk SS58 (prefix 10041)
+  emoji: string                                     // deterministic identity emoji, derived from the account's public key
   emojiName?: string                                // human-readable name for the custom emoji/icon (e.g. Discord emoji name)
   emojiUrl?: string                                 // custom image icon (e.g. a Discord avatar) — render in place of the emoji char
   tag: { id: string; name: string; color: string; icon: string; memberCount?: number } | null
@@ -86,14 +86,13 @@ export function resolveDisplayAccountId(accountId: string): string {
 export function accountRef(accountId: string): AccountRef {
   const resolved = resolveDisplayAccountId(accountId)
   const t = tagForAccount(resolved)
-  // Display the EVM address for EVM accounts, otherwise the Polkadot SS58 (prefix 0);
-  // the omniwatch icon is keyed by the Hydration form internally by accountIcon().
-  const evm = evmFromAccountId(resolved)
+  // Basilisk SS58 (prefix 10041) is the canonical display form for every account;
+  // there are no EVM accounts to show an H160 for.
   const id = identityForAccount(resolved)
   const icon = accountIcon(resolved)
   return {
     accountId: resolved,
-    address: evm ?? polkadotAddress(resolved),
+    address: basiliskAddress(resolved),
     emoji: icon.emoji,
     emojiName: icon.emojiName,
     emojiUrl: icon.emojiUrl,
@@ -2441,9 +2440,8 @@ export interface AddressDetail {
   emoji: string
   emojiName?: string
   emojiUrl?: string
-  evmAddress: string | null
   ss58: string
-  ss58Polkadot: string
+  ss58Kusama: string
   tag: { id: string; name: string; color: string; icon: string } | null
   identity: AccountIdentity | null
   relatedAccountIds: string[]
@@ -2547,9 +2545,8 @@ export async function getAddress(addressInput: string, opts: { summary?: boolean
       emoji: addrIcon.emoji,
       emojiName: addrIcon.emojiName,
       emojiUrl: addrIcon.emojiUrl,
-      evmAddress: norm.evmAddress,
-      ss58: norm.ss58 ?? hydrationAddress(norm.accountId),
-      ss58Polkadot: norm.ss58Polkadot ?? '',
+      ss58: norm.ss58 ?? basiliskAddress(norm.accountId),
+      ss58Kusama: norm.ss58Kusama ?? '',
       tag: tag ? { id: tag.tagId, name: tag.name, color: tag.color, icon: tag.icon } : null,
       identity: onchainId,
       relatedAccountIds: [...related],
@@ -13267,7 +13264,7 @@ async function loadAccountSuffixIndexUncached(): Promise<void> {
     for (const r of await res.json<{ account_id: string }>()) {
       const id = r.account_id
       if (!/^0x[0-9a-fA-F]{64}$/.test(id)) continue
-      const disp = evmFromAccountId(id) ?? polkadotAddress(id) // EVM 0x… or Polkadot SS58, matching the pill
+      const disp = basiliskAddress(id) // Basilisk SS58, matching the pill
       if (!disp || disp.length < 3) continue
       const s = disp.slice(-3).toLowerCase()
       const sArr = suf.get(s)
@@ -13572,7 +13569,7 @@ async function searchUncached(query: string): Promise<SearchResult[]> {
     const id = identityForAccount(norm.accountId)
     const ic = accountIcon(norm.accountId)
     results.push({
-      type: 'address', value: norm.accountId, label: norm.evmAddress ?? polkadotAddress(norm.accountId) ?? norm.ss58 ?? undefined,
+      type: 'address', value: norm.accountId, label: norm.ss58 ?? basiliskAddress(norm.accountId) ?? undefined,
       emoji: ic.emoji, emojiName: ic.emojiName, emojiUrl: ic.emojiUrl, identity: id,
     })
     seenAccounts.add(norm.accountId.toLowerCase())
@@ -13610,7 +13607,7 @@ async function searchUncached(query: string): Promise<SearchResult[]> {
       if (results.filter(r => r.type === 'address').length >= MAX_ACCOUNT_RESULTS) break
       seenAccounts.add(id.toLowerCase())
       results.push({
-        type: 'address', value: id, label: evmFromAccountId(id) ?? polkadotAddress(id) ?? undefined,
+        type: 'address', value: id, label: basiliskAddress(id) ?? undefined,
         emoji: ic.emoji, emojiName: ic.emojiName ?? emojiNameFor(ic.emoji) ?? undefined, identity: identityForAccount(id),
       })
     }
@@ -13656,7 +13653,7 @@ async function searchUncached(query: string): Promise<SearchResult[]> {
       seenAccounts.add(m.accountId.toLowerCase())
       const mic = accountIcon(m.accountId)
       results.push({
-        type: 'address', value: m.accountId, label: evmFromAccountId(m.accountId) ?? polkadotAddress(m.accountId) ?? undefined,
+        type: 'address', value: m.accountId, label: basiliskAddress(m.accountId) ?? undefined,
         emoji: mic.emoji, emojiName: mic.emojiName, emojiUrl: mic.emojiUrl, identity: m.identity,
       })
     }
@@ -13674,7 +13671,7 @@ async function searchUncached(query: string): Promise<SearchResult[]> {
         seenAccounts.add(id.toLowerCase())
         const ic = accountIcon(id)
         results.push({
-          type: 'address', value: id, label: evmFromAccountId(id) ?? polkadotAddress(id) ?? undefined,
+          type: 'address', value: id, label: basiliskAddress(id) ?? undefined,
           emoji: ic.emoji, emojiName: ic.emojiName ?? emojiNameFor(ic.emoji) ?? undefined, identity: identityForAccount(id),
         })
       }
@@ -13687,7 +13684,7 @@ async function searchUncached(query: string): Promise<SearchResult[]> {
   if (/^[0-9A-Za-z]{2,6}$/.test(query)) {
     const matches = accountsBySuffix(query).slice()
     matches.sort((a, b) => {
-      const da = evmFromAccountId(a) ?? polkadotAddress(a), db = evmFromAccountId(b) ?? polkadotAddress(b)
+      const da = basiliskAddress(a), db = basiliskAddress(b)
       const ea = da?.endsWith(query) ? 0 : 1, eb = db?.endsWith(query) ? 0 : 1
       return ea - eb
     })
@@ -13697,7 +13694,7 @@ async function searchUncached(query: string): Promise<SearchResult[]> {
       seenAccounts.add(id.toLowerCase())
       const ic = accountIcon(id)
       results.push({
-        type: 'address', value: id, label: evmFromAccountId(id) ?? polkadotAddress(id) ?? undefined,
+        type: 'address', value: id, label: basiliskAddress(id) ?? undefined,
         emoji: ic.emoji, emojiName: ic.emojiName, emojiUrl: ic.emojiUrl, identity: identityForAccount(id),
       })
     }

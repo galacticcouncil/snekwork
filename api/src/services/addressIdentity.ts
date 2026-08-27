@@ -1,9 +1,12 @@
-import { hydrationAddress, polkadotAddress, accountIdHex } from './omniwatchIdentity.ts'
+import { basiliskAddress, kusamaAddress, accountIdHex } from './omniwatchIdentity.ts'
 
-// Hydration's EVM accounts are represented inside Substrate storage as a
-// "truncated" AccountId32: the marker bytes "ETH\0" (0x45544800), the 20-byte
-// H160, then 8 zero bytes. Detecting/constructing this lets us bridge an EVM
-// address to the account_id used in raw_balance_observations / money market.
+// Basilisk has no EVM accounts, so no address here is ever a real H160 wallet.
+// The "truncated" AccountId32 form — marker bytes "ETH\0" (0x45544800), a
+// 20-byte H160, then 8 zero bytes — is kept only as an INPUT shape: an H160
+// carrying a reserved substrate prefix ('modl'/'sibl'/'para', see below) is the
+// runtime's truncation of a pallet or sovereign account, and recovering the real
+// AccountId32 from it is generic XCM plumbing. Nothing derived here is exposed
+// in an API response.
 const EVM_MARKER = '45544800'
 const ZERO16 = '0000000000000000'
 
@@ -13,9 +16,12 @@ export interface NormalizedAddress {
   input: string
   kind: AddressKind
   accountId: string           // canonical 0x + 64 hex AccountId32 (join key)
-  evmAddress: string | null   // 0x + 40 hex H160, when EVM-related
-  ss58: string | null         // Hydration SS58 (prefix 63)
-  ss58Polkadot: string | null // Polkadot SS58 (prefix 0)
+  // INTERNAL ONLY — never returned in an API response. 0x + 40 hex H160 when the
+  // input/accountId is in the ETH-marker truncated form; used to re-anchor a
+  // truncated pallet/sovereign account and to scope reads, not to display.
+  evmAddress: string | null
+  ss58: string | null         // Basilisk SS58 (prefix 10041) — the canonical display form
+  ss58Kusama: string | null   // Kusama SS58 (prefix 2) — secondary display form
   isEvmTruncated: boolean      // accountId is the ETH-marker truncated form
 }
 
@@ -47,8 +53,8 @@ function fromAccountId(input: string, acc: string): NormalizedAddress {
     kind: isTrunc ? 'evm' : 'substrate',
     accountId: acc,
     evmAddress: evm,
-    ss58: hydrationAddress(acc),
-    ss58Polkadot: polkadotAddress(acc),
+    ss58: basiliskAddress(acc),
+    ss58Kusama: kusamaAddress(acc),
     isEvmTruncated: isTrunc,
   }
 }
@@ -69,8 +75,8 @@ export function normalizeAddress(raw: string): NormalizedAddress | null {
       kind: 'evm',
       accountId,
       evmAddress: evm,
-      ss58: hydrationAddress(accountId),
-      ss58Polkadot: polkadotAddress(accountId),
+      ss58: basiliskAddress(accountId),
+      ss58Kusama: kusamaAddress(accountId),
       isEvmTruncated: true,
     }
   }
@@ -89,4 +95,4 @@ export function normalizeAddress(raw: string): NormalizedAddress | null {
   return null
 }
 
-export { hydrationAddress, polkadotAddress }
+export { basiliskAddress, kusamaAddress }

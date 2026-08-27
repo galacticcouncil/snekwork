@@ -1,86 +1,106 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   accountIcon,
-  applySnakewatchEmojiSource,
-  clearSnakewatchEmojiSourceForTest,
-  hydrationAddress,
-  parseSnakewatchEmojiSource,
+  accountIdHex,
+  basiliskAddress,
+  kusamaAddress,
   parseSuffixEmojiQuery,
-  polkadotAddress,
   shortAccount,
 } from '../src/services/omniwatchIdentity.ts'
 
-afterEach(() => {
-  clearSnakewatchEmojiSourceForTest()
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
+// Decode base58 back to bytes so a test can inspect the network-prefix bytes the
+// encoder emitted, independently of the module's own decode path.
+function base58Bytes(value: string): number[] {
+  let n = 0n
+  for (const ch of value) n = n * 58n + BigInt(BASE58_ALPHABET.indexOf(ch))
+  const out: number[] = []
+  while (n > 0n) { out.unshift(Number(n & 0xffn)); n >>= 8n }
+  let zeros = 0
+  while (zeros < value.length && value[zeros] === '1') zeros++
+  return [...new Array(zeros).fill(0), ...out]
+}
+
+// The two-byte SS58 header, read back: the 14-bit network prefix is split across
+// both bytes, with 0b01 in the top bits of the first marking the form.
+function decodeTwoByteSs58Prefix(b0: number, b1: number): number {
+  return ((b0 & 0x3f) << 2) | (b1 >> 6) | ((b1 & 0x3f) << 8)
+}
+
+describe('SS58 encoding — Basilisk (prefix 10041) and Kusama (prefix 2)', () => {
+  // Pinned against @polkadot/util-crypto's encodeAddress(id, 10041 | 2).
+  const VECTORS = [
+    {
+      accountId: '0x0000000000000000000000000000000000000000000000000000000000000000',
+      basilisk: 'bXgbR3K8BpV7Dn9imvyriviptpwAsaQyq1W6GLa77FJVqdyja',
+      kusama: 'CaKWz5omakTK7ovp4m3koXrHyHb7NG3Nt7GENHbviByZpKp',
+    },
+    {
+      // modl py/trsry — the treasury pallet account.
+      accountId: '0x6d6f646c70792f74727372790000000000000000000000000000000000000000',
+      basilisk: 'bXj4uMHTyQyvNCLHKBv6ztwkPSx8tgsrxuFtAFfWDYntXtohw',
+      kusama: 'F3opxRbN5ZbjJNU511Kj2TLuzFcDq9BGduA9TgiECafpg29',
+    },
+    {
+      accountId: '0xbcf96ceba85fb928b544872bec7e62d3490a439a16b7879578708bb711791f0e',
+      basilisk: 'bXksC8wzTBDeR8dCjPXBBMh6bXUNaHKiaVrrowUGvVeZ4zvvu',
+      kusama: 'Gr6ccx58KHefbHtGc5WBmoYzWVHpGznsEsoqGTRB4FCvik8',
+    },
+  ]
+
+  it('encodes 32-byte account ids at both network prefixes', () => {
+    for (const v of VECTORS) {
+      expect(basiliskAddress(v.accountId)).toBe(v.basilisk)
+      expect(kusamaAddress(v.accountId)).toBe(v.kusama)
+    }
+  })
+
+  it('emits the two-byte header for Basilisk and a single byte for Kusama', () => {
+    for (const v of VECTORS) {
+      const b = base58Bytes(v.basilisk)
+      // two prefix bytes + 32-byte public key + 2-byte checksum
+      expect(b).toHaveLength(36)
+      expect(b[0] & 0xc0).toBe(0x40)
+      expect(decodeTwoByteSs58Prefix(b[0], b[1])).toBe(10041)
+
+      const k = base58Bytes(v.kusama)
+      expect(k).toHaveLength(35)
+      expect(k[0]).toBe(2)
+    }
+  })
+
+  it('round-trips through the decode path at both prefixes', () => {
+    for (const v of VECTORS) {
+      expect(accountIdHex(v.basilisk)).toBe(v.accountId)
+      expect(accountIdHex(v.kusama)).toBe(v.accountId)
+      // Re-encoding a decoded address is stable.
+      expect(basiliskAddress(v.basilisk)).toBe(v.basilisk)
+      expect(basiliskAddress(v.kusama)).toBe(v.basilisk)
+      expect(kusamaAddress(v.basilisk)).toBe(v.kusama)
+    }
+  })
+
+  it('rejects a corrupted checksum rather than decoding it', () => {
+    const bad = VECTORS[2].basilisk.slice(0, -1) + (VECTORS[2].basilisk.endsWith('u') ? 'v' : 'u')
+    expect(accountIdHex(bad)).toBeNull()
+  })
 })
 
 describe('omniwatch identity helpers', () => {
-  it('encodes 32-byte account ids as Polkadot SS58 addresses', () => {
-    expect(polkadotAddress('0x0000000000000000000000000000000000000000000000000000000000000000'))
-      .toBe('111111111111111111111111111111111HC1')
-    expect(polkadotAddress('0x6d6f646c70792f74727372790000000000000000000000000000000000000000'))
-      .toBe('13UVJyLnbVp9RBZYFwFGyDvVd1y27Tt8tkntv6Q7JVPhFsTB')
-  })
-
   it('uses the SS58 address for short labels', () => {
-    const address = '13UVJyLnbVp9RBZYFwFGyDvVd1y27Tt8tkntv6Q7JVPhFsTB'
-    expect(shortAccount(address)).toBe('sTB')
+    expect(shortAccount('bXksC8wzTBDeR8dCjPXBBMh6bXUNaHKiaVrrowUGvVeZ4zvvu')).toBe('vvu')
   })
 
-  it('honors Snakewatch custom emoji overrides where renderable', () => {
-    expect(accountIcon('7Hsq5RH9xUtPWFZMGXtoVWNd4CEjpJWsidf7bcGwNwdxp9Ha')).toEqual({ emoji: '🍺' })
-    expect(accountIcon('7JnnrDVoGrXA68TuQMVasG8TD8D2iagjmBA3bSEYyBHphbvy')).toEqual({ emoji: '🌴' })
-  })
-
-  it('preserves Discord custom emoji metadata until image urls are supplied', () => {
-    expect(accountIcon('7MsLP8yfa4dzCAyBX5jxDk2UR7DEATQYNcfpMxgnRDWx6Xin')).toMatchObject({
-      emojiName: 'buffdoge',
-      emojiUrl: 'https://cdn.discordapp.com/emojis/989553819539103764.webp?size=32',
-    })
-    expect(accountIcon('7KATdGae91uodYHAhxuA7Re7ijGTDAFFa9ykVhUhJf9kEAR5')).toMatchObject({
-      emojiName: 'HOLLAR',
-      emojiUrl: 'https://cdn.discordapp.com/emojis/1419786409664970834.webp?size=32',
-    })
-    expect(accountIcon('7KQx4f7yU3hqZHfvDVnSfe6mpgAT8Pxyr67LXHV6nsbZo3Tm')).toMatchObject({
-      emojiName: 'polkadot',
-      emojiUrl: 'https://cdn.discordapp.com/emojis/1064520790978080818.webp?size=32',
-    })
-  })
-
-  it('matches overrides by Hydration address while displaying Polkadot address', () => {
-    const rawAccount = '0xbcf96ceba85fb928b544872bec7e62d3490a439a16b7879578708bb711791f0e'
-
-    expect(hydrationAddress(rawAccount)).toBe('7MsLP8yfa4dzCAyBX5jxDk2UR7DEATQYNcfpMxgnRDWx6Xin')
-    expect(polkadotAddress(rawAccount)).toBe('15Gn6dsGMjYCMUUxTYKTRyGhhYChhujkVMmYbuApFM4ENGfx')
-    expect(accountIcon(rawAccount)).toMatchObject({
-      emojiName: 'buffdoge',
-      emojiUrl: 'https://cdn.discordapp.com/emojis/989553819539103764.webp?size=32',
-    })
-  })
-
-  it('matches Snakewatch fallback emoji generation', () => {
+  it('derives every account emoji deterministically from the public key', () => {
     expect(accountIcon('16VM29LrX9SFma5e3aTVTdTPvnbEQjEp8xBXUVC73J8xpDAe')).toEqual({ emoji: '🐮' })
-  })
-
-  it('parses and applies maintained Snakewatch emojify source', () => {
-    const source = `
-      const emojis = ['🍎', '🍌'];
-      const degens = {
-        '7MsLP8yfa4dzCAyBX5jxDk2UR7DEATQYNcfpMxgnRDWx6Xin': '<:fresh:123456789012345678>',
-        '7Hsq5RH9xUtPWFZMGXtoVWNd4CEjpJWsidf7bcGwNwdxp9Ha': '🍸',
-      };
-    `
-
-    const parsed = parseSnakewatchEmojiSource(source)
-    expect(parsed.emojis).toEqual(['🍎', '🍌'])
-    expect(parsed.degensByHydrationAddress.size).toBe(2)
-
-    applySnakewatchEmojiSource(source)
-    expect(accountIcon('7MsLP8yfa4dzCAyBX5jxDk2UR7DEATQYNcfpMxgnRDWx6Xin')).toMatchObject({
-      emojiName: 'fresh',
-      emojiUrl: 'https://cdn.discordapp.com/emojis/123456789012345678.webp?size=32',
-    })
-    expect(accountIcon('7Hsq5RH9xUtPWFZMGXtoVWNd4CEjpJWsidf7bcGwNwdxp9Ha')).toEqual({ emoji: '🍸' })
+    // Same account, any SS58 prefix — the glyph is keyed by the public key.
+    const id = '0xbcf96ceba85fb928b544872bec7e62d3490a439a16b7879578708bb711791f0e'
+    expect(accountIcon(basiliskAddress(id))).toEqual(accountIcon(id))
+    expect(accountIcon(kusamaAddress(id))).toEqual(accountIcon(id))
+    // No curated overrides remain: nothing carries a custom name or image icon.
+    expect(accountIcon(id).emojiName).toBeUndefined()
+    expect(accountIcon(id).emojiUrl).toBeUndefined()
   })
 })
 

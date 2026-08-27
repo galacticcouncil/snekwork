@@ -43,7 +43,6 @@ import { initLockBreakdownService } from './services/lockBreakdownService.ts'
 import { initPoolService } from './services/poolService.ts'
 import { startBackgroundRefresh, stopBackgroundRefresh } from './services/backgroundRefresh.ts'
 import { initAccountAffinityService } from './services/accountAffinityService.ts'
-import { ensureSnakewatchEmojiSourceLoaded } from './services/omniwatchIdentity.ts'
 
 const fastify = Fastify({ logger: true })
 
@@ -174,9 +173,7 @@ async function start() {
     // clients are set.
     startBackgroundRefresh()
     initAccountAffinityService(client)
-    // Tag icons can derive from a member's omniwatch emoji, so the snakewatch
-    // source must be loaded before tags are indexed.
-    await Promise.all([loadExplorerAssets(client), ensureSnakewatchEmojiSourceLoaded(), loadRuntimeErrorNames(client)])
+    await Promise.all([loadExplorerAssets(client), loadRuntimeErrorNames(client)])
     // Referendum titles come from SubSquare (the chain has none), so they are held
     // in memory like identities and read on every vote row the explorer renders.
     await Promise.all([loadTags(), loadIdentities(), loadReferendumTitles().catch(() => {})])
