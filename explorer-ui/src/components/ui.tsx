@@ -354,10 +354,13 @@ function AssetLogo({ symbol, size = 20 }: { symbol: string; size?: number }) {
   return <span className="asset-logo" style={{ width: size, height: size, fontSize: size * 0.4, background: `linear-gradient(135deg,${c1},${c2})` }}>{symbol.slice(0, 3)}</span>
 }
 
-// Real token icon from the Galactic Council asset-metadata CDN (same source as
-// preis-ui), with a gradient-letter fallback on load error.
-const ICON_CDN = 'https://cdn.jsdelivr.net/gh/galacticcouncil/intergalactic-asset-metadata@master/v2/polkadot/2034/assets'
-function iconUrl(id: number, ext: 'svg' | 'png'): string { return `${ICON_CDN}/${id}/icon.${ext}` }
+// Real token icon from the Galactic Council asset-metadata CDN, with a
+// gradient-letter fallback on load error. The v1 set is SYMBOL-keyed
+// (bsx.svg, ksm.svg, …) — the same source the official Basilisk UI resolves
+// through @galacticcouncil/ui. The v2 tree has no Basilisk (kusama/2090)
+// directory, so an id-keyed lookup cannot work for this chain.
+const ICON_CDN = 'https://cdn.jsdelivr.net/gh/galacticcouncil/intergalactic-asset-metadata@master/v1/assets'
+function iconUrl(symbol: string, ext: 'svg' | 'png'): string { return `${ICON_CDN}/${encodeURIComponent(symbol)}.${ext}` }
 const METADATA_CDN = 'https://cdn.jsdelivr.net/gh/galacticcouncil/intergalactic-asset-metadata@master/v2'
 function originAssetIconUrl(origin: AssetOrigin, ext: 'svg' | 'png'): string | null {
   if (!origin.assetId) return null
@@ -368,27 +371,20 @@ export function originChainIconUrl(origin: AssetOrigin): string {
   return `${METADATA_CDN}/${origin.ecosystem}/${origin.chainId}/icon.svg`
 }
 
-// Avoid noisy browser-level blocked requests for assets whose CDN icon format is
-// known from the current Basilisk registry. Missing icons go straight to the
-// local gradient fallback; PNG-only icons skip the missing SVG request.
-const PNG_ICON_IDS = new Set([
-  4, 20, 35, 36, 38, 39, 43, 1000085, 1000189, 1000794, 1000796, 1000809,
-  1000286, 1000324, 1000365, 1000397, 1000479, 1000512, 1000524, 1000779,
-])
-const NO_CDN_ICON_IDS = new Set([
-  29, 37, 45, 100, 101, 102, 110, 670, 1112, 1000198, 1000444, 1000746, 1000766, 1000767, 1001034, 1001168,
-])
-function initialIconMode(srcId: number): 'svg' | 'png' | 'fail' {
-  if (NO_CDN_ICON_IDS.has(srcId)) return 'fail'
-  if (PNG_ICON_IDS.has(srcId)) return 'png'
-  return 'svg'
+// Symbols the CDN can plausibly serve. Unnamed registry entries render as
+// synthesized `Asset<id>` placeholders — requesting those only 404s, so they go
+// straight to the local gradient fallback (XYK share tokens are the usual case).
+function cdnSymbol(symbol: string): string | null {
+  const s = symbol.trim().toLowerCase()
+  if (!s || /^asset\d+$/.test(s)) return null
+  return s
 }
 
-// Composite (Hollar-wrapped) and locally-known-missing assets have no single CDN
-// icon to sample a color from — callers should skip them and use a fallback color
-// rather than firing a request that only 404s.
-export function iconIsSampleable(assetId: number): boolean {
-  return !NO_CDN_ICON_IDS.has(assetId)
+// Assets without a plausible CDN icon have nothing to sample a color from —
+// callers should keep their fallback color rather than firing a request that
+// only 404s.
+export function iconIsSampleable(symbol: string): boolean {
+  return cdnSymbol(symbol) != null
 }
 
 // A single CDN <img> with the svg→png→letter fallback chain. The load state is
@@ -396,27 +392,24 @@ export function iconIsSampleable(assetId: number): boolean {
 // re-renders while the underlying asset changes after a data fetch — without the
 // reset its `mode` stays stale at 'fail'/'png' and the new asset never re-attempts
 // svg, so the icon only appears after a manual refresh).
-export function assetIconCandidates(srcId: number, origin?: AssetOrigin | null): string[] {
+export function assetIconCandidates(symbol: string, origin?: AssetOrigin | null): string[] {
   const out: string[] = []
   // Globally-consensused assets use their canonical origin contract icon. Keep
-  // the local registry icon as a fallback for incomplete
-  // external metadata. Polkadot-origin assets continue using the curated local
-  // icon and get only an origin-chain badge.
+  // the symbol-keyed icon as a fallback for incomplete external metadata.
   if (origin?.ecosystem === 'ethereum') {
     for (const ext of ['svg', 'png'] as const) {
       const url = originAssetIconUrl(origin, ext)
       if (url) out.push(url)
     }
   }
-  const initial = initialIconMode(srcId)
-  if (initial === 'svg') out.push(iconUrl(srcId, 'svg'), iconUrl(srcId, 'png'))
-  else if (initial === 'png') out.push(iconUrl(srcId, 'png'))
+  const key = cdnSymbol(symbol)
+  if (key) out.push(iconUrl(key, 'svg'), iconUrl(key, 'png'))
   return out
 }
 
-function CdnIcon({ srcId, symbol, size, clip, origin }: { srcId: number; symbol: string; size: number; clip?: 'left' | 'right'; origin?: AssetOrigin | null }) {
-  const candidates = assetIconCandidates(srcId, origin)
-  const sourceKey = `${srcId}:${origin?.ecosystem ?? ''}:${origin?.chainId ?? ''}:${origin?.assetId ?? ''}`
+function CdnIcon({ symbol, size, clip, origin }: { symbol: string; size: number; clip?: 'left' | 'right'; origin?: AssetOrigin | null }) {
+  const candidates = assetIconCandidates(symbol, origin)
+  const sourceKey = `${symbol}:${origin?.ecosystem ?? ''}:${origin?.chainId ?? ''}:${origin?.assetId ?? ''}`
   const [fallback, setFallback] = useState<{ key: string; index: number }>({ key: sourceKey, index: 0 })
   const index = fallback.key === sourceKey ? fallback.index : 0
   const src = candidates[index]
@@ -436,15 +429,15 @@ function CdnIcon({ srcId, symbol, size, clip, origin }: { srcId: number; symbol:
   />
 }
 
-export function AssetIcon({ assetId, iconAssetId, symbol, size = 20, parachainId, origin }: { assetId: number; iconAssetId?: number; symbol: string; size?: number; parachainId?: number | null; origin?: AssetOrigin | null }) {
+export function AssetIcon({ symbol, size = 20, parachainId, origin }: { assetId: number; iconAssetId?: number; symbol: string; size?: number; parachainId?: number | null; origin?: AssetOrigin | null }) {
   // Some assets ship only .svg, others only .png — try svg, then png, then the
-  // gradient-letter fallback (same chain as preis-ui). aTokens use the icon ID
-  // resolved by the API.
-  const chainOrigin = origin ?? (parachainId != null ? { ecosystem: 'polkadot', chainId: String(parachainId), assetId: null } : null)
+  // gradient-letter fallback. Basilisk sits on Kusama, so a bare parachain id
+  // resolves its badge under the kusama tree.
+  const chainOrigin = origin ?? (parachainId != null ? { ecosystem: 'kusama', chainId: String(parachainId), assetId: null } : null)
   const badgeKey = chainOrigin ? `${chainOrigin.ecosystem}:${chainOrigin.chainId}` : ''
   const [badgeFailure, setBadgeFailure] = useState<{ key: string; failed: boolean }>({ key: badgeKey, failed: false })
   const badgeFailed = badgeFailure.key === badgeKey && badgeFailure.failed
-  const body = <CdnIcon srcId={iconAssetId ?? assetId} symbol={symbol} size={size} origin={origin} />
+  const body = <CdnIcon symbol={symbol} size={size} origin={origin} />
   return <span style={{ position: 'relative', width: size, height: size, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', lineHeight: 0 }}>
     {body}
     {chainOrigin && !badgeFailed && <img

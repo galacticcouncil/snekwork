@@ -57,7 +57,7 @@ const inflight = new Map<string, Promise<string>>()
 
 function iconKey(asset: AssetRef): string {
   const o = asset.origin
-  return `${asset.iconAssetId ?? asset.assetId}:${o?.ecosystem ?? ''}:${o?.chainId ?? ''}:${o?.assetId ?? ''}`
+  return `${asset.symbol}:${o?.ecosystem ?? ''}:${o?.chainId ?? ''}:${o?.assetId ?? ''}`
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -87,11 +87,10 @@ function sample(img: HTMLImageElement): string | null {
 }
 
 async function extract(asset: AssetRef): Promise<string | null> {
-  // Skip assets with no single sampleable CDN icon (composites, known-missing) —
+  // Skip assets with no sampleable CDN icon (unnamed registry placeholders) —
   // requesting them only 404s; the caller keeps its fallback color.
-  const srcId = asset.iconAssetId ?? asset.assetId
-  if (!iconIsSampleable(srcId) || !iconIsSampleable(asset.assetId)) return null
-  for (const url of assetIconCandidates(srcId, asset.origin)) {
+  if (!iconIsSampleable(asset.symbol)) return null
+  for (const url of assetIconCandidates(asset.symbol, asset.origin)) {
     try {
       const color = sample(await loadImage(url))
       if (color) return color
