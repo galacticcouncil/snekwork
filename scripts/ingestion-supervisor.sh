@@ -46,6 +46,20 @@ LIVE_MAIN_RATE_LIMIT="${LIVE_MAIN_RATE_LIMIT:-100}"
 LIVE_MAIN_CAPACITY="${LIVE_MAIN_CAPACITY:-20}"
 LIVE_MAIN_BATCH_SIZE="${LIVE_MAIN_BATCH_SIZE:-50000}"
 
+# raw-live reorg healing. sqd aborts permanently when a block it already indexed
+# is no longer on chain ("already indexed block N#hash was not found on chain"),
+# and nothing walks the checkpoint back, so a reorg above the raw-live checkpoint
+# wedges the live tip in a restart loop until an operator intervenes. observed
+# 2026-08-29: a 2-block reorg cost ~12h of tip while the backfill ran on fine.
+LIVE_RAW_PIPELINE_ID="${LIVE_RAW_PIPELINE_ID:-raw-live}"
+LIVE_RAW_SERVICE="${LIVE_RAW_SERVICE:-raw-live}"
+REORG_HEAL_ENABLED="${REORG_HEAL_ENABLED:-true}"
+# only inspect a checkpoint this stale: a healthy live pipeline advances constantly,
+# so staleness is what separates "wedged" from "mid-write"
+REORG_STALL_SECONDS="${REORG_STALL_SECONDS:-600}"
+# past this the divergence is not an ordinary reorg; log and leave it for a human
+REORG_MAX_DEPTH="${REORG_MAX_DEPTH:-512}"
+
 # Use an operator-selected raw RPC when configured; otherwise rotate public RPCs.
 # Every endpoint must serve Basilisk (specName 'basilisk') and keep archive state
 # from genesis — the raw workers read historical storage, not just events. Both
@@ -709,6 +723,86 @@ FORMAT TSV")
   done
 }
 
+# both helpers must succeed even when they find nothing: the script runs under
+# `set -e`, so an unmatched grep here would abort the supervisor — taking the
+# backfill down with it — every time the RPC failed to answer
+rpc_block_hash() {
+  local height="$1"
+  local body=""
+  body="$(curl -s --max-time 15 -H 'Content-Type: application/json' \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"chain_getBlockHash\",\"params\":[$height]}" \
+    "${RPC_ENDPOINTS[0]}" 2>/dev/null || true)"
+  printf '%s' "$body" | grep -oE '"result":"0x[0-9a-f]+"' | grep -oE '0x[0-9a-f]+' | head -1 || true
+}
+
+stored_block_hash() {
+  ch_query "SELECT block_hash FROM raw_blocks WHERE block_height = $1 LIMIT 1 FORMAT TSV" 2>/dev/null |
+    head -1 || true
+}
+
+# repeated non-action findings would otherwise log once per poll
+REORG_LAST_NOTE=""
+reorg_note() {
+  [[ "$1" == "$REORG_LAST_NOTE" ]] && return 0
+  REORG_LAST_NOTE="$1"
+  log "$1"
+}
+
+heal_live_raw_reorg() {
+  [[ "$REORG_HEAL_ENABLED" == "true" ]] || return 0
+
+  local row height hash age
+  row="$(ch_query "
+SELECT last_block, last_hash, dateDiff('second', updated_at, now())
+FROM raw_ingestion_state FINAL
+WHERE pipeline_id = '$(sql_escape "$LIVE_RAW_PIPELINE_ID")'
+FORMAT TSV" 2>/dev/null | head -1)" || return 0
+  [[ -n "$row" ]] || return 0
+
+  IFS=$'\t' read -r height hash age <<<"$row"
+  [[ "$height" =~ ^[0-9]+$ && "$age" =~ ^[0-9]+$ ]] || return 0
+  (( age >= REORG_STALL_SECONDS )) || { REORG_LAST_NOTE=""; return 0; }
+
+  local chain_hash
+  chain_hash="$(rpc_block_hash "$height")"
+  if [[ -z "$chain_hash" ]]; then
+    # never act on an RPC that did not answer: it cannot distinguish a reorg
+    # from an endpoint outage, and rolling back on an outage loses good tip
+    reorg_note "reorg check skipped: no RPC answer for block $height"
+    return 0
+  fi
+  if [[ "$chain_hash" == "$hash" ]]; then
+    reorg_note "$LIVE_RAW_PIPELINE_ID checkpoint $height stalled ${age}s but still canonical; not a reorg"
+    return 0
+  fi
+
+  log "$LIVE_RAW_PIPELINE_ID checkpoint $height is off-chain (stored $hash, chain $chain_hash); searching for common ancestor"
+
+  local depth probe stored probe_chain
+  for (( depth = 1; depth <= REORG_MAX_DEPTH; depth++ )); do
+    probe=$(( height - depth ))
+    (( probe >= 0 )) || break
+    stored="$(stored_block_hash "$probe")"
+    [[ -n "$stored" ]] || continue
+    probe_chain="$(rpc_block_hash "$probe")"
+    [[ -n "$probe_chain" ]] || continue
+    if [[ "$stored" == "$probe_chain" ]]; then
+      log "common ancestor at $probe; rolling $LIVE_RAW_PIPELINE_ID back $depth block(s) and restarting $LIVE_RAW_SERVICE"
+      ch_query "
+INSERT INTO raw_ingestion_state (pipeline_id, last_block, last_hash, mode, state_json, updated_at)
+VALUES ('$(sql_escape "$LIVE_RAW_PIPELINE_ID")', $probe, '$(sql_escape "$stored")', 'live', '{}', now64(3))"
+      # raw tables replace on (block_height, index), so re-indexing the forked
+      # span overwrites it; the restart is only to skip the crash-loop backoff
+      docker compose restart "$LIVE_RAW_SERVICE" >/dev/null 2>&1 ||
+        log "checkpoint rolled back but restarting $LIVE_RAW_SERVICE failed; its restart policy should pick it up"
+      REORG_LAST_NOTE=""
+      return 0
+    fi
+  done
+
+  log "no common ancestor within $REORG_MAX_DEPTH blocks below $height; $LIVE_RAW_PIPELINE_ID needs a human"
+}
+
 health_snapshot() {
   local live
   local live_main
@@ -747,10 +841,16 @@ SETTINGS index_granularity = 8192
 
 log "starting ingestion supervisor in $ROOT_DIR"
 
+# tests source this file for its functions; skip the loop when they do
+if [[ "${SUPERVISOR_NO_MAIN:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 while true; do
   cleanup_stopped_raw
   cleanup_stopped_main
   cleanup_live_main
+  heal_live_raw_reorg
   recover_orphaned_raw
   ensure_raw_workers
   ensure_main_workers
