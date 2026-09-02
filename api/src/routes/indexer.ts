@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { ClickHouseClient } from '../db/client.ts'
 import { SUBSTRATE_RPC_URL } from '../services/substrateRpc.ts'
+import { createChainHeadSampler } from '../services/chainHeadSampler.ts'
 
 interface IndexerStatus {
   blockHeight: number
@@ -13,6 +14,8 @@ interface IndexerStatus {
   // raw ingestion", not "in sync with the chain". A liveness indicator has to know
   // the difference — both pipelines stall together.
   chainHeadSampled: boolean
+  /** age of the chain-head sample in seconds; null when there has never been one */
+  chainHeadSampleAgeSeconds: number | null
   rawFinalizedRangeCount: number
   rawFinalizedFromBlock: number
   rawFinalizedToBlock: number
@@ -20,6 +23,15 @@ interface IndexerStatus {
 
 const TTL_MS = 5_000
 const CHAIN_HEAD_REFRESH_MS = 5_000
+// Hard ceiling on one refresh attempt. `fetch` carries its own AbortSignal, but a
+// call that never settles at all (DNS, a wedged connection pool) would leave the
+// re-entrancy guard held forever: observed 2026-08-31, when one non-settling
+// refresh froze chainBlockHeight for 47h while every other timer in the process
+// kept ticking and /indexer went on reporting `blocksBehindHead: 0`.
+const CHAIN_HEAD_TIMEOUT_MS = 10_000
+// Beyond this a sample is not evidence of anything; report it as unsampled rather
+// than let a stale head masquerade as a fresh one.
+const CHAIN_HEAD_STALE_MS = 60_000
 
 function uintValue(value: unknown): number {
   const parsed = typeof value === 'number' ? value : Number(value)
@@ -51,24 +63,16 @@ async function fetchChainBlockHeight(): Promise<number | null> {
 export async function indexerRoutes(fastify: FastifyInstance, opts: { client: ClickHouseClient }) {
   let cache: { data: IndexerStatus; fetchedAt: number } | null = null
   let inflight: Promise<IndexerStatus> | null = null
-  let chainBlockHeight: number | null = null
-  let refreshingChainHead = false
-
-  const refreshChainHead = async () => {
-    if (refreshingChainHead) return
-    refreshingChainHead = true
-    try {
-      const height = await fetchChainBlockHeight()
-      if (height != null) chainBlockHeight = height
-    } finally {
-      refreshingChainHead = false
-    }
-  }
+  const sampler = createChainHeadSampler({
+    fetchHeight: fetchChainBlockHeight,
+    timeoutMs: CHAIN_HEAD_TIMEOUT_MS,
+    staleMs: CHAIN_HEAD_STALE_MS,
+  })
 
   // Chain RPC is sampled at startup and on a bounded background interval. HTTP
   // requests only read this snapshot and ClickHouse-backed status.
-  await refreshChainHead()
-  const chainHeadTimer = setInterval(() => { void refreshChainHead() }, CHAIN_HEAD_REFRESH_MS)
+  await sampler.refresh()
+  const chainHeadTimer = setInterval(() => { void sampler.refresh() }, CHAIN_HEAD_REFRESH_MS)
   chainHeadTimer.unref()
   fastify.addHook('onClose', async () => { clearInterval(chainHeadTimer) })
 
@@ -76,7 +80,9 @@ export async function indexerRoutes(fastify: FastifyInstance, opts: { client: Cl
     if (cache && Date.now() - cache.fetchedAt < TTL_MS) return cache.data
     if (inflight) return inflight
 
-    const request = loadIndexerStatus(opts.client, chainBlockHeight).then(data => {
+    // height is null once the sample goes stale, so a stale head cannot pass for fresh
+    const { height, ageMs } = sampler.current()
+    const request = loadIndexerStatus(opts.client, height, ageMs).then(data => {
       cache = { data, fetchedAt: Date.now() }
       return data
     }).finally(() => {
@@ -87,7 +93,11 @@ export async function indexerRoutes(fastify: FastifyInstance, opts: { client: Cl
   })
 }
 
-async function loadIndexerStatus(client: ClickHouseClient, sampledChainBlockHeight: number | null): Promise<IndexerStatus> {
+async function loadIndexerStatus(
+  client: ClickHouseClient,
+  sampledChainBlockHeight: number | null,
+  chainHeadSampleAgeMs: number | null = null,
+): Promise<IndexerStatus> {
   // Main indexer head, raw worker head, and finalized raw coverage come from
   // ClickHouse. If the background chain-head sample is unavailable, use the raw
   // checkpoint so the endpoint remains explicit about indexed status.
@@ -184,6 +194,9 @@ async function loadIndexerStatus(client: ClickHouseClient, sampledChainBlockHeig
     chainBlockHeight,
     blocksBehindHead: Math.max(0, chainBlockHeight - blockHeight),
     chainHeadSampled: sampledChainBlockHeight != null,
+    chainHeadSampleAgeSeconds: chainHeadSampleAgeMs == null
+      ? null
+      : Math.max(0, Math.floor(chainHeadSampleAgeMs / 1000)),
     rawFinalizedRangeCount: uintValue(rawCoverage?.range_count),
     rawFinalizedFromBlock: uintValue(rawCoverage?.from_block),
     rawFinalizedToBlock: uintValue(rawCoverage?.to_block),
