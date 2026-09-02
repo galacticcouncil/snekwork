@@ -25,6 +25,7 @@ import {
 import { minutesFromEnvironment } from '../util/env.js'
 import { retainsSnapshotAtHeight, snapshotEveryNBlocksFromEnvironment } from './snapshotCadence.js'
 import { assertChainIdentity, fetchChainHead, fetchFinalizedHead } from '../rpc/head.js'
+import { waitForFinalityAbove } from './finalityGate.js'
 import type {
   RawBlockRow,
   RawBlockSnapshotRow,
@@ -228,6 +229,13 @@ function liveFinalityPollIntervalMs(): number {
   return Number.isSafeInteger(configured) && configured > 0 ? configured : 4_000
 }
 
+function liveFinalityMaxUnansweredPolls(): number {
+  // the endpoint 429s under our own load, so tolerate a long burst of unanswered
+  // polls before giving up; at the default 4s poll this is ~5 minutes.
+  const configured = Number.parseInt(process.env.RAW_LIVE_FINALITY_MAX_UNANSWERED ?? '75', 10)
+  return Number.isSafeInteger(configured) && configured > 0 ? configured : 75
+}
+
 export async function runRaw(options: RawRunOptions = {}): Promise<void> {
   validateBlockRange(options)
   // See src/indexer.ts: a wrong-chain RPC pairing must fail loudly at startup.
@@ -269,20 +277,14 @@ export async function runRaw(options: RawRunOptions = {}): Promise<void> {
   // takes the finalized path; once running, a later stall just makes that loop wait, not
   // crash. Bounded backfill workers never reach the tip, so they skip this.
   if (boundedRange == null) {
-    const pollMs = liveFinalityPollIntervalMs()
-    let finalizedHead = await fetchFinalizedHead(config.RPC_URL)
-    let waitedForFinality = false
-    while (finalizedHead != null && finalizedHead <= lastProcessedBlock) {
-      if (!waitedForFinality) {
-        console.log(
-          `[Raw] ${pipelineId}: caught up to finalized head ${finalizedHead} (checkpoint ${lastProcessedBlock}); waiting for on-chain finality to advance before following`,
-        )
-        waitedForFinality = true
-      }
-      await new Promise<void>(resolve => setTimeout(resolve, pollMs))
-      finalizedHead = await fetchFinalizedHead(config.RPC_URL)
-    }
-    if (waitedForFinality && finalizedHead != null) {
+    const { finalizedHead, waited } = await waitForFinalityAbove(lastProcessedBlock, {
+      fetchFinalizedHead: () => fetchFinalizedHead(config.RPC_URL),
+      sleep: ms => new Promise<void>(resolve => setTimeout(resolve, ms)),
+      pollMs: liveFinalityPollIntervalMs(),
+      maxUnanswered: liveFinalityMaxUnansweredPolls(),
+      log: message => console.log(`[Raw] ${pipelineId}: ${message}`),
+    })
+    if (waited) {
       console.log(`[Raw] ${pipelineId}: finality advanced to ${finalizedHead}; starting follower`)
     }
   }

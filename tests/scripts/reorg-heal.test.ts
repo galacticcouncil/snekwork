@@ -14,6 +14,8 @@ interface Scenario {
   stored: Record<number, string>
   /** block_height -> hash the chain reports; missing means the RPC answers nothing */
   chain: Record<number, string>
+  /** make the rollback INSERT fail, as a ClickHouse outage would */
+  failInsert?: boolean
   env?: Record<string, string>
 }
 
@@ -35,6 +37,7 @@ function runHeal(scenario: Scenario) {
     join(dir, 'checkpoint.tsv'),
     scenario.checkpoint ? scenario.checkpoint.join('\t') : ''
   )
+  if (scenario.failInsert) writeFileSync(join(dir, 'fail-insert'), '')
 
   // stub docker: records every invocation, answers clickhouse-client queries
   writeFileSync(
@@ -48,8 +51,11 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -z "$query" ]] && exit 0
 printf '%s\\n---\\n' "$query" >> ${sqlLog}
+if [[ "$query" == *"INSERT INTO raw_ingestion_state"* ]]; then
+  [[ -f ${join(dir, 'fail-insert')} ]] && exit 1
+  exit 0
+fi
 if [[ "$query" == *raw_ingestion_state*SELECT* || "$query" == *"FROM raw_ingestion_state"* ]]; then
-  if [[ "$query" == INSERT* || "$query" == *INSERT\\ INTO* ]]; then exit 0; fi
   cat ${join(dir, 'checkpoint.tsv')}
   exit 0
 fi
@@ -169,6 +175,21 @@ describe('raw-live reorg healing', () => {
     expect(r.stdout).toContain('needs a human')
     expect(r.sql).not.toContain('INSERT INTO raw_ingestion_state')
     expect(r.dockerCalls).not.toContain('restart')
+  })
+
+  // the supervisor runs under `set -e`, so an unguarded failing ch_query would kill
+  // it outright and take the backfill down — strictly worse than the wedged tip
+  it('does not abort the supervisor when the rollback insert fails', () => {
+    const r = runHeal({
+      checkpoint: [16867800, FORK, 3600],
+      stored: { 16867798: ANCESTOR },
+      chain: { 16867800: CANON, 16867798: ANCESTOR },
+      failInsert: true,
+    })
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('rollback insert failed')
+    // restarting after a failed rollback lands right back on the wedged checkpoint
+    expect(r.dockerCalls).not.toContain('compose restart')
   })
 
   it('can be switched off', () => {

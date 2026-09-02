@@ -736,7 +736,8 @@ rpc_block_hash() {
 }
 
 stored_block_hash() {
-  ch_query "SELECT block_hash FROM raw_blocks WHERE block_height = $1 LIMIT 1 FORMAT TSV" 2>/dev/null |
+  # FINAL: the answer must not depend on whether the replacing merge has run yet
+  ch_query "SELECT block_hash FROM raw_blocks FINAL WHERE block_height = $1 LIMIT 1 FORMAT TSV" 2>/dev/null |
     head -1 || true
 }
 
@@ -752,10 +753,13 @@ heal_live_raw_reorg() {
   [[ "$REORG_HEAL_ENABLED" == "true" ]] || return 0
 
   local row height hash age
+  # mirrors getRawIngestionState so the healer reads the row the indexer resumes from
   row="$(ch_query "
 SELECT last_block, last_hash, dateDiff('second', updated_at, now())
 FROM raw_ingestion_state FINAL
 WHERE pipeline_id = '$(sql_escape "$LIVE_RAW_PIPELINE_ID")'
+ORDER BY updated_at DESC
+LIMIT 1
 FORMAT TSV" 2>/dev/null | head -1)" || return 0
   [[ -n "$row" ]] || return 0
 
@@ -788,9 +792,15 @@ FORMAT TSV" 2>/dev/null | head -1)" || return 0
     [[ -n "$probe_chain" ]] || continue
     if [[ "$stored" == "$probe_chain" ]]; then
       log "common ancestor at $probe; rolling $LIVE_RAW_PIPELINE_ID back $depth block(s) and restarting $LIVE_RAW_SERVICE"
-      ch_query "
+      # a bare ch_query here would, under `set -e`, abort the supervisor and take the
+      # backfill with it; and restarting after a failed rollback just lands back on
+      # the same wedged checkpoint. so do neither — the next poll retries.
+      if ! ch_query "
 INSERT INTO raw_ingestion_state (pipeline_id, last_block, last_hash, mode, state_json, updated_at)
-VALUES ('$(sql_escape "$LIVE_RAW_PIPELINE_ID")', $probe, '$(sql_escape "$stored")', 'live', '{}', now64(3))"
+VALUES ('$(sql_escape "$LIVE_RAW_PIPELINE_ID")', $probe, '$(sql_escape "$stored")', 'live', '{}', now64(3))"; then
+        log "rollback insert failed for $LIVE_RAW_PIPELINE_ID; checkpoint left alone, retrying next poll"
+        return 0
+      fi
       # raw tables replace on (block_height, index), so re-indexing the forked
       # span overwrites it; the restart is only to skip the crash-loop backoff
       docker compose restart "$LIVE_RAW_SERVICE" >/dev/null 2>&1 ||
